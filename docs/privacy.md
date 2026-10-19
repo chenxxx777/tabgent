@@ -16,8 +16,9 @@ context: the document's title, URL and kind, the bound highlight's text and
 location, up to five earlier saved turns about that highlight, and the path of the
 ReadingVault folder. When a question refers to earlier reading, Codex can list,
 search and read the notes in that folder with the read-only `reading_vault` tool,
-without an approval prompt. It reads only the notes Tabgent writes (`AGENTS.md` and
-each document's `highlights.md`, `source.md` and `anchors.json`), never other files
+without an approval prompt. It reads only the notes Tabgent writes (`AGENTS.md`,
+each document's `highlights.md`, `source.md` and `anchors.json`, and an imported book's
+`chapters/NN-<title>.md`), never other files
 in or outside the folder, and it cannot write. Notes it
 reads are sent to the model like any other tool result.
 
@@ -56,7 +57,7 @@ symlink so existing attachment paths remain valid.
 | `$CODEX_HOME/projects/tabgent/attachments/` | User-uploaded file copies, each in a generated subdirectory.            |
 | `~/ReadingVault/` or the configured folder  | Saved highlights, their page URLs and anchors, and saved discussions.   |
 | `Books/book-*/` in the vault                | Imported EPUB files, their SHA-256 record, and chapter text.            |
-| Chrome extension local storage              | Reading-note saves waiting for a retry (at most 100).                   |
+| Chrome extension local storage              | Reading-note saves waiting for a retry (at most 100), EPUB positions.   |
 | `$CODEX_HOME/projects/tabgent/vault.json`   | The configured ReadingVault folder.                                     |
 | Shared Codex session storage and index      | Conversation history and project association.                           |
 | Chrome extension session storage            | Tab bindings, selection drafts, text drafts, and attachment references. |

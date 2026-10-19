@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import struct
 import sys
 import tempfile
@@ -377,6 +378,96 @@ with tempfile.TemporaryDirectory(prefix="tabgent-epub-vault-") as directory:
         assert listed["source"]["chapters"] == source["chapters"]
         assert call(settings, "vault/books/list", {"kind": "pdf"}) == {"books": []}
 
+        # reading_vault searches and reads a book's chapters, after the user's notes.
+        ident = document["id"]
+        listed = vault.tool(settings, {"action": "list"})["documents"]
+        assert listed == [
+            {
+                "path": f"Books/{ident}/highlights.md",
+                "title": epub_fixture.TITLE,
+                "chapters": f"Books/{ident}/chapters",
+                "chapterCount": 3,
+            }
+        ]
+        found = vault.tool(
+            settings, {"action": "search", "query": "autonomy", "document": ident}
+        )["matches"]
+        assert found[0]["path"] == f"Books/{ident}/highlights.md", found
+        chapter_hits = [m for m in found if "/chapters/" in m["path"]]
+        assert chapter_hits[0] == {
+            "path": f"Books/{ident}/chapters/01-chapter-one-beginnings.md",
+            "line": 11,
+            "title": "A Small Book of Reading — Chapter One: Beginnings",
+            "text": "Autonomy does not mean independence from others, but "
+            "endorsement of one\u2019s own actions.",
+        }
+        cjk = vault.tool(settings, {"action": "search", "query": "独立于他人"})
+        assert cjk["matches"][0]["path"].endswith("02-chapter-two-repetition.md")
+        text = vault.tool(
+            settings,
+            {
+                "action": "read",
+                "path": chapter_hits[0]["path"],
+                "offset": 10,
+                "limit": 1,
+            },
+        )
+        assert text["text"] == "11: " + chapter_hits[0]["text"]
+        assert (
+            vault.tool(
+                settings,
+                {
+                    "action": "search",
+                    "query": "autonomy",
+                    "document": "book-none-00000000",
+                },
+            )["matches"]
+            == []
+        )
+        assert (
+            code(settings, "vault/source/read", {"documentId": "x"}) == "invalid_params"
+        )
+        try:
+            vault.tool(settings, {"action": "list", "document": "../etc"})
+            raise AssertionError("expected VaultError")
+        except vault.VaultError as error:
+            assert error.code == "invalid_params"
+        # Only Tabgent's chapter files are readable: NN-<title>.md, at their place in
+        # Books/<id>/chapters/, with no symlink in between.
+        absolute = str(root / chapter_hits[0]["path"])
+        assert vault.tool(settings, {"action": "read", "path": absolute})["lines"] > 10
+        chapters = root / "Books" / ident / "chapters"
+        secret = base / "secret.md"
+        secret.write_text("private autonomy notes\n")
+        (chapters / "notes.md").write_text("autonomy notes the user keeps here\n")
+        (chapters / "99-linked.md").symlink_to(secret)
+        stray = root / "Articles" / "article-x-00000000" / "chapters"
+        stray.mkdir(parents=True)
+        (stray / "01-stray.md").write_text("autonomy\n")
+        for path, expected in [
+            (f"Books/{ident}/chapters/notes.md", "invalid_params"),
+            (f"Books/{ident}/chapters/99-linked.md", "not_found"),
+            ("Articles/article-x-00000000/chapters/01-stray.md", "invalid_params"),
+            (f"Books/{ident}/chapters/../../../../secret.md", "invalid_params"),
+        ]:
+            try:
+                vault.tool(settings, {"action": "read", "path": path})
+                raise AssertionError("expected VaultError: " + path)
+            except vault.VaultError as error:
+                assert error.code == expected, (path, error.code)
+        searched = vault.tool(settings, {"action": "search", "query": "autonomy"})
+        paths = [m["path"] for m in searched["matches"]]
+        assert not [
+            p for p in paths if "notes.md" in p or "linked" in p or "stray" in p
+        ]
+        assert (
+            vault.tool(settings, {"action": "list"})["documents"][0]["chapterCount"]
+            == 3
+        )
+        for extra in (chapters / "notes.md", chapters / "99-linked.md"):
+            extra.unlink()
+        shutil.rmtree(root / "Articles" / "article-x-00000000")
+
         # A web page and a book without an original are not books to reopen.
         call(
             settings,
@@ -614,7 +705,7 @@ with tempfile.TemporaryDirectory(prefix="tabgent-epub-vault-") as directory:
             "OEBPS/ch3.xhtml",
         ]
         assert result["source"]["skippedChapters"][0]["href"] == "OEBPS/ch2.xhtml"
-print("PASS vault/source/save, vault/source/read and vault/books/list for EPUB books")
+print("PASS vault source save/read, books list, and reading_vault over chapter files")
 
 
 # The host returns large source reads in chunk frames, without Codex.

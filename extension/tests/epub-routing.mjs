@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { bookUrl, cleanEpubAnchor } from '../vault-client.js';
+import { readingContextPrefix } from '../session-config.js';
 const event = () => ({
   listeners: [],
   addListener(fn) {
@@ -63,6 +64,13 @@ await import('../background.js');
 await new Promise((r) => setTimeout(r, 0));
 
 const sha256 = 'a'.repeat(64);
+async function until(check) {
+  for (let i = 0; i < 100; i++, await new Promise((r) => setTimeout(r, 10))) {
+    const value = check();
+    if (value) return value;
+  }
+  return null;
+}
 const anchor = {
   kind: 'epub',
   cfi: 'epubcfi(/6/4!/4/4,/1:0,/1:15)',
@@ -121,12 +129,22 @@ const listener = chrome.runtime.onMessage.listeners[0];
 const call = (m, s = sender) => new Promise((resolve) => listener(m, s, resolve));
 assert.match((await call({ type: 'epubBooks' })).error, /Invalid EPUB reader sender/);
 const posted = [];
+const readerCommands = {};
 const port = {
   name: 'epub',
   sender,
   onMessage: event(),
   onDisconnect: event(),
-  postMessage: (m) => posted.push(m),
+  // The reader answers highlight commands on the same port.
+  postMessage(m) {
+    posted.push(m);
+    if (m.type !== 'command') return;
+    const result = readerCommands[m.command.action]?.(m.command);
+    setTimeout(() => {
+      for (const listener of port.onMessage.listeners)
+        listener({ type: 'reply', id: m.id, result });
+    }, 0);
+  },
   disconnect() {},
 };
 onConnect(port);
@@ -202,6 +220,7 @@ const saved = {
   turnCount: 0,
 };
 host['vault/highlight/create'] = () => ({ document, highlight: saved });
+host['vault/discussion/get'] = () => ({ threadIds: [], turns: [] });
 const reply = await call({
   type: 'epubHighlightCreate',
   ask: true,
@@ -213,7 +232,7 @@ const reply = await call({
   chapterFile: 'chapters/01-chapter-one.md',
 });
 assert.deepEqual(reply, { document, highlight: saved });
-assert.deepEqual(vaultCalls().at(-1).params, {
+assert.deepEqual(vaultCalls().findLast((m) => m.method === 'vault/highlight/create').params, {
   url: 'urn:sha256:' + sha256,
   title: 'A Small Book',
   kind: 'epub',
@@ -224,8 +243,10 @@ assert.deepEqual(vaultCalls().at(-1).params, {
 });
 const asked = selections().at(-1);
 assert.equal(asked.text, 'more persistent');
-assert.equal(asked.url, tabs[1].url, 'The live reader URL names the book');
-assert.deepEqual(asked.highlight, { documentId: document.id, highlightId: 'h001' });
+// The quote names the book by its vault identity, so the conversation binds to it.
+assert.equal(asked.url, 'urn:sha256:' + sha256);
+assert.deepEqual(asked.highlight, { documentId: document.id, highlightId: 'h001', kind: 'epub' });
+assert.equal(asked.location, 'Chapter One');
 assert.deepEqual(asked.context, { before: 'People are ', after: ' when they endorse.' });
 assert.equal(asked.locator.kind, 'epub');
 assert.deepEqual(asked.locator.anchor, cleanEpubAnchor(anchor));
@@ -292,7 +313,11 @@ await call({
   highlightId: 'h001',
   context: { before: 'b', after: 'a' },
 });
-assert.deepEqual(selections().at(-1).highlight, { documentId: document.id, highlightId: 'h001' });
+assert.deepEqual(selections().at(-1).highlight, {
+  documentId: document.id,
+  highlightId: 'h001',
+  kind: 'epub',
+});
 assert.equal(selections().at(-1).locator.anchor.cfi, anchor.cfi);
 assert.deepEqual(await call({ type: 'epubResolve', sha256, title: 'A Small Book' }), {
   document,
@@ -327,15 +352,75 @@ await call({
 });
 const quoted = selections().at(-1);
 assert.equal(quoted.text, 'endorse');
-assert.equal(quoted.url, tabs[1].url);
+assert.equal(quoted.url, reader, 'Before the reader names its book');
 assert.equal(quoted.locator.kind, 'epub');
 assert.equal(quoted.highlight, undefined);
 const stale = await call({ type: 'pageSelection', text: 'x' }, { ...sender, documentId: 'old' });
 assert.match(stale.error, /Stale EPUB selection/);
 await call({ type: 'pageSelectionCleared', selectionId: 's1' });
 assert.equal(selections().at(-1), null);
+for (const listener of port.onMessage.listeners)
+  listener({ type: 'book', sha256, title: 'A Small Book' });
+await call({
+  type: 'pageSelection',
+  text: 'endorse',
+  selectionId: 's2',
+  locator: { kind: 'epub' },
+});
+assert.equal(selections().at(-1).url, 'urn:sha256:' + sha256);
 console.log(
   'PASS reader selections reach the tab conversation; stale reader documents are rejected',
+);
+
+// The reading companion sees the reader tab as the book: page, binding, jump and reopen.
+const conversationKey = messages.find((m) => m.type === 'attached').state.conversationKey;
+const side = (m) => call({ conversationKey, companionTabId: 1, ...m }, chat.sender);
+host['vault/status'] = () => ({ configured: true, path: '/vault', writable: true });
+const state = await side({ type: 'readingState' });
+assert.deepEqual(state.page, { url: 'urn:sha256:' + sha256, title: 'A Small Book', kind: 'epub' });
+assert.deepEqual(vaultCalls().findLast((m) => m.method === 'vault/document/resolve').params, {
+  url: 'urn:sha256:' + sha256,
+  title: 'A Small Book',
+  kind: 'epub',
+});
+assert.equal(state.binding?.highlightId, 'h001', 'Ask AI bound the conversation to the book');
+readerCommands.jump = (command) => ({ found: command.highlightId === 'h001' });
+assert.deepEqual(await side({ type: 'readingJump', highlightId: 'h001' }), { found: true });
+assert.deepEqual(posted.findLast((m) => m.type === 'command').command, {
+  type: 'tabgentHighlight',
+  action: 'jump',
+  highlightId: 'h001',
+});
+readerCommands.context = () => ({
+  before: 'People are ',
+  after: ' when',
+  chapterFile: 'chapters/01-chapter-one.md',
+});
+await side({ type: 'readingOpen', documentId: document.id, highlightId: 'h001' });
+const opened = selections().at(-1);
+assert.equal(opened.url, 'urn:sha256:' + sha256);
+assert.deepEqual(opened.context, { before: 'People are ', after: ' when' });
+assert.equal(opened.locator.kind, 'epub');
+assert.equal(opened.locator.chapterFile, folder + '/chapters/01-chapter-one.md');
+// Messages from the reader tab carry a reading context that names the book's chapters.
+await chat.onMessage.listeners[0]({
+  type: 'ui',
+  name: 'codexRpc',
+  args: [{ id: 50, method: 'turn/start', params: { input: [{ type: 'text', text: 'Why?' }] } }],
+});
+const turn = await until(() =>
+  sent.findLast((m) => m.op === 'rpc' && m.message.method === 'turn/start'),
+);
+const part = turn.message.params.input.find((p) => p.text?.startsWith(readingContextPrefix));
+const reading = JSON.parse(part.text.slice(readingContextPrefix.length));
+assert.equal(reading.document.kind, 'epub');
+assert.equal(reading.document.url, 'urn:sha256:' + sha256);
+assert.equal(reading.document.chapters, folder + '/chapters');
+// A closed book leaves the reader tab without a document.
+for (const listener of port.onMessage.listeners) listener({ type: 'book', sha256: '' });
+assert.equal((await side({ type: 'readingState' })).page, null);
+console.log(
+  'PASS the reading companion maps the reader tab to its book; jump and reopen use the port',
 );
 
 // The toolbar button's context menu opens the reader next to the current tab.

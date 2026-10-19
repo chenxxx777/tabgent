@@ -197,6 +197,7 @@ async function showBook(file, sha256, token) {
   state.title = label(book.metadata?.title) || file.name.replace(/\.epub$/i, '');
   const author = label(book.metadata?.author);
   state.meta = author ? { author } : {};
+  library.announce({ sha256, title: state.title });
   document.title = state.title;
   $('#bookTitle').textContent = state.title;
   $('#start').hidden = true;
@@ -235,6 +236,7 @@ async function showBook(file, sha256, token) {
 }
 
 function closeBook() {
+  library.announce(null);
   // The tab's conversation no longer shows this book's highlight status.
   if (state.sha256)
     void library.send({ type: 'epubHighlightStatus', sha256: null }).catch(() => {});
@@ -726,6 +728,26 @@ $('#menuDelete').onclick = async () => {
     failure('highlightDeleteFailed', error);
   }
 };
+
+// The side panel's highlight list jumps to a highlight or asks for its nearby text.
+library.handleCommands(async (command) => {
+  if (command?.type !== 'tabgentHighlight') throw Error('Unknown command');
+  const entry = state.highlights.get(command.highlightId);
+  if (!entry || !state.view) return { found: false };
+  const href = entry.record.anchor?.chapter?.href || '';
+  if (command.action === 'jump') {
+    if (entry.status === 'unanchored') return { found: false };
+    await state.view.goTo(entry.cfi || entry.record.anchor.cfi);
+    return { found: true };
+  }
+  if (command.action !== 'context') throw Error('Unknown command');
+  const index = state.book.sections.findIndex((section) => section.id === href);
+  if (index < 0) return { before: '', after: '', chapterFile: chapterFile(href) };
+  const shown = state.view.renderer.getContents().find((item) => item.index === index)?.doc;
+  const doc = shown || (await state.book.sections[index].createDocument());
+  const found = locate(doc, index, entry.record);
+  return { ...(found?.context || { before: '', after: '' }), chapterFile: chapterFile(href) };
+});
 
 const book = new URLSearchParams(location.search).get('book');
 if (book) void openFromVault(book);

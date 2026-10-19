@@ -6,6 +6,8 @@ import {
   isEpubReaderUrl,
   isCurrentEpubSender,
   openEpubReader,
+  epubDocument,
+  epubCommand,
 } from './epub-routing.js';
 import { tool, instructions, pageContextPrefix } from './session-config.js';
 import { browserTool, context } from './browser-tools.js';
@@ -92,6 +94,14 @@ const reading = createReadingCompanion({
   event,
   vault,
   pdfSource,
+  epubDocument,
+  // Highlight commands reach webpage content scripts or the EPUB reader page.
+  tabMessage: async (tabId, message) => {
+    const tab = await chrome.tabs.get(tabId).catch(() => null);
+    return epubDocument(tab) !== undefined
+      ? epubCommand(tabId, message)
+      : chrome.tabs.sendMessage(tabId, message, { frameId: 0 });
+  },
 });
 const readingMessages = new Set([
   'readingState',
@@ -962,7 +972,6 @@ async function epubMessage(msg, sender) {
       ? { chapterFile: `${document.folder}/${chapterFile}` }
       : {}),
   });
-  const pageUrl = async () => (await chrome.tabs.get(tabId)).url;
   if (msg.type === 'epubHighlightCreate') {
     const anchor = cleanEpubAnchor(msg.anchor),
       text = pageText(msg.text, 20000);
@@ -984,12 +993,15 @@ async function epubMessage(msg, sender) {
       document = created.document || null;
     if (msg.ask)
       await handOffSelection(sender, {
-        url: await pageUrl(),
+        url,
         text,
         title,
         context,
+        location: anchor.chapter.title,
         highlight:
-          highlight && document ? { documentId: document.id, highlightId: highlight.id } : null,
+          highlight && document
+            ? { documentId: document.id, highlightId: highlight.id, kind: 'epub' }
+            : null,
         locator: locator(anchor, document),
       });
     return {
@@ -1011,11 +1023,12 @@ async function epubMessage(msg, sender) {
     return { ok: true };
   }
   await handOffSelection(sender, {
-    url: await pageUrl(),
+    url,
     text: pageText(highlight.text, 20000) || pageText(highlight.anchor?.quote?.exact, 20000),
     title,
     context,
-    highlight: { documentId: resolved.document.id, highlightId: highlight.id },
+    location: pageText(highlight.location, 200),
+    highlight: { documentId: resolved.document.id, highlightId: highlight.id, kind: 'epub' },
     locator: locator(highlight.anchor || null, resolved.document),
   });
   return { ok: true };
@@ -1046,8 +1059,8 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
       } else if (epub) {
         // Like PDF.js, the reader is an extension document hidden from webNavigation.
         if (!isCurrentEpubSender(sender)) throw Error('Stale EPUB selection');
-        // The reader's live URL names its book (?book=), unlike the load-time sender URL.
-        selectionUrl = (await chrome.tabs.get(sender.tab.id)).url;
+        // Quotes name the book by its vault identity, as PDF quotes name the source PDF.
+        selectionUrl = epubDocument({ id: sender.tab.id, url: sender.url })?.url || sender.url;
       } else {
         const frame = await chrome.webNavigation.getFrame({
           tabId: sender.tab.id,

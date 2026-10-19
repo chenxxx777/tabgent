@@ -1,20 +1,46 @@
 // Messages from the reader to the service worker, and book import/reopen through the vault.
 // The worker accepts messages only from a reader document that registered its 'epub' port.
+// The port also tells the worker which book is open and carries its highlight commands.
 const CHUNK = 2 * 1024 * 1024;
 let port,
-  ready = null;
+  ready = null,
+  book = null,
+  commands = null;
 
 export function connect() {
-  port = chrome.runtime.connect({ name: 'epub' });
+  const current = (port = chrome.runtime.connect({ name: 'epub' }));
   ready = new Promise((resolve) => {
-    port.onMessage.addListener((message) => {
-      if (message?.type === 'ready') resolve();
+    current.onMessage.addListener((message) => {
+      if (message?.type === 'ready') {
+        // A restarted worker learns the open book again.
+        if (book) current.postMessage({ type: 'book', ...book });
+        resolve();
+      } else if (message?.type === 'command') void answer(current, message);
     });
   });
   port.onDisconnect.addListener(() => {
     ready = null;
     setTimeout(connect, 500);
   });
+}
+
+// The book this reader shows, as { sha256, title }, or null.
+export function announce(value) {
+  book = value;
+  try {
+    port?.postMessage({ type: 'book', ...(value || { sha256: '' }) });
+  } catch {}
+}
+export function handleCommands(handler) {
+  commands = handler;
+}
+async function answer(target, { id, command }) {
+  try {
+    const result = await commands?.(command);
+    target.postMessage({ type: 'reply', id, result: result ?? null });
+  } catch (error) {
+    target.postMessage({ type: 'reply', id, error: error?.message || String(error) });
+  }
 }
 
 export async function send(message, retry = true) {

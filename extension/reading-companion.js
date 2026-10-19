@@ -36,6 +36,8 @@ export function createReadingCompanion({
   event,
   vault,
   pdfSource,
+  epubDocument = () => undefined,
+  tabMessage = (tabId, message) => chrome.tabs.sendMessage(tabId, message, { frameId: 0 }),
 }) {
   const turns = new Map();
   let status = null,
@@ -54,10 +56,13 @@ export function createReadingCompanion({
     return value;
   }
 
-  // The readable document behind a tab. EPUB readers extend this with their own pages.
+  // The readable document behind a tab. The EPUB reader names its book by file hash.
   async function pageDocument(tabId, page = {}) {
     const tab = await chrome.tabs.get(tabId).catch(() => null);
     if (!tab || tab.incognito) return null;
+    const book = epubDocument(tab);
+    if (book !== undefined)
+      return book && { ...book, title: clip(book.title || page.title || tab.title || '', 500) };
     const pdf = pdfSource(tab.url);
     const url = documentUrl(pdf || page.url || tab.url || '');
     if (!/^https?:/.test(url)) return null;
@@ -149,6 +154,8 @@ export function createReadingCompanion({
         ...document,
         id: bound?.highlightId ? bound.documentId : existing?.id,
         notes: existing?.highlightsPath,
+        // An imported EPUB's text, one Markdown file per chapter (chapters/NN-<title>.md).
+        chapters: document.kind === 'epub' && existing?.folder ? existing.folder + '/chapters' : '',
       },
       highlight: bound?.highlightId && {
         highlightId: bound.highlightId,
@@ -351,13 +358,11 @@ export function createReadingCompanion({
       return state(source, tabId);
     }
     if (msg.type === 'readingJump') {
-      const result = await chrome.tabs
-        .sendMessage(
-          tabId,
-          { type: 'tabgentHighlight', action: 'jump', highlightId: String(msg.highlightId) },
-          { frameId: 0 },
-        )
-        .catch(() => null);
+      const result = await tabMessage(tabId, {
+        type: 'tabgentHighlight',
+        action: 'jump',
+        highlightId: String(msg.highlightId),
+      }).catch(() => null);
       return { found: !!result?.found };
     }
     if (msg.type === 'readingOpen') {
@@ -375,13 +380,11 @@ export function createReadingCompanion({
       if (!highlight) throw Error('Highlight not found on this page');
       const [frame, context] = await Promise.all([
         chrome.webNavigation.getFrame({ tabId, frameId: 0 }).catch(() => null),
-        chrome.tabs
-          .sendMessage(
-            tabId,
-            { type: 'tabgentHighlight', action: 'context', highlightId: highlight.id },
-            { frameId: 0 },
-          )
-          .catch(() => null),
+        tabMessage(tabId, {
+          type: 'tabgentHighlight',
+          action: 'context',
+          highlightId: highlight.id,
+        }).catch(() => null),
       ]);
       const tab = await chrome.tabs.get(tabId);
       return focusHighlight(
@@ -390,7 +393,7 @@ export function createReadingCompanion({
           id: crypto.randomUUID(),
           text: clip(highlight.text, 20000),
           truncated: false,
-          url: pdfSource(tab.url) || tab.url,
+          url: document.kind === 'epub' ? document.url : pdfSource(tab.url) || tab.url,
           title: document.title,
           frameId: 0,
           documentId: frame?.documentId,
@@ -398,6 +401,10 @@ export function createReadingCompanion({
           locator: {
             kind: document.kind,
             anchor: highlight.anchor || null,
+            // The EPUB reader names the chapter file Codex reads instead of the reader tab.
+            ...(/^chapters\/[^/\\]+\.md$/.test(context?.chapterFile || '')
+              ? { chapterFile: `${resolved.document.folder}/${context.chapterFile}` }
+              : {}),
             capturedAt: new Date().toISOString(),
           },
           location: clip(highlight.location, 200),

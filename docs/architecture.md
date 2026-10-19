@@ -202,14 +202,24 @@ and reported as `codex-highlight-status`. Highlights are drawn by foliate's over
 clicking one offers **Ask AI** (or **Open discussion**) and **Delete**.
 
 The reader calls `chrome.sidePanel.open()` synchronously in the click, then asks the
-service worker to save and hand off the selection. The quote carries
-`highlight: { documentId, highlightId }`, chapter text in `context: { before, after }`,
-and `locator: { kind: "epub", anchor, documentId, chapterFile }`, where `chapterFile` is
-the absolute path of the chapter's Markdown file. Plain selections use the page
-selection flow with an EPUB locator. Each reader document registers an `epub` port, and
-the service worker accepts messages only from a tab's current reader document.
+service worker to save and hand off the selection through `handOffSelection()` and
+`reading.focusHighlight()`, so each highlight has its own conversation as on webpages.
+The quote's `url` is the book's `urn:sha256:` identity, and it carries
+`highlight: { documentId, highlightId, kind: "epub" }`, the chapter title as `location`,
+chapter text in `context: { before, after }`, and
+`locator: { kind: "epub", anchor, documentId, chapterFile }`. `chapterFile` is the
+absolute path of the chapter's Markdown file. Plain selections use the page selection
+flow with an EPUB locator.
 
-The reader is not a browser tool target: Codex reads chapter files from the vault.
+Each reader document registers an `epub` port, and the service worker accepts messages
+only from a tab's current reader document. The port also names the open book, so
+`pageDocument()` maps a reader tab to `{ url: "urn:sha256:…", kind: "epub" }` for
+page-level saving, and it carries the side panel's highlight commands (jump, nearby
+text) that webpages answer from their content script. The reading context of a
+message about a book names its `chapters` folder.
+
+The reader is not a browser tool target: the instructions tell Codex to read chapter
+files through `reading_vault` instead.
 Fixed-layout books use foliate's fixed-layout renderer, which has no overlay layer, so
 their highlights are saved but not drawn. Book search, notes on highlights, and EPUB
 files opened from websites or `file://` URLs are not supported.
@@ -255,12 +265,14 @@ sandbox already allows reading the vault folder, but in Ask for approval mode Co
 asks before every shell command, including `rg` and `cat`. The connector therefore
 adds a `reading_vault` dynamic tool next to `read_attachment`. The host answers it
 locally on the vault queue: `list` names the documents, `search` ranks lines of
-`highlights.md` and `source.md` by matching keywords, and `read` returns numbered
-lines of the vault's `AGENTS.md` or a document's `highlights.md`, `source.md` or
-`anchors.json`. The vault folder may be shared, for example with Obsidian or the home
-folder, so no other file is readable. Each file must sit at its exact place under
-`Articles/` or `Books/` with Tabgent's file names and no symlink in between. The tool
-cannot write. Shell reads still work where the permission mode allows them. The instructions in
+`highlights.md`, `source.md` and EPUB `chapters/*.md` by matching keywords (notes before
+book text, optionally within one `document`), and `read` returns numbered lines of the
+vault's `AGENTS.md`, a document's `highlights.md`, `source.md` or `anchors.json`, or an
+imported book's `chapters/NN-<title>.md`. The vault folder may be shared, for example
+with Obsidian or the home folder, so no other file is readable. Each file must sit at
+its exact place under `Articles/` or `Books/` with Tabgent's file names and no symlink
+in between. The tool cannot write. Shell reads still work where the permission mode
+allows them. The instructions in
 `session-config.js` and the vault's `AGENTS.md` describe both.
 
 ## Working on the UI

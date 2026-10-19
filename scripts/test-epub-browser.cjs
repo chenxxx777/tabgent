@@ -263,8 +263,18 @@ async function until(check, ms = 10000) {
     );
     assert(selection, 'The tab conversation received the selection');
     assert.equal(selection.text, 'more persistent');
-    assert.deepEqual(selection.highlight, { documentId, highlightId: 'h002' });
-    assert.equal(selection.url, readerUrl + '?book=' + documentId);
+    assert.deepEqual(selection.highlight, { documentId, highlightId: 'h002', kind: 'epub' });
+    assert.equal(selection.url, 'urn:sha256:' + digest, 'Quotes name the book by its hash');
+    assert.equal(selection.location, 'Chapter One: Beginnings');
+    // The tab's conversation is bound to the highlight in this book (reading-companion.js).
+    const binding = await worker.evaluate(async (tabId) => {
+      const { conversations = [] } = await chrome.storage.session.get('conversations');
+      return conversations.find(([, s]) => s.tabId === tabId && s.reading)?.[1].reading;
+    }, tabId);
+    assert.deepEqual(
+      [binding?.url, binding?.kind, binding?.documentId, binding?.highlightId],
+      ['urn:sha256:' + digest, 'epub', documentId, 'h002'],
+    );
     assert(selection.context.before.endsWith('one’s own actions. People are '));
     assert(selection.context.after.startsWith(' when they endorse what they do.'));
     assert.equal(selection.locator.kind, 'epub');
