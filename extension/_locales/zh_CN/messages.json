@@ -182,24 +182,6 @@
   "highlightTurns": {
     "message": "已保存 $1 条"
   },
-  "epubOpenReader": {
-    "message": "打开 EPUB 阅读器"
-  },
-  "epubReaderTitle": {
-    "message": "EPUB 阅读器"
-  },
-  "epubDropHint": {
-    "message": "将 EPUB 文件拖到这里，或选择一个文件。它会保存到你的阅读库，之后可以在这里直接重新打开。"
-  },
-  "epubChoose": {
-    "message": "选择 EPUB 文件"
-  },
-  "epubVaultBooks": {
-    "message": "阅读库中的书"
-  },
-  "epubNoBooks": {
-    "message": "还没有书。"
-  },
   "epubBooksUnavailable": {
     "message": "无法访问阅读库：$1"
   },
@@ -211,9 +193,6 @@
   },
   "epubUntitled": {
     "message": "未命名"
-  },
-  "epubNotEpub": {
-    "message": "请选择 EPUB 文件。"
   },
   "epubLoading": {
     "message": "正在打开…"
@@ -267,7 +246,7 @@
     "message": "分页"
   },
   "epubLibrary": {
-    "message": "书库"
+    "message": "资料库"
   },
   "epubPrevious": {
     "message": "上一页"
@@ -277,5 +256,53 @@
   },
   "epubProgress": {
     "message": "阅读进度"
+  },
+  "libraryOpen": {
+    "message": "打开资料库"
+  },
+  "libraryTitle": {
+    "message": "资料库"
+  },
+  "libraryDropHint": {
+    "message": "将 EPUB 或 PDF 文件拖到这里，或选择一个文件。文件会复制到你的阅读库，之后无需原文件即可在这里重新打开。"
+  },
+  "libraryChoose": {
+    "message": "选择 EPUB 或 PDF 文件"
+  },
+  "libraryDocuments": {
+    "message": "阅读库中的文档"
+  },
+  "libraryEmpty": {
+    "message": "阅读库中还没有内容。在网页或 PDF 中添加高亮，或在这里打开一个文件。"
+  },
+  "libraryNotSupported": {
+    "message": "请选择 EPUB 或 PDF 文件。"
+  },
+  "libraryTooLarge": {
+    "message": "文件超过 100 MB，超出了阅读库的文件大小上限。"
+  },
+  "libraryPdfFailed": {
+    "message": "无法将 PDF 保存到阅读库：$1"
+  },
+  "libraryKindWeb": {
+    "message": "网页"
+  },
+  "libraryKindPdf": {
+    "message": "PDF"
+  },
+  "libraryKindLocalPdf": {
+    "message": "导入的 PDF"
+  },
+  "libraryKindEpub": {
+    "message": "EPUB"
+  },
+  "libraryUpdated": {
+    "message": "更新于 $1"
+  },
+  "libraryNoCopy": {
+    "message": "阅读库中没有副本；请重新选择文件来打开"
+  },
+  "pdfLocalFailed": {
+    "message": "无法从阅读库打开这个 PDF：$1"
   }
 }

@@ -2,15 +2,23 @@
 const viewer = () => chrome.runtime.getURL('pdf/viewer.html') + '?url=';
 const views = new Map();
 let sequence = 0;
+// A PDF imported from the computer is named by the SHA-256 of its bytes, like an EPUB book.
+// Its viewer loads the copy in the ReadingVault; there is no web URL to fall back to.
+const LOCAL = /^urn:sha256:[0-9a-f]{64}(?:#.*)?$/s;
 export function pdfSource(url = '') {
   if (!url.startsWith(viewer())) return null;
+  const rest = url.slice(viewer().length);
+  if (LOCAL.test(rest)) return rest;
   try {
-    const source = new URL(url.slice(viewer().length));
+    const source = new URL(rest);
     return /^https?:$/.test(source.protocol) ? source.href : null;
   } catch {
     return null;
   }
 }
+export const isLocalPdf = (source) => LOCAL.test(source || '');
+// The viewer URL for an online PDF or an imported one (urn:sha256:...).
+export const pdfViewerUrl = (source) => viewer() + source;
 export function pdfTab(tab) {
   const url = pdfSource(tab.url);
   return url ? { ...tab, url, contentType: 'application/pdf', viewer: 'pdfjs' } : tab;
@@ -89,6 +97,7 @@ export function startPdfRouting() {
     const source = pdfSource(sender.url),
       tab = sender.tab;
     if (!source || !tab || tab.incognito || sender.frameId !== 0) return;
+    if (isLocalPdf(source)) return void reply({ error: 'An imported PDF has no web address' });
     // Session rules are tab-scoped: other tabs still use PDF.js, including the same PDF.
     (async () => {
       const id = 1000000 + tab.id;

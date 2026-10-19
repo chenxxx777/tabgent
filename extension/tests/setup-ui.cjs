@@ -1340,6 +1340,13 @@ export function saveScopePreference(){}
           () => document.querySelector('#readingPath').textContent === '~/Notes',
         );
         assert.equal(await page.locator('#readingFolderForm').isVisible(), false);
+        // The library opens in a tab beside the page; the menu closes.
+        assert.equal(await page.locator('#readingLibrary').textContent(), 'Open library');
+        await page.locator('#readingLibrary').click();
+        assert(
+          await page.waitForFunction(() => setupTest.reading.some((r) => r.type === 'openLibrary')),
+        );
+        assert.equal(await page.locator('#readingMenu').isVisible(), false);
         await page.keyboard.press('Escape');
         await page.setViewportSize({ width: 390, height: 720 });
         const centers = await Promise.all(
@@ -1350,7 +1357,7 @@ export function saveScopePreference(){}
         );
         assert(Math.max(...centers) - Math.min(...centers) < 1, 'Toolbar stays on one line');
         await page.setViewportSize({ width: 1280, height: 720 });
-        console.log('PASS reading notes toggle, target label and vault folder settings');
+        console.log('PASS reading notes toggle, target label, vault folder settings and library');
 
         await page.locator('#historyToggle').click();
         const entries = page.locator('.highlight-entry');

@@ -18,6 +18,7 @@
     "test:highlights": "node scripts/test-highlights-browser.cjs",
     "test:pdf-highlights": "node scripts/test-pdf-highlights-browser.cjs",
     "test:epub": "node scripts/test-epub-browser.cjs",
+    "test:library": "node scripts/test-library-browser.cjs",
     "package:store": "python3 scripts/package-store.py"
   },
   "devDependencies": {

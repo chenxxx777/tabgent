@@ -63,8 +63,17 @@ export async function sha256Hex(bytes) {
 }
 
 // Uploads the original in order; an interrupted import resumes where the vault stopped.
-export async function importBook({ bytes, sha256, title, meta, name, onProgress }) {
-  const base = { type: 'epubSourceSave', sha256, title, meta, name, size: bytes.byteLength };
+// The library imports PDFs the same way (kind 'pdf'); EPUB is the default.
+export async function importBook({ bytes, sha256, title, meta, name, kind, onProgress }) {
+  const base = {
+    type: 'epubSourceSave',
+    sha256,
+    title,
+    meta,
+    name,
+    size: bytes.byteLength,
+    ...(kind ? { kind } : {}),
+  };
   let reply = await send({ ...base, offset: 0, data: '' });
   while (!reply.complete) {
     const offset = reply.received;
@@ -120,4 +129,27 @@ export async function savePosition(sha256, value) {
 }
 export async function positions() {
   return (await chrome.storage.local.get(POSITIONS))[POSITIONS] || {};
+}
+
+// The title and author an imported PDF is saved under, read with PDF.js as the viewer reads
+// them, so the vault document and the viewer's highlights agree. Parsing it first also
+// refuses a damaged file before it is copied into the vault.
+export async function pdfDetails(bytes, name, url) {
+  const [pdfjs, { pdfInfo }] = await Promise.all([
+    import('../vendor/pdfjs/build/pdf.mjs'),
+    import('../pdf/pdf-info.js'),
+  ]);
+  pdfjs.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL('vendor/pdfjs/build/pdf.worker.mjs');
+  // PDF.js moves the buffer it is given to its worker; the caller keeps the original.
+  const task = pdfjs.getDocument({ data: bytes.slice(), isEvalSupported: false, enableXfa: false });
+  try {
+    const pdf = await new Promise((resolve, reject) => {
+      // An encrypted PDF is named by its file; the viewer asks for the password.
+      task.onPassword = () => resolve(null);
+      task.promise.then(resolve, reject);
+    });
+    return pdf ? await pdfInfo(pdf, url, name) : { title: name, meta: {} };
+  } finally {
+    void task.destroy();
+  }
 }

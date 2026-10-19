@@ -1,11 +1,13 @@
 import { paintAgentPointer } from '../agent-pointer.js';
-import { t } from '../i18n.js';
-import { pdfSource } from '../pdf-routing.js';
+import { t, loadTimeData } from '../i18n.js';
+import { pdfSource, isLocalPdf } from '../pdf-routing.js';
 import { startHighlights } from './pdf-highlights.js';
 const frame = document.querySelector('#viewer');
 const status = document.querySelector('#status');
 const source = pdfSource(location.href);
-if (source) {
+// An imported PDF (urn:sha256:...) opens from its copy in the ReadingVault.
+const local = isLocalPdf(source);
+if (source && !local) {
   const icon = new Image();
   icon.referrerPolicy = 'no-referrer';
   icon.onload = () => {
@@ -15,13 +17,16 @@ if (source) {
 }
 const native = document.querySelector('#native');
 native.textContent = t('pdfOpenNative');
-status.textContent = t('pdfLoading');
+// Chrome's viewer needs a web address; an imported PDF has none.
+native.hidden = local;
+if (!local) status.textContent = t('pdfLoading');
 let app,
   port,
   last = '',
   selectionId,
   ready = false;
 async function fallback() {
+  if (local) return;
   if (app?.pdfDocument?.annotationStorage.size && !confirm(t('pdfDirty'))) return;
   const result = await chrome.runtime.sendMessage({ type: 'pdfFallback' });
   if (result?.error) status.textContent = result.error;
@@ -30,6 +35,44 @@ native.onclick = fallback;
 const timer = setTimeout(() => {
   if (!ready) void fallback();
 }, 30000);
+// The vault copy is read in chunks by the service worker, which accepts the request only
+// from this viewer's registered port, and is checked against the SHA-256 in its address.
+async function loadLocal() {
+  connect();
+  const digest = source.slice('urn:sha256:'.length, 'urn:sha256:'.length + 64);
+  const parts = [];
+  let offset = 0,
+    reply;
+  status.textContent = loadTimeData.getStringF('epubLoadingVault', '');
+  do {
+    reply = await viewerRequest({ type: 'pdfLocalRead', offset, length: 2 * 1024 * 1024 });
+    const bytes = Uint8Array.fromBase64(reply.data);
+    if (!bytes.length && !reply.eof) throw Error('The vault returned no data');
+    parts.push(bytes);
+    offset += bytes.length;
+    const done = Math.round((100 * offset) / Math.max(1, reply.source.size));
+    status.textContent = loadTimeData.getStringF('epubLoadingVault', `${done}%`);
+  } while (!reply.eof);
+  const data = new Uint8Array(await new Blob(parts).arrayBuffer());
+  const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', data));
+  if ([...hash].map((b) => b.toString(16).padStart(2, '0')).join('') !== digest)
+    throw Error('The stored PDF does not match its checksum');
+  return { data, name: reply.source.name || 'document.pdf' };
+}
+async function viewerRequest(message) {
+  for (let attempt = 0; ; attempt++) {
+    const reply = await chrome.runtime.sendMessage(message);
+    // The service worker may not have registered this viewer's port yet.
+    if (reply?.error === 'Stale PDF viewer' && attempt < 20) {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      continue;
+    }
+    if (!reply || reply.error) throw Error(reply?.error || 'No response');
+    return reply;
+  }
+}
+const localFile = local ? loadLocal() : null;
+localFile?.catch(() => {}); // Reported when the PDF.js frame asks for the document.
 function connect() {
   port = chrome.runtime.connect({ name: 'pdf' });
   port.onMessage.addListener(async ({ id, args }) => {
@@ -201,14 +244,22 @@ document.addEventListener('webviewerloaded', async (event) => {
     enableAltTextModelDownload: false,
   });
   app = win.PDFViewerApplication;
+  let name;
   try {
     await app.initializedPromise;
-    // The original URL is validated by the wrapper, not the generic demo viewer.
-    await app.open({ url: source, withCredentials: true });
+    if (local) {
+      const file = await localFile;
+      name = file.name;
+      // The file name names downloads made from the viewer.
+      await app.open({ data: file.data, filename: name });
+    } else {
+      // The original URL is validated by the wrapper, not the generic demo viewer.
+      await app.open({ url: source, withCredentials: true });
+      name = decodeURIComponent(new URL(source).pathname.split('/').pop()) || 'PDF';
+    }
     ready = true;
     clearTimeout(timer);
     status.textContent = '';
-    const name = decodeURIComponent(new URL(source).pathname.split('/').pop()) || 'PDF';
     document.title = name;
     document.querySelector('#title').textContent = name;
     const doc = frame.contentDocument;
@@ -234,10 +285,12 @@ document.addEventListener('webviewerloaded', async (event) => {
       },
       true,
     );
-    connect();
+    if (!port) connect();
     startHighlights({ app, frame, source, name }).catch((e) => console.warn(e));
-  } catch {
+  } catch (error) {
     clearTimeout(timer);
+    if (local)
+      return void (status.textContent = loadTimeData.getStringF('pdfLocalFailed', error.message));
     status.textContent = t('pdfFailed');
     await fallback();
   }

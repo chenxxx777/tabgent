@@ -4,6 +4,7 @@ import { localize, t, loadTimeData } from '../i18n.js';
 import { openBook, label } from './book.js';
 import * as epubAnchor from './anchor.js';
 import * as library from './library.js';
+import { pdfViewerUrl } from '../pdf-routing.js';
 
 const $ = (selector) => document.querySelector(selector);
 const COLOR = 'rgb(255 200 60)';
@@ -40,7 +41,7 @@ const failure = (key, error) => toast(loadTimeData.getStringF(key, error?.messag
 const percent = (fraction) => `${Math.round(Math.max(0, Math.min(1, fraction)) * 100)}%`;
 const status = (text) => ($('#status').textContent = text);
 
-// Library: choose, drop or reopen a vault book.
+// Library: every document in the vault, and EPUB or PDF files chosen or dropped here.
 
 $('#choose').onclick = () => $('#file').click();
 $('#file').onchange = () => {
@@ -70,42 +71,78 @@ $('#library').onclick = () => {
 };
 
 async function showLibrary() {
-  document.title = t('epubReaderTitle');
-  $('#bookTitle').textContent = t('epubReaderTitle');
+  document.title = t('libraryTitle');
+  $('#bookTitle').textContent = t('libraryTitle');
   $('#start').hidden = false;
   const list = $('#books');
   list.replaceChildren();
   $('#booksStatus').textContent = t('epubLoading');
   try {
-    const [{ books }, seen] = await Promise.all([
-      library.send({ type: 'epubBooks' }),
+    const [{ documents }, seen] = await Promise.all([
+      library.send({ type: 'libraryDocuments' }),
       library.positions(),
     ]);
-    $('#booksStatus').textContent = books.length ? '' : t('epubNoBooks');
-    for (const book of books) {
-      const item = document.createElement('li'),
-        button = document.createElement('button'),
-        title = document.createElement('span'),
-        meta = document.createElement('span');
-      title.className = 'title';
-      title.textContent = book.title || t('epubUntitled');
-      meta.className = 'meta';
-      const read = seen[book.source.sha256]?.fraction;
-      meta.textContent = [
-        book.author,
-        loadTimeData.getStringF('epubHighlightCount', book.highlightCount),
-        typeof read === 'number' ? loadTimeData.getStringF('epubReadPercent', percent(read)) : '',
-      ]
-        .filter(Boolean)
-        .join(' · ');
-      button.append(title, meta);
-      button.onclick = () => location.assign('?book=' + encodeURIComponent(book.id));
-      item.append(button);
-      list.append(item);
-    }
+    $('#booksStatus').textContent = documents.length ? '' : t('libraryEmpty');
+    for (const item of documents) list.append(libraryItem(item, seen));
   } catch (error) {
     $('#booksStatus').textContent = loadTimeData.getStringF('epubBooksUnavailable', error.message);
   }
+}
+
+const LOCAL_PDF = /^urn:sha256:[0-9a-f]{64}$/;
+const web = (url) => /^https?:\/\//i.test(url || '');
+const host = (url) => {
+  try {
+    return web(url) ? new URL(url).hostname : '';
+  } catch {
+    return '';
+  }
+};
+// Where a vault document opens: a webpage at its URL, a PDF in the PDF.js viewer (from the
+// web, or from the vault copy of an imported file), and an EPUB in this reader.
+function destination(item) {
+  if (item.kind === 'web') return { label: 'libraryKindWeb', href: web(item.url) && item.url };
+  if (item.kind === 'pdf' && LOCAL_PDF.test(item.url))
+    return { label: 'libraryKindLocalPdf', href: item.source && pdfViewerUrl(item.url) };
+  if (item.kind === 'pdf')
+    return { label: 'libraryKindPdf', href: web(item.url) && pdfViewerUrl(item.url) };
+  return {
+    label: 'libraryKindEpub',
+    href: item.source && '?book=' + encodeURIComponent(item.id),
+  };
+}
+const dates = new Intl.DateTimeFormat(chrome.i18n.getUILanguage(), { dateStyle: 'medium' });
+
+function libraryItem(item, seen) {
+  const { label, href } = destination(item);
+  const li = document.createElement('li'),
+    entry = document.createElement(href ? 'a' : 'div'),
+    title = document.createElement('span'),
+    meta = document.createElement('span');
+  entry.className = 'item';
+  entry.dataset.kind = item.kind;
+  entry.dataset.document = item.id;
+  if (href) entry.href = href;
+  else entry.title = t('libraryNoCopy');
+  title.className = 'title';
+  title.textContent = item.title || t('epubUntitled');
+  meta.className = 'meta';
+  const updated = Date.parse(item.updatedAt);
+  const read = item.kind === 'epub' && seen[item.source?.sha256]?.fraction;
+  meta.textContent = [
+    t(label),
+    item.author,
+    host(item.url),
+    loadTimeData.getStringF('epubHighlightCount', item.highlightCount),
+    Number.isNaN(updated) ? '' : loadTimeData.getStringF('libraryUpdated', dates.format(updated)),
+    typeof read === 'number' ? loadTimeData.getStringF('epubReadPercent', percent(read)) : '',
+    href ? '' : t('libraryNoCopy'),
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  entry.append(title, meta);
+  li.append(entry);
+  return li;
 }
 
 // Each open (or a return to the library) supersedes the ones still loading, which stop
@@ -114,9 +151,13 @@ let opening = 0;
 
 async function openFile(file) {
   if (!file) return;
-  // A file that is not a ZIP archive is rejected without cancelling a book still opening.
-  const head = new Uint8Array(await file.slice(0, 2).arrayBuffer());
-  if (head[0] !== 0x50 || head[1] !== 0x4b) return toast(t('epubNotEpub'));
+  // An EPUB is a ZIP archive; a PDF has %PDF- in its first 1024 bytes. Other files are
+  // refused without cancelling a book still opening.
+  const head = new Uint8Array(await file.slice(0, 1024).arrayBuffer());
+  if (head[0] !== 0x50 || head[1] !== 0x4b) {
+    if (new TextDecoder('latin1').decode(head).includes('%PDF-')) return openPdf(file);
+    return toast(t('libraryNotSupported'));
+  }
   const token = ++opening;
   const bytes = new Uint8Array(await file.arrayBuffer());
   if (token !== opening) return;
@@ -128,6 +169,39 @@ async function openFile(file) {
   void importIntoVault(bytes, file.name, sha256);
 }
 
+// A PDF is copied into the vault, named by its SHA-256, and then opened in the PDF.js
+// viewer from that copy, so it reopens later from this library without the file.
+const PDF_LIMIT = 100 * 1024 * 1024; // The vault's limit for imported originals.
+async function openPdf(file) {
+  if (file.size > PDF_LIMIT) return toast(t('libraryTooLarge'));
+  const token = ++opening;
+  status(t('epubLoading'));
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const sha256 = await library.sha256Hex(bytes);
+    const url = 'urn:sha256:' + sha256;
+    const { title, meta } = await library.pdfDetails(bytes, file.name, url);
+    if (token !== opening) return;
+    status(loadTimeData.getStringF('epubSaving', '0%'));
+    await library.importBook({
+      bytes,
+      sha256,
+      title,
+      meta,
+      name: file.name,
+      kind: 'pdf',
+      onProgress: (fraction) =>
+        token === opening && status(loadTimeData.getStringF('epubSaving', percent(fraction))),
+    });
+    if (token !== opening) return;
+    status('');
+    location.assign(pdfViewerUrl(url));
+  } catch (error) {
+    if (token !== opening) return;
+    status('');
+    failure('libraryPdfFailed', error);
+  }
+}
 async function openFromVault(documentId) {
   const token = ++opening;
   status(loadTimeData.getStringF('epubLoadingVault', ''));

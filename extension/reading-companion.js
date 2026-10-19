@@ -65,7 +65,8 @@ export function createReadingCompanion({
       return book && { ...book, title: clip(book.title || page.title || tab.title || '', 500) };
     const pdf = pdfSource(tab.url);
     const url = documentUrl(pdf || page.url || tab.url || '');
-    if (!/^https?:/.test(url)) return null;
+    // An imported PDF is named by its file hash, like a book.
+    if (!/^https?:/.test(url) && !(pdf && /^urn:sha256:[0-9a-f]{64}$/.test(url))) return null;
     return { url, title: clip(page.title || tab.title || '', 500), kind: pdf ? 'pdf' : 'web' };
   }
   const resolveDocument = (document) =>
