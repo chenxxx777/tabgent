@@ -285,9 +285,14 @@ chrome.runtime.onMessage.addListener((m, sender, reply) => {
     console.log('PASS Highlight saves page, quote, text-layer offsets and PDF rects, then paints');
 
     // Restore after reload: verified by the saved offsets on the saved page.
+    const reportsBefore = (await calls('highlightStatus')).length;
     await open('#page=2');
     await showPage(2);
     assert.deepEqual(await until(async () => (await painted()).length && painted()), [quote]);
+    assert(
+      (await calls('highlightStatus')).slice(reportsBefore).every((s) => !s.unanchored.length),
+      'A highlight is not reported unanchored while it is being restored',
+    );
     const status = (await calls('highlightStatus')).at(-1);
     assert.deepEqual(
       { anchored: status.anchored, unanchored: status.unanchored, documentId: status.documentId },
@@ -338,6 +343,16 @@ chrome.runtime.onMessage.addListener((m, sender, reply) => {
       ),
       [quote],
     );
+    // The PDF.js find field keeps Tab and Escape while the popover is open.
+    await pdf.evaluate(() => PDFViewerApplication.findBar.open());
+    await pdf.locator('#findInput').waitFor();
+    await page.keyboard.press('Tab');
+    assert.notEqual(await pdf.evaluate(() => document.activeElement.localName), 'tabgent-reader');
+    await pdf.locator('#findInput').focus();
+    await page.keyboard.press('Escape');
+    assert.equal(await pdf.evaluate(() => PDFViewerApplication.findBar.opened), false);
+    await page.mouse.click(frame.x + hit.x, frame.y + hit.y);
+    await wait(300);
     await press('discuss');
     const asked = (await until(async () => (await calls('highlightAsk')).at(-1))) || {};
     assert.equal(asked.highlightId, 'h001');

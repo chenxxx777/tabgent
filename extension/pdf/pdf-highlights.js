@@ -36,7 +36,8 @@ async function documentInfo(app, source, name) {
   try {
     const { info, metadata } = await app.pdfDocument.getMetadata();
     const value = metadata?.get('dc:title');
-    const title = value && value !== 'Untitled' && !/[￰-￿]/.test(value) ? value : info?.Title;
+    const title =
+      value && value !== 'Untitled' && !/[\uFFF0-\uFFFF]/.test(value) ? value : info?.Title;
     return {
       title: (typeof title === 'string' && title.trim()) || name,
       meta: {
@@ -355,6 +356,12 @@ export async function startHighlights({ app, frame, source, name }) {
     return backward ? rects[0] : rects.at(-1);
   }
   const editing = () => app.pdfViewer.annotationEditorMode > 0;
+  function editable(node) {
+    const element = node?.nodeType === 1 ? node : node?.parentElement;
+    return !!(
+      element?.isContentEditable || element?.closest?.('input,textarea,select,[contenteditable]')
+    );
+  }
   function evaluateSelection() {
     if (inUi() || pointerDown) return;
     const selection = doc.getSelection();
@@ -557,8 +564,11 @@ export async function startHighlights({ app, frame, source, name }) {
     place(popover, rect);
   }
 
-  let reported = '';
+  let reported = '',
+    restoring = false;
+  // Saved highlights still being restored are not reported as unanchored.
   function report() {
+    if (restoring) return;
     const saved = [...records.values()].filter((record) => record.highlight);
     const unanchored = saved.filter((record) => !record.segments).map((r) => r.highlight.id);
     const status = {
@@ -575,13 +585,18 @@ export async function startHighlights({ app, frame, source, name }) {
 
   // Unconfident anchors stay unpainted and are reported as unanchored.
   async function anchorAll() {
-    for (const record of [...records.values()]) {
-      if (!record.highlight) continue;
-      const match = await anchors.resolve(record.highlight.anchor, pages).catch(() => null);
-      record.segments = match?.segments || null;
-      record.method = match?.method;
-      prefetch(record.segments);
-      scheduleRepaint();
+    restoring = true;
+    try {
+      for (const record of [...records.values()]) {
+        if (!record.highlight) continue;
+        const match = await anchors.resolve(record.highlight.anchor, pages).catch(() => null);
+        record.segments = match?.segments || null;
+        record.method = match?.method;
+        prefetch(record.segments);
+        scheduleRepaint();
+      }
+    } finally {
+      restoring = false;
     }
     repaint();
     report();
@@ -653,19 +668,21 @@ export async function startHighlights({ app, frame, source, name }) {
       if (event.target === host) return;
       const open = [toolbar, popover].find((element) => element && !element.hidden);
       if (!open) return;
+      // Escape also reaches PDF.js, for example to close the find bar.
       if (event.key === 'Escape') dismiss();
       else if (
         event.key === 'Tab' &&
         !event.shiftKey &&
         !event.altKey &&
         !event.ctrlKey &&
-        !event.metaKey
-      )
+        !event.metaKey &&
+        !editable(doc.activeElement)
+      ) {
         // The visible toolbar is the next stop after the selection.
+        event.preventDefault();
+        event.stopPropagation();
         enterUi(open);
-      else return;
-      event.preventDefault();
-      event.stopPropagation();
+      }
     },
     options,
   );

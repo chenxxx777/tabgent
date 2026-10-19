@@ -98,10 +98,10 @@ export function cleanPdfAnchor(anchor) {
   const exact = text(anchor?.quote?.exact, 20000);
   const page = Number.isInteger(anchor?.page) && anchor.page >= 1 ? anchor.page : null;
   if (anchor?.kind !== 'pdf' || !exact.trim() || !page || page > 1000000) return null;
-  const endPage =
-    Number.isInteger(anchor.endPage) && anchor.endPage > page && anchor.endPage <= page + 50
-      ? anchor.endPage
-      : page;
+  // A quote spans page..endPage, so an endPage that cannot be kept invalidates the anchor.
+  const endPage = anchor.endPage ?? page;
+  if (endPage !== page && !(Number.isInteger(endPage) && endPage > page && endPage <= page + 50))
+    return null;
   const clean = {
     kind: 'pdf',
     page,

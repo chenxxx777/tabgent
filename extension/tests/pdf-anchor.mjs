@@ -218,11 +218,14 @@ assert.deepEqual(
   },
 );
 assert.deepEqual(
-  cleanPdfAnchor({ kind: 'pdf', page: 2, endPage: 900, quote: { exact: 'x' }, textLayer: {} }),
+  cleanPdfAnchor({ kind: 'pdf', page: 2, endPage: 2, quote: { exact: 'x' }, textLayer: {} }),
   { kind: 'pdf', page: 2, quote: { exact: 'x', prefix: '', suffix: '' } },
 );
 for (const bad of [
   null,
+  { kind: 'pdf', page: 2, endPage: 900, quote: { exact: 'x' } },
+  { kind: 'pdf', page: 2, endPage: 1, quote: { exact: 'x' } },
+  { kind: 'pdf', page: 2, endPage: '3', quote: { exact: 'x' } },
   { kind: 'web', page: 1, quote: { exact: 'x' } },
   { kind: 'pdf', page: 0, quote: { exact: 'x' } },
   { kind: 'pdf', page: 1.5, quote: { exact: 'x' } },
