@@ -30,7 +30,8 @@ The default suite checks syntax and English string references, scoped-browser
 guards, selection ownership, DOM range capture, native disconnect reporting,
 upload validation, and the chat UI with a controlled bridge. It also covers web
 anchor build and restore, the highlight toolbar, and vault requests with a fake
-connector port. Browser tests launch headless Chromium and use local fixtures.
+connector port. EPUB checks cover anchors, script neutralization, reader routing,
+vault import and chapter extraction with a generated fixture book. Browser tests launch headless Chromium and use local fixtures.
 They do not authenticate or call a real model. `CHROME_PATH` can override the
 headless binary too.
 
@@ -57,6 +58,11 @@ These are deliberately excluded from `npm test`:
 | `python3 extension/tests/oauth-preauth.py`   | Installed Codex and network; starts and cancels real OAuth flows without completing sign-in. |
 | `node extension/tests/browser-input.cjs`     | Loaded extension in a dedicated debug browser; manipulates local fixture pages.              |
 | `npm run test:highlights`                    | Playwright Chromium; source connector with temporary profile, HOME, and CODEX_HOME.          |
+| `npm run test:epub`                          | Playwright Chromium and Python; the real connector with temporary `HOME` and `CODEX_HOME`.   |
+
+`npm run test:epub` imports a generated book into a temporary vault, checks highlights,
+Ask AI, reopening, a browser restart and blocked book scripts. Codex discovery is
+disabled, so no app-server or account is used.
 
 Start a debug browser with:
 

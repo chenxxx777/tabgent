@@ -26,7 +26,7 @@ limit which tabs tools can access; they do not validate the intentions of a page
 | `nativeMessaging`                     | Connect to the installed local Python host.                                           |
 | `debugger`                            | Perform trusted browser input and screenshots. Chrome may show an attachment notice.  |
 | `declarativeNetRequestWithHostAccess` | Open online PDF documents in the bundled local viewer; allow native fallback per tab. |
-| `contextMenus`                        | Quote selected text, including text in Chrome's native PDF viewer.                    |
+| `contextMenus`                        | Quote selected text, including in Chrome's PDF viewer; open the EPUB reader.          |
 
 Browser tools enforce current-window or all-windows scope on each operation.
 Incognito and internal browser pages are excluded from ordinary page automation.
@@ -45,6 +45,7 @@ symlink so existing attachment paths remain valid.
 | `~/Library/Application Support/Tabgent/`    | Installed connector and, for normal installations, extension files.     |
 | `$CODEX_HOME/projects/tabgent/attachments/` | User-uploaded file copies, each in a generated subdirectory.            |
 | `~/ReadingVault/` or the configured folder  | Saved highlights, their page URLs and anchors, and saved discussions.   |
+| `Books/book-*/` in the vault                | Imported EPUB files, their SHA-256 record, and chapter text.            |
 | `$CODEX_HOME/projects/tabgent/vault.json`   | The configured ReadingVault folder.                                     |
 | Shared Codex session storage and index      | Conversation history and project association.                           |
 | Chrome extension session storage            | Tab bindings, selection drafts, text drafts, and attachment references. |
@@ -74,5 +75,11 @@ PDF.js renders documents locally in an extension page. PDF scripts and automatic
 alt-text model downloads are disabled. Opening a PDF alone does not send it to
 Codex; submitting a quote or asking Agent to read it supplies that context.
 Highlights and comments are saved only when you download the edited PDF.
+
+The EPUB reader renders books locally in an extension page with book scripts and
+remote resources blocked. Opening a book copies it into the reading vault, with its
+chapter text, so it can be reopened and searched by Codex on request. Opening a book
+alone does not send it to Codex. Reading positions and reader settings stay in Chrome
+extension storage.
 
 Webpage resources requested by the user are saved through Chrome Downloads, using browser authentication where applicable. Suggested filenames are placed under `Downloads/Tabgent`; Chrome may prompt or block a download according to its settings. Files are never automatically opened. Local file links in assistant replies can be opened with the default application or revealed in Finder when clicked.

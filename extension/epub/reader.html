@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!-- Book chapters render in blob: frames that inherit this policy: no scripts, no remote loads. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline' blob:; img-src 'self' blob: data:; font-src 'self' blob: data:; media-src 'self' blob: data:; connect-src 'self' blob: data:; frame-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <title>EPUB</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='none' stroke='%23858585' stroke-width='1.8' stroke-linejoin='round' d='M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5zm0 15A2.5 2.5 0 0 0 6.5 23H20v-5'/%3E%3C/svg%3E"
+    />
+    <link rel="stylesheet" href="reader.css" />
+    <script src="../web-anchor.js"></script>
+    <script type="module" src="reader.js"></script>
+  </head>
+  <body style="visibility: hidden">
+    <header>
+      <button
+        id="contentsButton"
+        class="icon"
+        aria-controls="drawer"
+        aria-expanded="false"
+        aria-label="$i18n{epubContents}"
+        title="$i18n{epubContents}"
+        disabled
+      >
+        ☰
+      </button>
+      <div id="heading">
+        <span id="bookTitle">$i18n{epubReaderTitle}</span>
+      </div>
+      <span id="status" role="status"></span>
+      <div id="reading" class="controls" hidden>
+        <div class="group" role="group" aria-label="$i18n{epubFontSize}">
+          <button id="smaller" aria-label="$i18n{epubFontSmaller}" title="$i18n{epubFontSmaller}">
+            A−</button
+          ><span id="fontSize">100%</span
+          ><button id="larger" aria-label="$i18n{epubFontLarger}" title="$i18n{epubFontLarger}">
+            A+
+          </button>
+        </div>
+        <button id="flow"></button>
+        <button id="library">$i18n{epubLibrary}</button>
+      </div>
+    </header>
+    <main>
+      <nav id="drawer" hidden aria-label="$i18n{epubContents}">
+        <div role="tablist">
+          <button id="tocTab" role="tab" aria-selected="true" aria-controls="toc">
+            $i18n{epubContents}</button
+          ><button
+            id="highlightsTab"
+            role="tab"
+            aria-selected="false"
+            aria-controls="highlightList"
+          >
+            $i18n{epubHighlights}
+          </button>
+        </div>
+        <ol id="toc" role="tabpanel" aria-labelledby="tocTab"></ol>
+        <ol id="highlightList" role="tabpanel" aria-labelledby="highlightsTab" hidden></ol>
+      </nav>
+      <section id="viewer" hidden>
+        <button id="prev" class="turn" aria-label="$i18n{epubPrevious}">‹</button>
+        <div id="book"></div>
+        <button id="next" class="turn" aria-label="$i18n{epubNext}">›</button>
+      </section>
+      <section id="start">
+        <div id="drop">
+          <h1>$i18n{epubReaderTitle}</h1>
+          <p>$i18n{epubDropHint}</p>
+          <button id="choose" class="primary">$i18n{epubChoose}</button>
+          <input id="file" type="file" accept=".epub,application/epub+zip" hidden />
+        </div>
+        <h2>$i18n{epubVaultBooks}</h2>
+        <p id="booksStatus" class="muted"></p>
+        <ul id="books"></ul>
+      </section>
+    </main>
+    <footer id="footer" hidden>
+      <span id="location"></span>
+      <input
+        id="progress"
+        type="range"
+        min="0"
+        max="1"
+        step="0.001"
+        value="0"
+        aria-label="$i18n{epubProgress}"
+      />
+      <span id="percent"></span>
+    </footer>
+    <div
+      id="toolbar"
+      class="floating"
+      popover="manual"
+      role="toolbar"
+      aria-label="$i18n{highlightToolbar}"
+    >
+      <button id="highlightAdd">$i18n{highlightAdd}</button
+      ><button id="highlightAsk">$i18n{highlightAsk}</button>
+    </div>
+    <div
+      id="highlightMenu"
+      class="floating"
+      popover="manual"
+      role="menu"
+      aria-label="$i18n{highlightActions}"
+    >
+      <button id="menuAsk" role="menuitem"></button
+      ><button id="menuDelete" role="menuitem">$i18n{highlightDelete}</button>
+    </div>
+    <div id="toast" popover="manual" role="alert"></div>
+  </body>
+</html>

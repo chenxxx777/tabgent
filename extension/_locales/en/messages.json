@@ -879,5 +879,101 @@
   },
   "highlightOpenPanel": {
     "message": "Sent to Tabgent. Click the Tabgent toolbar button to open the side panel."
+  },
+  "epubOpenReader": {
+    "message": "Open EPUB reader"
+  },
+  "epubReaderTitle": {
+    "message": "EPUB reader"
+  },
+  "epubDropHint": {
+    "message": "Drop an EPUB file here or choose one. It is saved in your reading vault, so you can reopen it here later."
+  },
+  "epubChoose": {
+    "message": "Choose EPUB file"
+  },
+  "epubVaultBooks": {
+    "message": "Books in your reading vault"
+  },
+  "epubNoBooks": {
+    "message": "No books yet."
+  },
+  "epubBooksUnavailable": {
+    "message": "The reading vault is unavailable: $1"
+  },
+  "epubHighlightCount": {
+    "message": "$1 highlights"
+  },
+  "epubReadPercent": {
+    "message": "$1 read"
+  },
+  "epubUntitled": {
+    "message": "Untitled"
+  },
+  "epubNotEpub": {
+    "message": "Choose an EPUB file."
+  },
+  "epubLoading": {
+    "message": "Opening…"
+  },
+  "epubLoadingVault": {
+    "message": "Loading from your reading vault… $1"
+  },
+  "epubOpenFailed": {
+    "message": "The book could not be opened: $1"
+  },
+  "epubSaving": {
+    "message": "Saving to your reading vault… $1"
+  },
+  "epubSaved": {
+    "message": "Saved in your reading vault"
+  },
+  "epubSaveFailed": {
+    "message": "Not saved in your reading vault: $1"
+  },
+  "epubContents": {
+    "message": "Contents"
+  },
+  "epubHighlights": {
+    "message": "Highlights"
+  },
+  "epubNoHighlights": {
+    "message": "No highlights in this book yet."
+  },
+  "epubUnanchored": {
+    "message": "Not found in the text"
+  },
+  "epubUnanchoredHint": {
+    "message": "This highlight could not be located in the book. Its record stays in your reading vault."
+  },
+  "epubSection": {
+    "message": "Section $1"
+  },
+  "epubFontSize": {
+    "message": "Font size"
+  },
+  "epubFontSmaller": {
+    "message": "Smaller text"
+  },
+  "epubFontLarger": {
+    "message": "Larger text"
+  },
+  "epubScrolled": {
+    "message": "Scroll"
+  },
+  "epubPaginated": {
+    "message": "Pages"
+  },
+  "epubLibrary": {
+    "message": "Library"
+  },
+  "epubPrevious": {
+    "message": "Previous page"
+  },
+  "epubNext": {
+    "message": "Next page"
+  },
+  "epubProgress": {
+    "message": "Reading progress"
   }
 }

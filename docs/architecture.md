@@ -20,12 +20,15 @@ flowchart LR
 | `extension/highlight-content.js`  | Selection toolbar, saved webpage highlights, and highlight actions.         |
 | `extension/web-anchor.js`         | Normalized page text, web anchors, and verified anchor restoration.         |
 | `extension/vault-client.js`       | Reading-vault requests over the native port, with ids and timeouts.         |
+| `extension/epub/`                 | Bundled EPUB reader page: library, rendering, anchors and highlights.       |
+| `extension/epub-routing.js`       | EPUB reader port registry and sender checks.                                |
 | `extension/session-config.js`     | Browser tool schema and agent instructions.                                 |
 | `extension/ui/`                   | Chat rendering, composer, attachments, previews, approvals, and onboarding. |
 | `extension/_locales/en/`          | English UI strings; i18n structure is retained.                             |
 | `extension/native/host.py`        | App-server discovery, sessions, authentication events, and RPC transport.   |
 | `extension/native/attachments.py` | Bounded uploads and text/PDF/DOCX reading.                                  |
 | `extension/native/vault.py`       | ReadingVault highlights, discussions, and Markdown files.                   |
+| `extension/native/epub_text.py`   | EPUB chapter text for the vault, using the standard library only.           |
 
 Each webpage tab owns a session. Agent tabs share that session through runtime
 ports and retain its original page context. The sidebar beside an Agent tab has
@@ -82,7 +85,7 @@ the Codex app-server, so highlights save while Codex is offline or signed out.
 otherwise the default folder is created on the first write. Each write scaffolds
 `AGENTS.md` (layout, `rg` retrieval hints, and reading rules for Codex), `Articles/`,
 and `Books/`. Web pages live in `Articles/article-<title slug>-<URL hash>/`; PDF and
-EPUB documents will use `Books/`. URLs are matched without their fragment, as in page
+EPUB documents use `Books/` (see [EPUB reader](#epub-reader)). URLs are matched without their fragment, as in page
 history, through `.tabgent/index.json`, which is rebuilt from the folders if missing.
 
 `anchors.json` is the machine record: anchors, highlight IDs (`h001`, never reused),
@@ -148,9 +151,64 @@ listener's first await: a microtask, an extension API await, or a timer loses th
 gesture. When the panel cannot open, the page asks the user to click the toolbar
 button; the quote is already waiting in the conversation.
 
-Highlights cover the top frame's light DOM. Iframes, shadow DOM, PDF and EPUB
-highlights are not drawn. Tabs opened before the extension was installed or reloaded
+Highlights cover the top frame's light DOM. Iframes, shadow DOM and PDF highlights
+are not drawn; EPUB books have their own reader. Tabs opened before the extension was installed or reloaded
 need a reload to show highlights.
+
+## EPUB reader
+
+The bundled reader is an extension page, `epub/reader.html`, opened from the toolbar
+button's context menu (**Open EPUB reader**). It renders books with foliate-js
+(`extension/vendor/foliate-js`) in paginated or scrolled mode, with a table of contents,
+font size, and the reading position stored in `chrome.storage.local`. A book is opened
+by choosing or dropping a file, or from the list of books in the vault.
+
+A book's identity is the SHA-256 of its file: the vault URL is `urn:sha256:<hex>`, so a
+re-picked file or the vault copy maps to the same `Books/book-<title slug>-<hash>/`
+document, and another edition is another book. On first open the reader uploads the
+file with `vault/source/save` in 2 MiB base64 chunks. The host appends them to
+`.tabgent/uploads/<sha256>.part`, so an interrupted import resumes, verifies the hash,
+and moves the file to `original.epub` with a `source.json` record. Originals are limited
+to 100 MiB and never replaced. The tab URL then becomes `reader.html?book=<document ID>`,
+which reopens the book through `vault/source/read` (checked against the recorded hash)
+and names it in page history and message context. `vault/books/list` lists books whose
+original is stored.
+
+At import, `epub_text.py` writes each spine document with text to
+`chapters/NN-<title>.md`, with front matter naming the book, chapter and EPUB path. Titles
+come from the navigation document or NCX, then the first heading. The archive is read
+in memory with entry and total size limits, XML entity declarations are rejected, and
+missing chapter files are regenerated from the original. `AGENTS.md` tells Codex to read
+or search these files instead of the whole book.
+
+Books cannot run scripts. Script resources are not loaded, `<script>` elements get an
+inert type (so CFIs are unchanged), and event attributes, `srcdoc` and `javascript:` URLs
+are removed before a chapter renders. The reader's own CSP, inherited by foliate's
+`blob:` chapter frames, allows only the extension's scripts and blocks remote images,
+fonts, styles and frames. The frames' sandbox allows no forms, popups or top navigation, and HTTP(S)
+links open in a new tab.
+
+An EPUB anchor is `{ kind: "epub", cfi, quote: { exact, prefix, suffix }, chapter:
+{ href, title, index }, position }`. The quote, 32-character context and offsets use the
+chapter's normalized text from `web-anchor.js`, and the highlight location is the
+chapter title. A CFI is accepted only when it resolves to the quote with the same
+context. Otherwise the quote is searched within that chapter with the webpage matcher.
+Uncertain records are listed as not found in the reader's Highlights tab, never painted,
+and reported as `codex-highlight-status`. Highlights are drawn by foliate's overlayer;
+clicking one offers **Ask AI** (or **Open discussion**) and **Delete**.
+
+The reader calls `chrome.sidePanel.open()` synchronously in the click, then asks the
+service worker to save and hand off the selection. The quote carries
+`highlight: { documentId, highlightId }`, chapter text in `context: { before, after }`,
+and `locator: { kind: "epub", anchor, documentId, chapterFile }`, where `chapterFile` is
+the absolute path of the chapter's Markdown file. Plain selections use the page
+selection flow with an EPUB locator. Each reader document registers an `epub` port, and
+the service worker accepts messages only from a tab's current reader document.
+
+The reader is not a browser tool target: Codex reads chapter files from the vault.
+Fixed-layout books use foliate's fixed-layout renderer, which has no overlay layer, so
+their highlights are saved but not drawn. Book search, notes on highlights, and EPUB
+files opened from websites or `file://` URLs are not supported.
 
 ## Working on the UI
 

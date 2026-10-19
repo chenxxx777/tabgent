@@ -1,6 +1,12 @@
 import { cleanAnnotations } from './ui/annotations.js';
 import { createUrlHistory } from './url-history.js';
 import { startPdfRouting, pdfSource, isCurrentPdfSender } from './pdf-routing.js';
+import {
+  registerEpubPort,
+  isEpubReaderUrl,
+  isCurrentEpubSender,
+  openEpubReader,
+} from './epub-routing.js';
 import { tool, instructions, pageContextPrefix } from './session-config.js';
 import { browserTool, context } from './browser-tools.js';
 import {
@@ -9,6 +15,8 @@ import {
   cleanWebAnchor,
   cleanPageMeta,
   documentUrl,
+  bookUrl,
+  cleanEpubAnchor,
 } from './vault-client.js';
 startPdfRouting();
 const sessions = new Map(),
@@ -433,10 +441,15 @@ async function receive(message) {
   broadcast(s, m);
 }
 chrome.runtime.onConnect.addListener((port) => {
-  if (port.name === 'pdf') {
+  if (port.name === 'pdf' || port.name === 'epub') {
+    if (port.name === 'epub' && !registerEpubPort(port)) return;
     void (async () => {
       await loaded;
-      if (!(await isCurrentPdfSender(port.sender))) return;
+      const current =
+        port.name === 'pdf'
+          ? await isCurrentPdfSender(port.sender)
+          : isCurrentEpubSender(port.sender);
+      if (!current) return;
       for (const s of sessions.values()) {
         if (
           s.tabId !== port.sender.tab.id ||
@@ -809,7 +822,7 @@ async function highlightMessage(msg, sender) {
   return { panelOpened: await panel };
 }
 // "Ask AI" reuses the page-selection quote flow, extended with the highlight and nearby text.
-async function handOffSelection(sender, { url, text, title, anchor, context, highlight }) {
+async function handOffSelection(sender, { url, text, title, anchor, context, highlight, locator }) {
   await getSession(sender.tab.id);
   const selectionId = crypto.randomUUID();
   for (const s of sessions.values()) {
@@ -824,7 +837,7 @@ async function handOffSelection(sender, { url, text, title, anchor, context, hig
       frameId: sender.frameId,
       documentId: sender.documentId,
       tabId: sender.tab.id,
-      locator: { kind: 'web', anchor, capturedAt: new Date().toISOString() },
+      locator: { kind: 'web', anchor, ...locator, capturedAt: new Date().toISOString() },
       highlight,
       context,
     };
@@ -832,26 +845,159 @@ async function handOffSelection(sender, { url, text, title, anchor, context, hig
     for (const p of s.ports) event(p, 'codex-selection', s.selection);
   }
 }
+const epubMessages = new Set([
+  'epubBooks',
+  'epubSourceSave',
+  'epubSourceRead',
+  'epubResolve',
+  'epubHighlightCreate',
+  'epubHighlightDelete',
+  'epubHighlightAsk',
+  'epubHighlightStatus',
+]);
+// The EPUB reader names a book by its file hash; highlights are checked against that book.
+async function epubMessage(msg, sender) {
+  if (!isCurrentEpubSender(sender)) throw Error('Invalid EPUB reader sender');
+  const tabId = sender.tab.id;
+  if (msg.type === 'epubBooks') return vaultRequest('vault/books/list', { kind: 'epub' });
+  if (msg.type === 'epubSourceRead')
+    return vault.request(
+      'vault/source/read',
+      { documentId: pageText(msg.documentId, 300), offset: msg.offset, length: msg.length },
+      { timeout: 60000 },
+    );
+  const url = bookUrl(msg.sha256);
+  if (!url) throw new VaultError('invalid_params', 'Invalid book');
+  const title = pageText(msg.title, 500);
+  const book = { url, title, kind: 'epub', meta: cleanPageMeta(msg.meta) };
+  if (msg.type === 'epubSourceSave')
+    return vault.request(
+      'vault/source/save',
+      {
+        ...book,
+        sha256: msg.sha256,
+        size: msg.size,
+        offset: msg.offset,
+        data: pageText(msg.data, 6000000),
+        name: pageText(msg.name, 255),
+      },
+      { timeout: 120000 },
+    );
+  if (msg.type === 'epubResolve') {
+    const result = await vaultRequest('vault/document/resolve', book);
+    return { document: result.document || null, highlights: result.highlights || [] };
+  }
+  if (msg.type === 'epubHighlightStatus') {
+    await loaded;
+    const status = {
+      url,
+      documentId: pageText(msg.documentId, 300) || null,
+      anchored: Number.isInteger(msg.anchored) ? msg.anchored : 0,
+      unanchored: (Array.isArray(msg.unanchored) ? msg.unanchored : [])
+        .slice(0, 1000)
+        .map((id) => pageText(id, 100)),
+    };
+    highlightStatus.set(tabId, status);
+    for (const s of sessions.values())
+      if (s.tabId === tabId) for (const p of s.ports) event(p, 'codex-highlight-status', status);
+    return {};
+  }
+  const context = {
+    before: pageText(msg.context?.before, 2000),
+    after: pageText(msg.context?.after, 2000),
+  };
+  const chapterFile = /^chapters\/[^/\\]+\.md$/.test(msg.chapterFile) ? msg.chapterFile : '';
+  // Codex reads the chapter from the vault instead of receiving the whole book.
+  const locator = (anchor, document) => ({
+    kind: 'epub',
+    anchor,
+    documentId: document?.id || null,
+    ...(document?.folder && chapterFile
+      ? { chapterFile: `${document.folder}/${chapterFile}` }
+      : {}),
+  });
+  const pageUrl = async () => (await chrome.tabs.get(tabId)).url;
+  if (msg.type === 'epubHighlightCreate') {
+    const anchor = cleanEpubAnchor(msg.anchor),
+      text = pageText(msg.text, 20000);
+    if (!anchor || !text.trim()) throw new VaultError('invalid_params', 'Invalid highlight');
+    let created = {},
+      failure = null;
+    try {
+      created = await vaultRequest('vault/highlight/create', {
+        ...book,
+        text,
+        anchor,
+        ...(anchor.chapter.title ? { location: anchor.chapter.title } : {}),
+      });
+    } catch (error) {
+      if (!msg.ask) throw error;
+      failure = error;
+    }
+    const highlight = created.highlight || null,
+      document = created.document || null;
+    if (msg.ask)
+      await handOffSelection(sender, {
+        url: await pageUrl(),
+        text,
+        title,
+        context,
+        highlight:
+          highlight && document ? { documentId: document.id, highlightId: highlight.id } : null,
+        locator: locator(anchor, document),
+      });
+    return {
+      document,
+      highlight,
+      ...(failure ? { vaultError: failure.message, code: failure.code } : {}),
+    };
+  }
+  const resolved = await vaultRequest('vault/document/resolve', book);
+  const highlight =
+    resolved.document?.id === msg.documentId &&
+    (resolved.highlights || []).find((h) => h.id === msg.highlightId);
+  if (!highlight) throw new VaultError('not_found', 'Highlight not found in this book');
+  if (msg.type === 'epubHighlightDelete') {
+    await vaultRequest('vault/highlight/delete', {
+      documentId: resolved.document.id,
+      highlightId: highlight.id,
+    });
+    return { ok: true };
+  }
+  await handOffSelection(sender, {
+    url: await pageUrl(),
+    text: pageText(highlight.text, 20000) || pageText(highlight.anchor?.quote?.exact, 20000),
+    title,
+    context,
+    highlight: { documentId: resolved.document.id, highlightId: highlight.id },
+    locator: locator(highlight.anchor || null, resolved.document),
+  });
+  return { ok: true };
+}
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   if (sender.id !== chrome.runtime.id || msg.type === 'pdfFallback') return;
-  if (highlightMessages.has(msg.type)) {
-    highlightMessage(msg, sender).then(reply, (e) =>
+  if (highlightMessages.has(msg.type) || epubMessages.has(msg.type)) {
+    (epubMessages.has(msg.type) ? epubMessage : highlightMessage)(msg, sender).then(reply, (e) =>
       reply({ error: e.message, code: e.code || 'error' }),
     );
     return true;
   }
   (async () => {
     if (msg.type === 'pageSelection' || msg.type === 'pageSelectionCleared') {
+      const epub = isEpubReaderUrl(sender.url);
       if (
         !sender.tab ||
         sender.tab.incognito ||
-        (!/^https?:/.test(sender.url || '') && !pdfSource(sender.url)) ||
+        (!/^https?:/.test(sender.url || '') && !pdfSource(sender.url) && !epub) ||
         (msg.type === 'pageSelection' && (typeof msg.text !== 'string' || !msg.text.trim()))
       )
         throw Error('Invalid selection');
       if (pdfSource(sender.url)) {
         // Chrome hides extension documents from webNavigation.getFrame.
         if (!(await isCurrentPdfSender(sender))) throw Error('Stale PDF selection');
+      } else if (epub) {
+        // Like PDF.js, the reader is an extension document hidden from webNavigation.
+        if (!isCurrentEpubSender(sender)) throw Error('Stale EPUB selection');
       } else {
         const frame = await chrome.webNavigation.getFrame({
           tabId: sender.tab.id,
@@ -861,6 +1007,9 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
           throw Error('Stale selection');
       }
       await getSession(sender.tab.id);
+      // The reader's live URL names its book (?book=), unlike the load-time sender URL.
+      const selectionUrl =
+        pdfSource(sender.url) || (epub ? (await chrome.tabs.get(sender.tab.id)).url : sender.url);
       for (const s of sessions.values()) {
         if (s.tabId !== sender.tab.id) continue;
         if (msg.type === 'pageSelectionCleared') {
@@ -881,7 +1030,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
           id: crypto.randomUUID(),
           text: msg.text.slice(0, 20000),
           truncated: !!msg.truncated || msg.text.length > 20000,
-          url: pdfSource(sender.url) || sender.url,
+          url: selectionUrl,
           title: typeof msg.title === 'string' ? msg.title.slice(0, 500) : '',
           frameId: sender.frameId,
           documentId: sender.documentId,
@@ -1176,15 +1325,22 @@ loaded.then(() => {
 
 // Native PDF selections are exposed by Chrome's selection context menu.
 chrome.runtime.onInstalled.addListener(() => {
-  chrome.contextMenus.removeAll(() =>
+  chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({
       id: 'quote-selection',
       title: chrome.i18n.getMessage('selectionMenu'),
       contexts: ['selection'],
-    }),
-  );
+    });
+    // The toolbar button's right-click menu opens the bundled EPUB reader.
+    chrome.contextMenus.create({
+      id: 'open-epub-reader',
+      title: chrome.i18n.getMessage('epubOpenReader'),
+      contexts: ['action'],
+    });
+  });
 });
 chrome.contextMenus.onClicked.addListener((info, tab) => {
+  if (info.menuItemId === 'open-epub-reader') return void openEpubReader(tab).catch(console.warn);
   if (info.menuItemId !== 'quote-selection' || !info.selectionText || !tab?.id || tab.incognito)
     return;
   // Invoke synchronously while Chrome's context-menu user gesture is active.
