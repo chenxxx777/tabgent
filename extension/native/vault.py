@@ -85,6 +85,9 @@ the user read, highlighted or discussed before. Vault path: {vault}
   `chapters/NN-<title>.md` holds each chapter's text in reading order, generated
   from the EPUB at import. Read the chapter you need or search the `chapters`
   folder instead of loading the whole book. EPUB highlights name their chapter.
+- `Books/paper-.../original.pdf`: a PDF imported from the user's computer, described
+  by `source.json`. Its `source` is `urn:sha256:<hash of the file>`. PDFs opened from
+  the web keep their URL and have no copy. PDF highlights name their page.
 - `.tabgent/`: Tabgent's index and lock file. Ignore it.
 
 HTML comments such as `<!-- tabgent:highlight h001 start -->` mark the blocks that
@@ -430,6 +433,9 @@ def save_source(settings, params):
     digest = params.get("sha256")
     if not isinstance(digest, str) or not SHA256.fullmatch(digest):
         raise VaultError("invalid_params", "sha256 must be 64 lowercase hex digits")
+    # A file named by its hash (an imported EPUB or PDF) must be that file.
+    if url.startswith("urn:sha256:") and url != "urn:sha256:" + digest:
+        raise VaultError("invalid_params", "url does not match sha256")
     size = _integer(params, "size", 1, SOURCE_LIMIT)
     offset = _integer(params, "offset", 0, size)
     data = _base64(params.get("data"), CHUNK_LIMIT)
@@ -569,6 +575,47 @@ def list_books(settings, params):
     return {"books": books}
 
 
+def list_documents(settings, params):
+    """Every document in the vault, most recently updated first: webpages, PDFs from the
+    web, imported PDFs and EPUB books. Unreadable documents are left out."""
+    root = _root(settings)
+    documents = []
+    for kind, (folder, prefix, _) in KINDS.items():
+        try:
+            names = sorted(p.name for p in (root / folder).iterdir())
+        except (FileNotFoundError, NotADirectoryError):
+            continue
+        for name in names:
+            if not name.startswith(prefix + "-") or not DOCUMENT_ID.fullmatch(name):
+                continue
+            try:
+                data = _load(root, name)
+                record = data and _source_record(root, data)
+            except (VaultError, OSError):
+                continue  # One unreadable document does not hide the others.
+            if not data:
+                continue
+            document = data["document"]
+            documents.append(
+                {
+                    **_public_document(root, document, document["createdAt"]),
+                    "author": document.get("meta", {}).get("author", ""),
+                    "updatedAt": document.get("updatedAt"),
+                    "highlightCount": len(data["highlights"]),
+                    # The stored original, for documents that open from the vault.
+                    "source": record
+                    and {
+                        "name": record.get("name", ""),
+                        "size": record["size"],
+                        "sha256": record["sha256"],
+                        "importedAt": record.get("importedAt"),
+                    },
+                }
+            )
+    documents.sort(key=lambda document: _instant(document["updatedAt"]), reverse=True)
+    return {"documents": documents}
+
+
 METHODS = {
     "vault/status": status,
     "vault/configure": configure,
@@ -581,6 +628,7 @@ METHODS = {
     "vault/source/save": save_source,
     "vault/source/read": read_source,
     "vault/books/list": list_books,
+    "vault/documents/list": list_documents,
 }
 
 
@@ -729,6 +777,15 @@ def _describe(error):
 
 def _now():
     return datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def _instant(value):
+    """Seconds since the epoch for a stored time, so offsets compare correctly; 0 if absent."""
+    try:
+        moment = datetime.datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return moment.timestamp() if moment.tzinfo else moment.astimezone().timestamp()
 
 
 def _json(value):
