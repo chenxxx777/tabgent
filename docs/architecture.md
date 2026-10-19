@@ -18,6 +18,7 @@ flowchart LR
 | `extension/browser-input.js`      | CDP-based trusted input and coordinate actions.                             |
 | `extension/selection-content.js`  | Selected text, DOM endpoints, offsets, and frame-relative geometry.         |
 | `extension/highlight-content.js`  | Selection toolbar, saved webpage highlights, and highlight actions.         |
+| `extension/highlight-note.js`     | Note preview and editor shared by the webpage and PDF.js reading layers.    |
 | `extension/web-anchor.js`         | Normalized page text, web anchors, and verified anchor restoration.         |
 | `extension/vault-client.js`       | Reading-vault requests over the native port, with ids and timeouts.         |
 | `extension/pdf/viewer.js`         | PDF.js wrapper: loading, fallback, live quotes, and Agent PDF commands.     |
@@ -98,13 +99,27 @@ documents in `Books/paper-<title slug>-<URL hash>/`, and EPUB books in `Books/` 
 history, through `.tabgent/index.json`, which is rebuilt from the folders if missing.
 
 `anchors.json` is the machine record: anchors, highlight IDs (`h001`, never reused),
-and discussion turns, which are idempotent on thread and turn ID. `highlights.md` is
-the readable record with YAML front matter, one `## Highlight NNN` section per
-highlight, and a `## 文档对话` section for document-level discussion. HTML comment
-markers delimit Tabgent's blocks. After a file exists, Tabgent only inserts into or
-removes those blocks, so edits elsewhere are preserved; a deleted highlight removes
-its whole block. Missing blocks or files are restored from `anchors.json` on the next
-write to them. Unreadable JSON or non-UTF-8 Markdown is reported, never replaced.
+the user's notes on highlights, and discussion turns, which are idempotent on thread
+and turn ID. `highlights.md` is the readable record with YAML front matter, one
+`## Highlight NNN` section per highlight, and a `## 文档对话` section for
+document-level discussion. HTML comment markers delimit Tabgent's blocks. After a file
+exists, Tabgent only inserts into or removes those blocks, so edits elsewhere are
+preserved; a deleted highlight removes its whole block. Missing blocks or files are
+restored from `anchors.json` on the next write to them. Unreadable JSON or non-UTF-8
+Markdown is reported, never replaced.
+
+`vault/highlight/update` (`{ documentId, highlightId, note }`) sets the user's own note
+on a highlight. The note is trimmed, limited to 20,000 characters, and stored on the
+highlight in `anchors.json`; every highlight result carries it as `note` (empty when
+there is none). In `highlights.md` it is a `### 笔记` part inside the highlight's block,
+between the quote and `### 对话`, delimited by `<!-- tabgent:note hNNN start/end -->`.
+An update replaces only that part, so text the user wrote elsewhere in the block stays;
+an empty note removes the part, and an unchanged note writes nothing. Markdown is
+written before `anchors.json`, so a retried update repeats the same edit. A deleted
+highlight takes its note with it, and a deleted or unknown highlight returns
+`not_found`. As with turns, `anchors.json` is the source: editing the note text inside
+its marked part in `highlights.md` does not change the saved note, and the next update
+from Tabgent replaces it.
 
 Writes hold a process lock plus an advisory lock on `.tabgent/lock`, and replace
 files through a temporary file and rename, so concurrent requests and a second
@@ -124,7 +139,8 @@ resizing, collapsing the selection, or pressing Escape dismisses it.
 Highlights are painted with the CSS Custom Highlight API (`highlight.css`), so page
 markup is never wrapped or rewritten. Custom highlights receive no events. A click
 is hit-tested with `caretPositionFromPoint` and confirmed against the range's line
-boxes, then opens **Ask AI** (or **Open discussion** when turns exist) and **Delete**.
+boxes, then opens **Ask AI** (or **Open discussion** when turns exist), **Add note**
+(or **Edit note**) and **Delete**, with the user's note shown above them.
 Clicks on links and controls are left to the page. Pages can read the highlight
 registry, so a site can observe which of its passages are highlighted.
 
@@ -160,6 +176,15 @@ listener's first await: a microtask, an extension API await, or a timer loses th
 gesture. When the panel cannot open, the page asks the user to click the toolbar
 button; the quote is already waiting in the conversation.
 
+**Add note** opens a small editor from `highlight-note.js` in the same shadow root,
+at the highlight. Focus moves to its text field and stays inside the editor (Tab
+cycles through the field, Cancel and Save); Cmd/Ctrl+Enter saves, Escape cancels, and
+neither acts during an input method's composition. Keys typed there stop at the
+editor, so page shortcuts never see them. A click elsewhere closes an unchanged editor
+and keeps one with unsaved text. Saving sends `highlightNote`; the service worker
+checks the highlight against the vault record for the sender's URL, calls
+`vault/highlight/update`, and tells the tab's side panels to refresh their list.
+
 Highlights cover the top frame's light DOM. Iframes and shadow DOM are not drawn; PDFs
 and EPUB books have their own reading layers, described next. Tabs opened before the extension was installed or reloaded
 need a reload to show highlights.
@@ -168,8 +193,10 @@ need a reload to show highlights.
 
 The bundled PDF.js viewer has the same reading layer as webpages. `pdf-highlights.js`
 runs in the viewer page and works inside the PDF.js frame. A text selection shows
-**Highlight** and **Ask AI**; a click on a saved highlight shows **Ask AI** (or
-**Open discussion**) and **Delete**. Strings, colors, keyboard behavior, and vault
+**Highlight** and **Ask AI**; a click on a saved highlight shows the user's note,
+**Ask AI** (or **Open discussion**), **Add note** (or **Edit note**) and **Delete**.
+The note editor is the webpage one; it stops the keys typed into it, so PDF.js
+shortcuts (such as `n` for the next page) do not fire. Strings, colors, keyboard behavior, and vault
 messages are the webpage ones. `highlight.css` is linked, because the PDF.js page CSP
 (`style-src 'self'`) blocks inline styles. The PDF.js floating highlight button is
 turned off so there is one **Highlight** action; the PDF.js highlight tool still adds
@@ -269,7 +296,12 @@ chapter title. A CFI is accepted only when it resolves to the quote with the sam
 context. Otherwise the quote is searched within that chapter with the webpage matcher.
 Uncertain records are listed as not found in the reader's Highlights tab, never painted,
 and reported as `codex-highlight-status`. Highlights are drawn by foliate's overlayer;
-clicking one offers **Ask AI** (or **Open discussion**) and **Delete**.
+clicking one shows the user's note and offers **Ask AI** (or **Open discussion**),
+**Add note** (or **Edit note**) and **Delete**. The note editor is part of the reader
+page, with the same keys as on webpages, and saves through `epubHighlightNote`. The
+Highlights tab shows each note under its quote. A `refresh` command on the reader port
+reloads the highlight records (notes and turn counts) after a note is saved from the
+side panel or a turn is saved.
 
 The reader calls `chrome.sidePanel.open()` synchronously in the click, then asks the
 service worker to save and hand off the selection through `handOffSelection()` and
@@ -291,8 +323,8 @@ message about a book names its `chapters` folder.
 The reader is not a browser tool target: the instructions tell Codex to read chapter
 files through `reading_vault` instead.
 Fixed-layout books use foliate's fixed-layout renderer, which has no overlay layer, so
-their highlights are saved but not drawn. Book search, notes on highlights, and EPUB
-files opened from websites or `file://` URLs are not supported.
+their highlights are saved but not drawn (their notes are kept and listed). Book search
+and EPUB files opened from websites or `file://` URLs are not supported.
 
 ## Reading conversations
 
@@ -309,11 +341,16 @@ document. **Ask AI** on a highlight with saved turns reopens its latest thread t
 the page-history resume path, with the quote attached again. A new highlight reuses an
 empty conversation and otherwise starts its own, so each highlight's thread holds its
 discussion. The highlight list in the Page conversations drawer does the same, and
-jumps to anchored highlights; unanchored ones are marked and keep their notes.
+jumps to anchored highlights; unanchored ones are marked and keep their notes. Each
+entry shows the user's note and edits it inline (`readingNote`); the worker checks the
+highlight against the companion tab's document, saves it, and asks the page or reader
+to refresh its highlight records. A draft survives list refreshes.
 
 The worker adds a hidden reading-context part after the browser context of each
 message. It names the document (title, URL, kind and notes file), the bound
-highlight (its text unless the quote is attached), up to five earlier turns on it
+highlight (its text unless the quote is attached, and the user's note on it as
+`userNote`, read fresh for each message and cut to 2,000 characters), up to five
+earlier turns on it
 from other threads (about 6,000 characters, sent once per thread), the vault folder
 with its `AGENTS.md`, and the save target. The part is also the turn's durable
 record: on `turn/completed` with status `completed`, the worker reads it back from

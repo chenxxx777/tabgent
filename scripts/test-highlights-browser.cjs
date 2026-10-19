@@ -136,6 +136,38 @@ const article = () => `<!doctype html><title>Highlight fixture</title>
       const { x, y } = await button(page, action);
       await page.mouse.click(x, y);
     }
+    // The reading layer's closed shadow root, as Markup (CDP pierces it; pages cannot).
+    async function layerHtml(page) {
+      const client = await page.context().newCDPSession(page);
+      const { root: document } = await client.send('DOM.getDocument', { depth: -1, pierce: true });
+      let shadow = null;
+      (function walk(node) {
+        if (node.localName === 'tabgent-reader') shadow = node.shadowRoots?.[0];
+        for (const child of [...(node.children || []), ...(node.shadowRoots || [])]) walk(child);
+      })(document);
+      const { outerHTML } = await client.send('DOM.getOuterHTML', {
+        backendNodeId: shadow.backendNodeId,
+      });
+      await client.detach();
+      return outerHTML;
+    }
+    async function clickText(page, selector, needle) {
+      const at = await page.evaluate(
+        ([selector, needle]) => {
+          const node = document.querySelector(selector).firstChild,
+            at = node.data.indexOf(needle),
+            range = document.createRange();
+          range.setStart(node, at);
+          range.setEnd(node, at + 4);
+          const r = range.getBoundingClientRect();
+          return { x: r.left + 3, y: r.top + r.height / 2 };
+        },
+        [selector, needle],
+      );
+      await page.mouse.click(at.x, at.y);
+      await wait(300);
+    }
+    const note = '我的看法: endorsement, not independence.';
 
     let worker = await launch();
     const page = await context.newPage();
@@ -262,6 +294,22 @@ const article = () => `<!doctype html><title>Highlight fixture</title>
     });
     console.log('PASS sidePanel.open keeps the gesture only before the first await');
 
+    // The user's own note: Add note in the popover saves it to anchors.json and highlights.md.
+    await clickText(page, '#a', 'independence');
+    await press(page, 'note');
+    await page.keyboard.type(note);
+    await page.keyboard.press('Control+Enter');
+    const article = () => docs().find((d) => d.anchors.document.url === base + '/article?x=1');
+    assert(await until(() => article().anchors.highlights[0].note === note));
+    assert.match(
+      article().markdown,
+      /\n> independence from others\n\n<!-- tabgent:note h001 start -->\n\n### 笔记\n\n我的看法: endorsement, not independence\.\n\n<!-- tabgent:note h001 end -->\n/,
+    );
+    assert.equal(article().anchors.highlights[1].note, undefined);
+    console.log(
+      'PASS a note from the highlight popover is saved to anchors.json and highlights.md',
+    );
+
     await page.evaluate(() => history.pushState({}, '', '/next?y=2'));
     await wait(1000);
     assert.equal(await painted(page), 0, 'SPA navigation clears the old page highlights');
@@ -294,6 +342,8 @@ const article = () => `<!doctype html><title>Highlight fixture</title>
     });
     await restored.mouse.click(hit.x, hit.y);
     await wait(300);
+    // After a restart, clicking the highlight shows the note above its actions.
+    assert((await layerHtml(restored)).includes(`<span>${note}</span>`), 'Note shown on click');
     await press(restored, 'delete');
     assert(
       await until(
@@ -303,6 +353,7 @@ const article = () => `<!doctype html><title>Highlight fixture</title>
             .markdown.includes('independence from others'),
       ),
     );
+    assert(!article().markdown.includes(note), 'Deleting the highlight removes its note');
     assert.equal(await until(async () => (await painted(restored)) === 0), true);
     console.log('PASS delete removes the vault record and Markdown block');
 
