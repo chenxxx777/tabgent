@@ -8,6 +8,7 @@ for (const file of [
   'native-disconnect.mjs',
   'attachments.py',
   'local-files.py',
+  'vault.py',
   'resource-files.mjs',
   'resource-download.cjs',
   'message-fork.py',

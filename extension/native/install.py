@@ -40,6 +40,7 @@ shutil.copy2(root / "native/attachments.py", home / "attachments.py")
 shutil.copy2(root / "native/lineage.py", home / "lineage.py")
 shutil.copy2(root / "native/message_fork.py", home / "message_fork.py")
 shutil.copy2(root / "native/local_files.py", home / "local_files.py")
+shutil.copy2(root / "native/vault.py", home / "vault.py")
 launcher = home / "connector"
 launcher.write_text(
     "#!/bin/sh\nexport CODEX_HOME="

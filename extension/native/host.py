@@ -15,12 +15,15 @@ import attachments
 import lineage
 import local_files
 import message_fork
+import vault
 
 HOME = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
 LOCK = threading.Lock()
 START_LOCK = threading.Lock()
 SESSIONS = {}
 POOL = concurrent.futures.ThreadPoolExecutor(max_workers=8)
+# Vault I/O never queues behind Codex startup; one worker keeps arrival order.
+VAULT_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 CONFIG = None
 
 
@@ -570,9 +573,19 @@ def warm():
         POOL.submit(session.start)
 
 
+def vault_request(message):
+    settings = HOME / "projects/tabgent/vault.json"
+    reply = vault.handle(settings, message.get("method"), message.get("params"))
+    send({"op": "vault", "id": message.get("id"), **reply})
+
+
 def handle(message):
     global CONFIG
     op = message.get("op")
+    if op == "vault":
+        # Local files only: independent of warm config, sessions and the app-server.
+        VAULT_POOL.submit(vault_request, message)
+        return
     ident = message.get("session")
     if op == "warm":
         CONFIG = message["config"]
@@ -652,6 +665,8 @@ def main():
     except (BrokenPipeError, KeyboardInterrupt, ValueError):
         pass
     finally:
+        # Finish saves already received before Chrome stops the connector.
+        VAULT_POOL.shutdown(wait=True)
         for session in list(SESSIONS.values()):
             session.close()
         POOL.shutdown(wait=False, cancel_futures=True)
