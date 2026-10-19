@@ -46,6 +46,17 @@ python3 -m venv .venv
 
 `npm run check` validates Python syntax without creating bytecode files.
 
+### Troubleshooting: `store-setup.cjs` launch timeout on macOS
+
+Rarely, on a busy Mac, `extension/tests/store-setup.cjs` fails with
+`browserType.launchPersistentContext: Timeout 180000ms exceeded.` after
+`<launched> pid=...`. This test is the only one that launches the full Chrome for
+Testing app, which it needs to load an extension. macOS can occasionally deadlock
+that app's main thread at startup inside RunningBoard (`rbs_acquire_appnap_assertion`),
+usually when several Chrome instances start at once. A healthy launch takes a few
+seconds, so this is not a slow machine and a longer timeout does not help. Rerun
+`npm test`. RunningBoard exists only on macOS, so Linux CI cannot hit this.
+
 ## Optional integration checks
 
 These are deliberately excluded from `npm test`:
