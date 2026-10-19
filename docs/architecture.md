@@ -20,6 +20,8 @@ flowchart LR
 | `extension/highlight-content.js`  | Selection toolbar, saved webpage highlights, and highlight actions.         |
 | `extension/web-anchor.js`         | Normalized page text, web anchors, and verified anchor restoration.         |
 | `extension/vault-client.js`       | Reading-vault requests over the native port, with ids and timeouts.         |
+| `extension/reading-companion.js`  | Highlight and page conversations: reading context and saved turns.          |
+| `extension/reading.js`            | Reading context parts, turn records, and vault append parameters.           |
 | `extension/session-config.js`     | Browser tool schema and agent instructions.                                 |
 | `extension/ui/`                   | Chat rendering, composer, attachments, previews, approvals, and onboarding. |
 | `extension/_locales/en/`          | English UI strings; i18n structure is retained.                             |
@@ -42,6 +44,8 @@ on websites is the reading layer described in [Webpage highlights](#webpage-high
 
 The service worker checks tool scope on every request. Selection messages derive
 the owner tab and frame from Chrome's sender metadata, not a page-supplied tab ID.
+Their URL comes from Chrome's frame record, because `sender.url` keeps the load-time
+URL after `history.pushState`.
 DOM locations are historical hints and must be checked against the live page.
 Online PDF documents in top-level tabs are redirected to a bundled PDF.js viewer
 using a response-header declarative rule. The source URL and Chrome tab ID remain
@@ -151,6 +155,53 @@ button; the quote is already waiting in the conversation.
 Highlights cover the top frame's light DOM. Iframes, shadow DOM, PDF and EPUB
 highlights are not drawn. Tabs opened before the extension was installed or reloaded
 need a reload to show highlights.
+
+## Reading conversations
+
+`reading-companion.js` runs in the service worker and binds conversations to vault
+documents and highlights. It lives there rather than in the side panel because the
+worker receives every app-server notification for every session, whether or not a
+view is open. The native host would add no durability: it and its Codex processes
+exit when the worker's port closes, which also ends any running turn.
+
+A quote that carries `highlight: { documentId, highlightId }` binds its conversation
+to that highlight. Any reader can send it (web, PDF or EPUB, named by the highlight or
+locator `kind`). Follow-ups keep the binding while the companion page shows the same
+document. **Ask AI** on a highlight with saved turns reopens its latest thread through
+the page-history resume path, with the quote attached again. A new highlight reuses an
+empty conversation and otherwise starts its own, so each highlight's thread holds its
+discussion. The highlight list in the Page conversations drawer does the same, and
+jumps to anchored highlights; unanchored ones are marked and keep their notes.
+
+The worker adds a hidden reading-context part after the browser context of each
+message. It names the document (title, URL, kind and notes file), the bound
+highlight (its text unless the quote is attached), up to five earlier turns on it
+from other threads (about 6,000 characters, sent once per thread), the vault folder
+with its `AGENTS.md`, and the save target. The part is also the turn's durable
+record: on `turn/completed` with status `completed`, the worker reads it back from
+the turn's user message and calls `vault/discussion/append` with the user's own
+words (quotes other than the highlight become a Markdown block quote) and the final
+non-commentary answer. Appends are idempotent on thread and turn ID. Failures that
+retrying can fix wait in `chrome.storage.local` (`readingOutbox`, at most 100) and
+retry after the next successful save and on worker start.
+
+Page-level questions save to the document's `## 文档对话` section only when the
+conversation is set to save. **Reading notes** in the composer shows the target
+(Highlight N, Page notes or Not saved). It defaults on for a highlight conversation
+or when the page already has vault notes, and off otherwise, so unrelated
+browser-automation chats are not written to the vault. Its menu also shows the vault
+folder and changes it with `vault/configure`; existing notes are not moved.
+
+For questions across documents, Codex searches the vault on demand. The read-only
+sandbox already allows reading the vault folder, but in Ask for approval mode Codex
+asks before every shell command, including `rg` and `cat`. The connector therefore
+adds a `reading_vault` dynamic tool next to `read_attachment`. The host answers it
+locally on the vault queue: `list` names the documents, `search` ranks lines of
+`highlights.md` and `source.md` by matching keywords, and `read` returns numbered
+lines of a `.md` or `.json` file. Paths must resolve inside the configured vault
+folder (symlinks included) and `.tabgent/` is excluded; the tool cannot write. Shell
+reads still work where the permission mode allows them. The instructions in
+`session-config.js` and the vault's `AGENTS.md` describe both.
 
 ## Working on the UI
 

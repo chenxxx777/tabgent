@@ -11,6 +11,14 @@ tools. Selecting text captures a draft quote locally; sending a message includes
 that quote and its location metadata. A selection is limited to 20,000 characters.
 The truncated state is exposed in its tooltip and model context.
 
+When a conversation is about a document, each message also carries a reading
+context: the document's title, URL and kind, the bound highlight's text and
+location, up to five earlier saved turns about that highlight, and the path of the
+ReadingVault folder. When a question refers to earlier reading, Codex can list,
+search and read the notes in that folder with the read-only `reading_vault` tool,
+without an approval prompt; it cannot read outside the folder or write. Notes it
+reads are sent to the model like any other tool result.
+
 Browser content and selection metadata are marked as untrusted context. Do not
 assume prompt-injection defenses can make an arbitrary page safe. Scope checks
 limit which tabs tools can access; they do not validate the intentions of a page.
@@ -45,9 +53,22 @@ symlink so existing attachment paths remain valid.
 | `~/Library/Application Support/Tabgent/`    | Installed connector and, for normal installations, extension files.     |
 | `$CODEX_HOME/projects/tabgent/attachments/` | User-uploaded file copies, each in a generated subdirectory.            |
 | `~/ReadingVault/` or the configured folder  | Saved highlights, their page URLs and anchors, and saved discussions.   |
+| Chrome extension local storage              | Reading-note saves waiting for a retry (at most 100).                   |
 | `$CODEX_HOME/projects/tabgent/vault.json`   | The configured ReadingVault folder.                                     |
 | Shared Codex session storage and index      | Conversation history and project association.                           |
 | Chrome extension session storage            | Tab bindings, selection drafts, text drafts, and attachment references. |
+
+The ReadingVault holds one folder per document. `highlights.md` contains the
+document title, URL and metadata (author, site, publication date when the page
+declares them), each highlighted passage with its location and time, and the saved
+discussion: your question as typed (with any other quoted passage) and the final
+answer, without tool output or reasoning. `anchors.json` holds the same turns plus
+anchors, thread IDs and timestamps; `.tabgent/index.json` maps URLs to folders.
+Highlight conversations are saved automatically. Questions about a page without a
+highlight are saved only while **Reading notes** is on, which is the default only
+when the page already has notes. Turning it off stops saving for that conversation;
+it does not delete notes. Delete a highlight in the page, or edit or delete the
+files yourself, to remove saved notes. Nothing in the vault is uploaded by Tabgent.
 
 Removing an attachment from the composer removes its draft reference. It does not
 delete the saved file. Sent attachments remain available for conversation history.
@@ -63,7 +84,8 @@ read-only sandbox with on-request approvals; Full access removes the sandbox
 restriction and uses no approval prompts.
 Browser tab/window scope applies to the plugin's browser tool; it is not a scope
 restriction on native Codex tools. The attachment reader only accepts files
-under the upload directory.
+under the upload directory, and the reading-vault tool only reads notes inside the
+configured ReadingVault folder.
 
 ## Reporting a concern
 
