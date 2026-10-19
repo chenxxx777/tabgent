@@ -308,6 +308,47 @@ const assert = require('node:assert/strict'),
     await page.waitForFunction(() => CSS.highlights.get('tabgent-highlight').size === 0);
     assert.equal((await lastSent('highlightDelete')).documentId, 'article-final');
     console.log('PASS provisional IDs are replaced by the saved document / deleted elsewhere');
+
+    // A highlight across an inline <script> must settle: unrelated mutations do not re-anchor.
+    await page.evaluate(() => {
+      const before = Object.assign(document.createElement('p'), {
+        id: 'ad-before',
+        textContent: 'Text before the ad slot ends here.',
+      });
+      const slot = document.createElement('div');
+      slot.append(Object.assign(document.createElement('script'), { textContent: 'void 0;' }));
+      const after = Object.assign(document.createElement('p'), {
+        id: 'ad-after',
+        textContent: 'Text after the ad slot continues.',
+      });
+      const clock = Object.assign(document.createElement('p'), { id: 'clock', textContent: '0' });
+      document.querySelector('main').append(before, slot, after, clock);
+      before.scrollIntoView({ block: 'center' });
+    });
+    const start = await box('#ad-before', 'ends here.'),
+      end = await box('#ad-after', 'Text after');
+    await page.mouse.move(start.left + 1, start.y);
+    await page.mouse.down();
+    await page.mouse.move(end.right - 1, end.y, { steps: 8 });
+    await page.mouse.up();
+    await page.waitForFunction(() => globalThis.ui && !ui.querySelector('.bar').hidden);
+    const across = await button('highlight');
+    await page.mouse.click(across.x, across.y);
+    await page.waitForFunction(() => CSS.highlights.get('tabgent-highlight').size === 1);
+    assert.equal((await lastSent('highlightCreate')).anchor.quote.exact, 'ends here. Text after');
+    await page.waitForTimeout(1500);
+    await page.evaluate(() => {
+      globalThis.builds = 0;
+      const build = tabgentWebAnchor.buildIndex;
+      tabgentWebAnchor.buildIndex = (...args) => (builds++, build(...args));
+    });
+    for (let tick = 1; tick <= 4; tick++) {
+      await page.evaluate((tick) => (document.querySelector('#clock').textContent = tick), tick);
+      await page.waitForTimeout(800);
+    }
+    await page.waitForTimeout(1500);
+    assert.equal(await page.evaluate(() => builds), 0, 'Unrelated mutations must not re-anchor');
+    console.log('PASS highlights across inline scripts settle; unrelated mutations do no work');
   } finally {
     await browser.close();
   }

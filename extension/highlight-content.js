@@ -33,6 +33,9 @@
   const pageUrl = () => location.href.split('#')[0];
   const clamp = (value, low, high) => Math.max(low, Math.min(value, high));
   const strip = (value) => value.replace(/[\s\u00ad\u200b-\u200d\ufeff]+/g, '');
+  // Live DOM text of a range, including script/style text the index skips. Mutation passes
+  // compare it with the value captured when the range was assigned, never with index text.
+  const liveText = (range) => (range ? strip(range.toString()) : undefined);
   const index = () => anchors.buildIndex(document.body || document.documentElement, host);
 
   async function send(message) {
@@ -390,6 +393,7 @@
           start,
           end,
           text: textIndex.text.slice(start, end),
+          live: liveText(exactRange),
         });
         observe();
       }
@@ -480,7 +484,7 @@
       if (record.range && record.text !== undefined) {
         const offsets = textIndex.offsetsOfRange(record.range);
         if (offsets && textIndex.text.slice(offsets.start, offsets.end) === record.text) {
-          Object.assign(record, offsets);
+          Object.assign(record, offsets, { live: liveText(record.range) });
           continue;
         }
       }
@@ -490,6 +494,7 @@
       record.start = match?.start;
       record.end = match?.end;
       record.text = match ? textIndex.text.slice(match.start, match.end) : undefined;
+      record.live = liveText(record.range);
     }
     lastCost = performance.now() - started;
     lastPass = Date.now();
@@ -513,9 +518,7 @@
     if (!page) return;
     if (pageUrl() !== page.url) return void load();
     const saved = [...records.values()].filter((record) => record.highlight);
-    const broken = saved.some(
-      (record) => record.range && strip(record.range.toString()) !== strip(record.text || ''),
-    );
+    const broken = saved.some((record) => record.range && liveText(record.range) !== record.live);
     const missing = saved.some((record) => !record.range);
     if (!broken && (!missing || retries >= 100)) return;
     if (!broken) retries++;
