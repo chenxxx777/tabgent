@@ -1433,6 +1433,63 @@ export function saveScopePreference(){}
         assert.equal(await entries.nth(0).locator('.highlight-note').count(), 0);
         assert.equal(await noteButton.textContent(), 'Add note');
         console.log('PASS highlight list notes: add, keep draft on refresh, Escape, error, remove');
+
+        // Highlight IDs restart in every document: a draft on article-x h001 must not reopen
+        // under another document's h001 when the panel follows the tab to it.
+        await noteButton.click();
+        await noteInput.fill('Draft for the first article');
+        const original = await page.evaluate(() => {
+          const value = setupTest.readingValue;
+          const saved = structuredClone({
+            page: value.page,
+            document: value.document,
+            highlights: value.highlights,
+          });
+          value.page = { url: 'https://example.test/other', title: 'Other', kind: 'web' };
+          value.document = {
+            id: 'article-y',
+            highlightsPath: '/vault/ReadingVault/Articles/article-y/highlights.md',
+          };
+          value.highlights = [
+            {
+              id: 'h001',
+              text: 'Another article',
+              location: '',
+              turnCount: 0,
+              anchored: true,
+              note: 'Kept',
+            },
+          ];
+          setupTest.event('codex-reading-changed');
+          return saved;
+        });
+        await page.waitForFunction(
+          () =>
+            document.querySelector('.highlight-entry .highlight-quote')?.textContent ===
+            'Another article',
+        );
+        assert.equal(await page.locator('.highlight-note-form').count(), 0, 'The draft is dropped');
+        assert.equal(await entries.nth(0).locator('.highlight-note').textContent(), 'Kept');
+        assert.equal(await noteButton.getAttribute('aria-expanded'), 'false');
+        await noteButton.click();
+        assert.equal(await noteInput.inputValue(), 'Kept', "The new document's own note opens");
+        await page.keyboard.press('Escape');
+        assert(
+          !(await page.evaluate(() =>
+            setupTest.reading.some((r) => r.type === 'readingNote' && r.documentId === 'article-y'),
+          )),
+          'Nothing was saved to the other document',
+        );
+        // Going back: the old draft does not come back either.
+        await page.evaluate((saved) => {
+          Object.assign(setupTest.readingValue, saved);
+          setupTest.event('codex-reading-changed');
+        }, original);
+        await page.waitForFunction(
+          () => document.querySelectorAll('.highlight-entry').length === 2,
+        );
+        assert.equal(await page.locator('.highlight-note-form').count(), 0);
+        console.log('PASS a note draft closes when the panel switches to another document');
         await page.evaluate(() => (window.beforeReload = true));
         await entries.nth(0).locator('.highlight-open').click();
         await page.waitForFunction(() => !window.beforeReload);

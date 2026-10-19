@@ -4,7 +4,8 @@ export function createReading({ i18n, request, showError, selection, reload }) {
   const $ = (id) => document.getElementById(id);
   let state = null,
     revision = 0,
-    // The highlight whose note is being edited: { id, draft, error, busy }.
+    // The highlight whose note is being edited: { documentId, id, draft, error, busy }.
+    // Highlight IDs restart at h001 in every document, so the document is part of the key.
     editing = null;
   const number = (id) => Number.parseInt(String(id).slice(1), 10) || 0;
 
@@ -72,7 +73,14 @@ export function createReading({ i18n, request, showError, selection, reload }) {
       ? document.activeElement
       : null;
     const caret = typing?.tagName === 'TEXTAREA' && [typing.selectionStart, typing.selectionEnd];
-    if (editing && !state.highlights.some((h) => h.id === editing.id)) editing = null;
+    // A draft never follows the panel to another document, even one with the same ID.
+    if (
+      editing &&
+      (!state.document?.id ||
+        state.document.id !== editing.documentId ||
+        !state.highlights.some((h) => h.id === editing.id))
+    )
+      editing = null;
     list.replaceChildren();
     if (!state.highlights.length) {
       list.textContent = state.error ? i18n('readingError', state.error) : i18n('highlightsEmpty');
@@ -133,7 +141,10 @@ export function createReading({ i18n, request, showError, selection, reload }) {
       note.textContent = i18n(highlight.note ? 'highlightNoteEdit' : 'highlightNoteAdd');
       note.setAttribute('aria-expanded', String(editing?.id === highlight.id));
       note.onclick = () => {
-        editing = editing?.id === highlight.id ? null : { id: highlight.id, draft: highlight.note };
+        editing =
+          editing?.id === highlight.id
+            ? null
+            : { documentId: state.document?.id, id: highlight.id, draft: highlight.note };
         render();
         if (editing) list.querySelector('.highlight-note-form textarea')?.focus();
       };
@@ -215,7 +226,7 @@ export function createReading({ i18n, request, showError, selection, reload }) {
       render();
       try {
         await update('readingNote', {
-          documentId: state.document?.id,
+          documentId: target.documentId,
           highlightId: highlight.id,
           note: input.value.trim(),
         });
