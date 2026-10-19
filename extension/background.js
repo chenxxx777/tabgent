@@ -849,7 +849,9 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
         (msg.type === 'pageSelection' && (typeof msg.text !== 'string' || !msg.text.trim()))
       )
         throw Error('Invalid selection');
-      if (pdfSource(sender.url)) {
+      // sender.url keeps the load-time URL after history.pushState; the frame URL is current.
+      let selectionUrl = pdfSource(sender.url);
+      if (selectionUrl) {
         // Chrome hides extension documents from webNavigation.getFrame.
         if (!(await isCurrentPdfSender(sender))) throw Error('Stale PDF selection');
       } else {
@@ -859,6 +861,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
         });
         if (!frame || (sender.documentId && frame.documentId !== sender.documentId))
           throw Error('Stale selection');
+        selectionUrl = /^https?:/.test(frame.url || '') ? frame.url : sender.url;
       }
       await getSession(sender.tab.id);
       for (const s of sessions.values()) {
@@ -881,7 +884,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
           id: crypto.randomUUID(),
           text: msg.text.slice(0, 20000),
           truncated: !!msg.truncated || msg.text.length > 20000,
-          url: pdfSource(sender.url) || sender.url,
+          url: selectionUrl,
           title: typeof msg.title === 'string' ? msg.title.slice(0, 500) : '',
           frameId: sender.frameId,
           documentId: sender.documentId,
