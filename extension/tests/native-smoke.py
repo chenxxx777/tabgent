@@ -4,9 +4,7 @@ import json, os, queue, struct, subprocess, sys, tempfile, threading
 from pathlib import Path
 
 root = Path(__file__).resolve().parents[1]
-with tempfile.TemporaryDirectory(
-    prefix="tabgent-native-test-"
-) as directory:
+with tempfile.TemporaryDirectory(prefix="tabgent-native-test-") as directory:
     home = Path(directory)
     (home / "auth.json").symlink_to(home / "absent-auth.json")
     p = subprocess.Popen(

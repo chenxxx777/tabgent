@@ -33,7 +33,9 @@ def prepare_workspace():
     with START_LOCK:
         if previous.exists() and not previous.is_symlink():
             if workspace.exists():
-                raise RuntimeError("Both Tabgent workspace directories exist; preserve their contents before merging them")
+                raise RuntimeError(
+                    "Both Tabgent workspace directories exist; preserve their contents before merging them"
+                )
             previous.rename(workspace)
             # Older messages store absolute attachment paths and working directories.
             previous.symlink_to(workspace, target_is_directory=True)
@@ -122,10 +124,12 @@ class Session:
             send({"op": "event", "session": self.id, "message": message})
 
     def emit_ready(self):
-        self.emit({
-            "method": "bridge/ready",
-            "params": {"threadId": self.thread["id"] if self.thread else None},
-        })
+        self.emit(
+            {
+                "method": "bridge/ready",
+                "params": {"threadId": self.thread["id"] if self.thread else None},
+            }
+        )
 
     def write(self, message):
         if self.closed or not self.process:
@@ -287,19 +291,31 @@ class Session:
                 self.project_id = project["project"]["id"]
                 roots = project["project"].get("roots", [])
                 if len(roots) != 1 or Path(roots[0]["path"]) != workspace.resolve():
-                    self.rpc("project/update", {
-                        "projectId": self.project_id, "roots": [{"path": str(workspace)}],
-                    })
+                    self.rpc(
+                        "project/update",
+                        {
+                            "projectId": self.project_id,
+                            "roots": [{"path": str(workspace)}],
+                        },
+                    )
             account = self.rpc("account/read")
             self.setup_results = {"account/read": account}
             if account.get("account") or account.get("requiresOpenaiAuth") is False:
                 self.thread_response = self.rpc(
                     "thread/resume" if self.resume_thread_id else "thread/start",
-                    self.thread_params({
-                        **self.config,
-                        **({"threadId": self.resume_thread_id, "excludeTurns": False}
-                           if self.resume_thread_id else {}),
-                    }),
+                    self.thread_params(
+                        {
+                            **self.config,
+                            **(
+                                {
+                                    "threadId": self.resume_thread_id,
+                                    "excludeTurns": False,
+                                }
+                                if self.resume_thread_id
+                                else {}
+                            ),
+                        }
+                    ),
                 )
                 self.thread = self.thread_response["thread"]
                 # Warm the remaining composer dependency before advertising readiness.
@@ -334,66 +350,114 @@ class Session:
                 *(params.get("dynamicTools") or self.config.get("dynamicTools", [])),
                 attachments.TOOL,
             ],
-            "sandbox": "danger-full-access" if self.permission_mode == "full" else "read-only",
-            "approvalPolicy": "never" if self.permission_mode == "full" else "on-request" if self.permission_mode == "auto" else "untrusted",
-            "approvalsReviewer": "auto_review" if self.permission_mode == "auto" else "user",
+            "sandbox": (
+                "danger-full-access" if self.permission_mode == "full" else "read-only"
+            ),
+            "approvalPolicy": (
+                "never"
+                if self.permission_mode == "full"
+                else "on-request" if self.permission_mode == "auto" else "untrusted"
+            ),
+            "approvalsReviewer": (
+                "auto_review" if self.permission_mode == "auto" else "user"
+            ),
             "historyMode": "legacy",
             "ephemeral": False,
         }
 
     def request(self, message, lineage_flushed=False):
         method = message.get("method")
-        if (
-            method in getattr(self, "setup_results", {})
-            and not message.get("params")
-        ):
+        if method in getattr(self, "setup_results", {}) and not message.get("params"):
             if self.auth == auth_stamp():
-                self.emit({"id": message["id"], "result": self.setup_results.pop(method)})
+                self.emit(
+                    {"id": message["id"], "result": self.setup_results.pop(method)}
+                )
                 return
             self.setup_results.clear()
         if method == "bridge/thread/forkMessage":
+
             def fork_message():
                 try:
                     params = message.get("params", {})
-                    result = message_fork.fork(self, params.get("messageId"), params.get("edit") is True)
+                    result = message_fork.fork(
+                        self, params.get("messageId"), params.get("edit") is True
+                    )
                     self.emit({"id": message["id"], "result": result})
                 except Exception as error:
-                    self.emit({"id": message["id"], "error": {"code": -32000, "message": str(error)}})
+                    self.emit(
+                        {
+                            "id": message["id"],
+                            "error": {"code": -32000, "message": str(error)},
+                        }
+                    )
+
             POOL.submit(fork_message)
             return
         if method == "bridge/permissions/set":
+
             def set_permissions():
                 try:
                     mode = message.get("params", {}).get("mode")
                     if mode not in ("ask", "auto", "full") or not self.thread:
-                        raise ValueError("Invalid permission mode or unavailable conversation")
-                    self.rpc("thread/settings/update", {
-                        "threadId": self.thread["id"],
-                        "approvalPolicy": "never" if mode == "full" else "on-request" if mode == "auto" else "untrusted",
-                        "approvalsReviewer": "auto_review" if mode == "auto" else "user",
-                        "sandboxPolicy": {"type": "dangerFullAccess" if mode == "full" else "readOnly"},
-                    })
+                        raise ValueError(
+                            "Invalid permission mode or unavailable conversation"
+                        )
+                    self.rpc(
+                        "thread/settings/update",
+                        {
+                            "threadId": self.thread["id"],
+                            "approvalPolicy": (
+                                "never"
+                                if mode == "full"
+                                else "on-request" if mode == "auto" else "untrusted"
+                            ),
+                            "approvalsReviewer": (
+                                "auto_review" if mode == "auto" else "user"
+                            ),
+                            "sandboxPolicy": {
+                                "type": (
+                                    "dangerFullAccess" if mode == "full" else "readOnly"
+                                )
+                            },
+                        },
+                    )
                     self.permission_mode = mode
                     self.emit({"id": message["id"], "result": {"mode": mode}})
                 except Exception as error:
-                    self.emit({"id": message["id"], "error": {"code": -32000, "message": str(error)}})
+                    self.emit(
+                        {
+                            "id": message["id"],
+                            "error": {"code": -32000, "message": str(error)},
+                        }
+                    )
+
             POOL.submit(set_permissions)
             return
         if method == "bridge/thread/relations":
+
             def read_relations():
                 try:
                     result = lineage.relatives(self, HOME)
                     self.emit({"id": message["id"], "result": result})
                 except Exception as error:
-                    self.emit({"id": message["id"], "error": {"code": -32000, "message": str(error)}})
+                    self.emit(
+                        {
+                            "id": message["id"],
+                            "error": {"code": -32000, "message": str(error)},
+                        }
+                    )
+
             POOL.submit(read_relations)
             return
         if method == "bridge/thread/link":
+
             def link_threads():
                 try:
                     params = message["params"]
                     lineage.record(
-                        HOME, params["parentThreadId"], params["childThreadId"],
+                        HOME,
+                        params["parentThreadId"],
+                        params["childThreadId"],
                         params.get("source", {}),
                     )
                     # Acknowledge durable storage first: a busy parent must not block
@@ -406,7 +470,10 @@ class Session:
                         except Exception:
                             pass  # Durable notes retry before the next user turn.
                     active_ids = {s.thread["id"] for s in SESSIONS.values() if s.thread}
-                    for thread_id in (params["parentThreadId"], params["childThreadId"]):
+                    for thread_id in (
+                        params["parentThreadId"],
+                        params["childThreadId"],
+                    ):
                         if thread_id in active_ids:
                             continue
                         temporary = Session("lineage", CONFIG or {}, thread_id)
@@ -416,7 +483,13 @@ class Session:
                         finally:
                             temporary.close()
                 except Exception as error:
-                    self.emit({"id": message["id"], "error": {"code": -32000, "message": str(error)}})
+                    self.emit(
+                        {
+                            "id": message["id"],
+                            "error": {"code": -32000, "message": str(error)},
+                        }
+                    )
+
             POOL.submit(link_threads)
             return
         if method in ("turn/start", "thread/queue/start", "turn/steer"):
@@ -426,7 +499,13 @@ class Session:
                     lineage.flush(self, HOME)
                     self.request(message, lineage_flushed=True)
                 except Exception as error:
-                    self.emit({"id": message["id"], "error": {"code": -32000, "message": str(error)}})
+                    self.emit(
+                        {
+                            "id": message["id"],
+                            "error": {"code": -32000, "message": str(error)},
+                        }
+                    )
+
             if not lineage_flushed:
                 POOL.submit(with_lineage)
                 return
@@ -468,23 +547,49 @@ class Session:
                 )
             return
         if method == "bridge/image/preview":
+
             def image_preview():
                 try:
-                    result = self.rpc('thread/read', {'threadId': self.thread['id'], 'includeTurns': True})
-                    image = attachments.reply_image(result['thread'], message['params']['path'])
-                    self.emit({'id': message['id'], 'result': image})
+                    result = self.rpc(
+                        "thread/read",
+                        {"threadId": self.thread["id"], "includeTurns": True},
+                    )
+                    image = attachments.reply_image(
+                        result["thread"], message["params"]["path"]
+                    )
+                    self.emit({"id": message["id"], "result": image})
                 except Exception:
-                    self.emit({'id': message['id'], 'error': {'code': -32000, 'message': 'Image unavailable'}})
+                    self.emit(
+                        {
+                            "id": message["id"],
+                            "error": {"code": -32000, "message": "Image unavailable"},
+                        }
+                    )
+
             POOL.submit(image_preview)
             return
         if method == "bridge/file/open":
+
             def open_file():
                 try:
-                    thread = self.rpc('thread/read', {'threadId': self.thread['id'], 'includeTurns': True})['thread']
-                    result = local_files.open_shared(thread, message['params']['path'], message['params'].get('reveal') is True)
-                    self.emit({'id': message['id'], 'result': result})
+                    thread = self.rpc(
+                        "thread/read",
+                        {"threadId": self.thread["id"], "includeTurns": True},
+                    )["thread"]
+                    result = local_files.open_shared(
+                        thread,
+                        message["params"]["path"],
+                        message["params"].get("reveal") is True,
+                    )
+                    self.emit({"id": message["id"], "result": result})
                 except Exception as error:
-                    self.emit({'id': message['id'], 'error': {'code': -32000, 'message': str(error)}})
+                    self.emit(
+                        {
+                            "id": message["id"],
+                            "error": {"code": -32000, "message": str(error)},
+                        }
+                    )
+
             POOL.submit(open_file)
             return
         if method == "bridge/attachment/preview":
@@ -599,7 +704,9 @@ def handle(message):
             elif session.process is None:
                 POOL.submit(session.start)
         else:
-            session = SESSIONS.pop("spare", None) if not message.get("threadId") else None
+            session = (
+                SESSIONS.pop("spare", None) if not message.get("threadId") else None
+            )
             if session is None:
                 session = Session(ident, CONFIG or {}, message.get("threadId"))
                 SESSIONS[ident] = session
@@ -621,10 +728,13 @@ def handle(message):
             session.emit({"method": "bridge/authChanged"})
     elif op in ("close", "restart"):
         session = SESSIONS.pop(ident, None)
-        resume_for_cleanup = not session and message.get("discardEmpty") and message.get("threadId")
+        resume_for_cleanup = (
+            not session and message.get("discardEmpty") and message.get("threadId")
+        )
         if resume_for_cleanup:
             session = Session(ident, CONFIG or {}, message["threadId"])
         if session:
+
             def close_session(session=session):
                 try:
                     if resume_for_cleanup:
@@ -634,9 +744,13 @@ def handle(message):
                         for other in list(SESSIONS.values()):
                             other.emit({"method": "bridge/lineageChanged"})
                 except Exception as error:
-                    print(f"Could not discard empty conversation: {error}", file=sys.stderr)
+                    print(
+                        f"Could not discard empty conversation: {error}",
+                        file=sys.stderr,
+                    )
                 finally:
                     session.close()
+
             POOL.submit(close_session)
         if op == "restart":
             session = Session(ident, CONFIG or {}, message.get("threadId"))
