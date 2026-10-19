@@ -15,6 +15,7 @@
     "format": "prettier --write extension scripts .github docs README.md README.zh-CN.md CONTRIBUTING.md SECURITY.md .prettierrc.json package.json",
     "format:check": "prettier --check extension scripts .github docs README.md README.zh-CN.md CONTRIBUTING.md SECURITY.md .prettierrc.json package.json",
     "test:browser": "node scripts/test-browser-input.cjs",
+    "test:highlights": "node scripts/test-highlights-browser.cjs",
     "package:store": "python3 scripts/package-store.py"
   },
   "devDependencies": {

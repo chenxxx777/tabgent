@@ -846,5 +846,38 @@
   },
   "revealLocalFile": {
     "message": "Reveal in Finder"
+  },
+  "highlightToolbar": {
+    "message": "Selection actions"
+  },
+  "highlightAdd": {
+    "message": "Highlight"
+  },
+  "highlightAsk": {
+    "message": "Ask AI"
+  },
+  "highlightActions": {
+    "message": "Highlight actions"
+  },
+  "highlightOpen": {
+    "message": "Open discussion"
+  },
+  "highlightDelete": {
+    "message": "Delete"
+  },
+  "highlightTooLong": {
+    "message": "This selection is too long to highlight."
+  },
+  "highlightSaveFailed": {
+    "message": "The highlight could not be saved: $1"
+  },
+  "highlightDeleteFailed": {
+    "message": "The highlight could not be deleted: $1"
+  },
+  "highlightAskFailed": {
+    "message": "The selection could not be sent to Tabgent: $1"
+  },
+  "highlightOpenPanel": {
+    "message": "Sent to Tabgent. Click the Tabgent toolbar button to open the side panel."
   }
 }

@@ -1,0 +1,7 @@
+/* Saved webpage highlights, painted by highlight-content.js without changing page markup. */
+::highlight(tabgent-highlight) {
+  background-color: rgb(255 214 102 / 0.45);
+}
+::highlight(tabgent-highlight-active) {
+  background-color: rgb(255 184 0 / 0.55);
+}

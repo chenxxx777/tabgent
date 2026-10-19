@@ -49,6 +49,12 @@
       "js": ["selection-content.js"],
       "all_frames": true,
       "run_at": "document_idle"
+    },
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["web-anchor.js", "highlight-content.js"],
+      "css": ["highlight.css"],
+      "run_at": "document_idle"
     }
   ],
   "web_accessible_resources": [
