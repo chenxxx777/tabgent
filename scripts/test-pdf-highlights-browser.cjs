@@ -1,6 +1,7 @@
 // PDF highlights in real Chromium with the source extension and source connector.
 // A temporary profile, HOME, and CODEX_HOME isolate the browser, vault, and Codex state;
 // no account, model, or personal ReadingVault is used. The PDF is generated fixture text.
+// Codex is replaced by a fixture app-server that replays a completed turn per message.
 const assert = require('node:assert/strict'),
   crypto = require('node:crypto'),
   fs = require('node:fs'),
@@ -54,9 +55,19 @@ const fixture = textPdf(
     const home = path.join(temp, 'home');
     fs.mkdirSync(path.join(home, 'codex'), { recursive: true });
     const python = process.env.PYTHON || execSync('command -v python3').toString().trim();
+    const codex = path.join(temp, 'codex');
+    fs.writeFileSync(
+      codex,
+      `#!/bin/sh\nexec '${python}' '${path.join(extension, 'tests/fixtures/app-server-replay.py')}' "$@"\n`,
+      { mode: 0o700 },
+    );
+    // The real host.py, with Codex discovery pointed at the fixture app-server.
+    const start =
+      'import sys; native, codex = sys.argv[1:3]; del sys.argv[1:3]; sys.path.insert(0, native); ' +
+      'import host; host.executable = lambda: codex; host.main()';
     fs.writeFileSync(
       host,
-      `#!/bin/sh\nexport HOME='${home}' CODEX_HOME='${home}/codex'\nexec '${python}' '${path.join(extension, 'native/host.py')}' "$@" 2>>'${temp}/host.err'\n`,
+      `#!/bin/sh\nexport HOME='${home}' CODEX_HOME='${home}/codex'\nexec '${python}' -c '${start}' '${path.join(extension, 'native')}' '${codex}' "$@" 2>>'${temp}/host.err'\n`,
       { mode: 0o700 },
     );
     fs.mkdirSync(path.join(profile, 'NativeMessagingHosts'), { recursive: true });
@@ -80,6 +91,11 @@ const fixture = textPdf(
           }))
         : [];
     const saved = () => docs().reduce((n, d) => n + d.anchors.highlights.length, 0);
+    const turns = (count) =>
+      until(() => {
+        const [doc] = docs();
+        return doc?.anchors.turns.length === count && doc;
+      }, 15000);
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
     const url = `http://127.0.0.1:${server.address().port}/papers/companion.pdf?edition=1`;
     async function launch() {
@@ -104,6 +120,58 @@ const fixture = textPdf(
       );
       return worker;
     }
+    // Evaluates in the side panel (chat.html) over CDP, awaiting promises.
+    async function sidePanel() {
+      const port = fs.readFileSync(path.join(profile, 'DevToolsActivePort'), 'utf8').split('\n')[0];
+      const target = await until(async () =>
+        (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find((t) =>
+          t.url.endsWith('/ui/chat.html'),
+        ),
+      );
+      const socket = new WebSocket(target.webSocketDebuggerUrl);
+      await new Promise((resolve) => socket.addEventListener('open', resolve, { once: true }));
+      let sequence = 0;
+      const evaluate = async (expression) => {
+        const id = ++sequence;
+        const reply = new Promise((resolve) => {
+          const listen = (e) => {
+            const message = JSON.parse(e.data);
+            if (message.id !== id) return;
+            socket.removeEventListener('message', listen);
+            resolve(message);
+          };
+          socket.addEventListener('message', listen);
+        });
+        socket.send(
+          JSON.stringify({
+            id,
+            method: 'Runtime.evaluate',
+            params: { returnByValue: true, awaitPromise: true, expression },
+          }),
+        );
+        return (await reply).result?.result?.value;
+      };
+      evaluate.close = () => socket.close();
+      return evaluate;
+    }
+    // Types a message in the composer and sends it once the conversation is ready.
+    const send = (text) =>
+      until(() =>
+        panel(`(() => {
+          const prompt = document.getElementById('prompt'), button = document.getElementById('send');
+          prompt.value = ${JSON.stringify(text)};
+          prompt.dispatchEvent(new Event('input'));
+          if (button.disabled) return false;
+          button.click();
+          return true;
+        })()`),
+      );
+    const messagesText = () => panel(`document.getElementById('messages').innerText`);
+    const conversation = (threadId) =>
+      worker.evaluate(async (threadId) => {
+        const { conversations = [] } = await chrome.storage.session.get('conversations');
+        return conversations.map(([, s]) => s).find((s) => s.threadId === threadId) || null;
+      }, threadId);
     const panels = (worker) =>
       worker.evaluate(
         async () => (await chrome.runtime.getContexts({ contextTypes: ['SIDE_PANEL'] })).length,
@@ -168,11 +236,13 @@ const fixture = textPdf(
           walk(child);
       })(document);
       const { model } = await client.send('DOM.getBoxModel', { backendNodeId: target });
+      const { outerHTML } = await client.send('DOM.getOuterHTML', { backendNodeId: target });
       await client.detach();
       await page.mouse.click(
         (model.border[0] + model.border[4]) / 2,
         (model.border[1] + model.border[5]) / 2,
       );
+      return outerHTML;
     }
 
     let worker = await launch();
@@ -229,31 +299,75 @@ const fixture = textPdf(
     assert.equal(selection.locator.anchor.quote.exact, second);
     assert.match(selection.context.before, /own actions\. It does not mean $/);
     assert.match(selection.context.after, /^\. Readers who endorse a goal/);
-    const port = fs.readFileSync(path.join(profile, 'DevToolsActivePort'), 'utf8').split('\n')[0];
-    const target = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find((t) =>
-      t.url.endsWith('/ui/chat.html'),
+    let panel = await sidePanel();
+    const quote = await until(() =>
+      panel(
+        `document.getElementById('selection')?.hidden === false && document.getElementById('selectionText').textContent`,
+      ),
     );
-    const socket = new WebSocket(target.webSocketDebuggerUrl);
-    await new Promise((resolve) => socket.addEventListener('open', resolve, { once: true }));
-    const quote = await until(async () => {
-      const reply = new Promise((resolve) =>
-        socket.addEventListener('message', (e) => resolve(JSON.parse(e.data)), { once: true }),
-      );
-      socket.send(
-        JSON.stringify({
-          id: 1,
-          method: 'Runtime.evaluate',
-          params: {
-            returnByValue: true,
-            expression: `document.getElementById('selection')?.hidden === false && document.getElementById('selectionText').textContent`,
-          },
-        }),
-      );
-      return (await reply).result?.result?.value;
-    });
-    socket.close();
     assert.equal(quote, second);
     console.log('PASS Ask AI opens the side panel in-gesture and hands off the PDF payload');
+    // The conversation is bound to the new PDF highlight (reading-companion.js).
+    assert.match(
+      await until(() => panel(`document.getElementById('readingLabel')?.textContent || ''`)),
+      /^(Highlight 2|高亮 2)$/,
+    );
+    const question = 'Why is autonomy not independence?';
+    assert(await send(question), 'The composer sends once the conversation is ready');
+    const answered = await turns(1);
+    const [turn] = answered.anchors.turns;
+    assert.equal(turn.highlightId, 'h002');
+    assert.equal(turn.user, question);
+    assert.equal(turn.assistant, 'Fixture answer 1.');
+    assert.match(
+      answered.markdown,
+      /## Highlight 002[\s\S]*Why is autonomy not independence\?[\s\S]*Fixture answer 1\./,
+    );
+    const bound = (await conversation(turn.threadId))?.reading;
+    assert.equal(bound?.highlightId, 'h002');
+    assert.equal(bound?.kind, 'pdf');
+    assert.equal(bound?.url, url);
+    console.log('PASS a turn in the PDF highlight conversation is saved under Books/paper-*');
+    const request = (type, params = {}) =>
+      panel(
+        `import('/bridge.js').then((m) => m.readingRequest(${JSON.stringify(type)}, ${JSON.stringify(params)})).catch((e) => ({ error: e.message }))`,
+      );
+    const state = await request('readingState');
+    assert.equal(state.page.kind, 'pdf');
+    assert.equal(state.page.url, url);
+    assert.equal(state.document.id, doc.name);
+    assert.deepEqual(
+      state.highlights.map((h) => [h.id, h.anchored !== false]),
+      [
+        ['h001', true],
+        ['h002', true],
+      ],
+    );
+    console.log('PASS the PDF quote binds the conversation; the drawer lists the PDF highlights');
+    await pdf.evaluate(() => {
+      PDFViewerApplication.page = 3;
+    });
+    await wait(500);
+    assert.deepEqual(await request('readingJump', { highlightId: 'h001' }), { found: true });
+    assert.equal(await until(() => pdf.evaluate(() => PDFViewerApplication.page === 2)), true);
+    const opened = await request('readingOpen', { documentId: doc.name, highlightId: 'h001' });
+    assert(!opened?.error, JSON.stringify(opened));
+    const reopened = await until(() =>
+      worker.evaluate(async () => {
+        const { conversations = [] } = await chrome.storage.session.get('conversations');
+        return (
+          conversations
+            .map(([, s]) => s.selection)
+            .find((s) => s?.highlight?.highlightId === 'h001') || null
+        );
+      }),
+    );
+    assert.equal(reopened.text, first);
+    assert.equal(reopened.locator.kind, 'pdf');
+    assert.match(reopened.context.before, /Motivation Autonomy is the $/);
+    assert.match(reopened.context.after, /^\. It does not mean independence/);
+    panel.close();
+    console.log('PASS the drawer jumps into the PDF and reopens a highlight with its page context');
 
     await context.close();
     worker = await launch();
@@ -262,6 +376,63 @@ const fixture = textPdf(
       first,
       second,
     ]);
+    console.log('PASS restart restores PDF highlights');
+
+    const discussed = await textPoint('independence');
+    await page.mouse.click(discussed.left + 4, discussed.y);
+    await wait(300);
+    assert.match(await press('discuss'), /Open discussion|查看讨论/);
+    assert.equal(await until(async () => (await panels(worker)) === 1, 5000), true);
+    panel = await sidePanel();
+    const history = await until(async () => {
+      const text = await messagesText();
+      return text?.includes(question) && text.includes('Fixture answer 1.') && text;
+    });
+    assert(history, 'The reopened thread shows its earlier turn');
+    const resumed = await until(() => conversation(turn.threadId));
+    assert.equal(resumed.selection.highlight.highlightId, 'h002');
+    assert.equal(resumed.selection.highlight.kind, 'pdf');
+    assert.equal(resumed.selection.text, second);
+    assert.match(resumed.selection.location, /^(p\. 2|第 2 页)$/);
+    const followup = 'Give an example.';
+    assert(await send(followup));
+    const continued = await turns(2);
+    assert.deepEqual(
+      continued.anchors.turns.map((t) => [t.threadId, t.highlightId]),
+      [
+        [turn.threadId, 'h002'],
+        [turn.threadId, 'h002'],
+      ],
+    );
+    assert.match(
+      continued.markdown,
+      /## Highlight 002[\s\S]*Why is autonomy[\s\S]*Give an example\.[\s\S]*Fixture answer 2\./,
+    );
+    console.log('PASS Open discussion after a restart reopens the same thread and keeps saving');
+
+    // A new conversation on the PDF saves page questions to the PDF's document notes.
+    await panel(`document.getElementById('newConversation').click()`);
+    assert.match(
+      await until(async () =>
+        (await panel(`document.body.classList.contains('empty')`))
+          ? panel(`document.getElementById('readingLabel').textContent`)
+          : '',
+      ),
+      /^(Page notes|页面笔记)$/,
+    );
+    const pageQuestion = 'What is the main claim of this paper?';
+    assert(await send(pageQuestion));
+    const noted = await turns(3);
+    const pageTurn = noted.anchors.turns[2];
+    assert.equal(pageTurn.highlightId, null);
+    assert.notEqual(pageTurn.threadId, turn.threadId);
+    assert.match(
+      noted.markdown,
+      /## 文档对话[\s\S]*What is the main claim of this paper\?[\s\S]*Fixture answer 1\./,
+    );
+    panel.close();
+    console.log('PASS a page question in the PDF viewer saves to the PDF document');
+
     const hit = await textPoint('endorsement');
     await page.mouse.click(hit.left + 4, hit.y);
     await wait(300);
@@ -274,7 +445,7 @@ const fixture = textPdf(
     assert.deepEqual(await until(async () => (await painted()).length === 1 && painted()), [
       second,
     ]);
-    console.log('PASS restart restores PDF highlights; delete removes the record and Markdown');
+    console.log('PASS delete removes the PDF highlight record and Markdown');
     passed = true;
   } finally {
     await context?.close().catch(() => {});
