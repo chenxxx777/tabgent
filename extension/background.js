@@ -3,6 +3,13 @@ import { createUrlHistory } from './url-history.js';
 import { startPdfRouting, pdfSource, isCurrentPdfSender } from './pdf-routing.js';
 import { tool, instructions, pageContextPrefix } from './session-config.js';
 import { browserTool, context } from './browser-tools.js';
+import {
+  VaultError,
+  createVaultClient,
+  cleanWebAnchor,
+  cleanPageMeta,
+  documentUrl,
+} from './vault-client.js';
 startPdfRouting();
 const sessions = new Map(),
   requests = new Map(),
@@ -17,6 +24,10 @@ const agentViews = new Map(),
   openingThreads = new Map();
 let native,
   sequence = 1000;
+const vault = createVaultClient(connect);
+// Vault methods follow the shared contract; they never claim or wait for a Codex session.
+const vaultRequest = (method, params) => vault.request(method, params);
+const highlightStatus = new Map();
 const loaded = chrome.storage.session
   .get(['conversations', 'agentViews', 'closedViews', 'sidebarViews', 'agentCompanions'])
   .then(
@@ -244,6 +255,7 @@ function connect() {
     native = null;
     for (const r of requests.values()) r.reject?.(Error('Codex disconnected'));
     requests.clear();
+    vault.disconnect(message);
     const missing = /native messaging host not found/i.test(message);
     for (const s of sessions.values()) {
       s.turnPending = false;
@@ -275,6 +287,7 @@ async function receive(message) {
     chunks.delete(message.id);
     message = JSON.parse(c.join(''));
   }
+  if (vault.receive(message)) return;
   const s = [...sessions.values()].find((s) => s.id === message.session);
   if (!s) return;
   const m = message.message;
@@ -481,6 +494,7 @@ chrome.runtime.onConnect.addListener((port) => {
             windowId: (await chrome.tabs.get(viewTabId)).windowId,
             selection: s.selection?.tabId === port.companionTabId ? s.selection : null,
             annotations: s.annotations || [],
+            highlightStatus: highlightStatus.get(port.companionTabId) || null,
             attachments: s.attachments || [],
             questions: s.questions || [],
           },
@@ -673,8 +687,159 @@ async function openAgentTab(session, windowId, companionTabId = session.tabId) {
   await chrome.tabs.update(tab.id, { url: chrome.runtime.getURL('ui/chat.html'), active: true });
   return { tabId: tab.id };
 }
+const highlightMessages = new Set([
+  'highlightResolve',
+  'highlightCreate',
+  'highlightDelete',
+  'highlightAsk',
+  'highlightStatus',
+]);
+const pageText = (value, limit) => (typeof value === 'string' ? value.slice(0, limit) : '');
+// Webpage highlights belong to top-level HTTP(S) documents named by Chrome's sender metadata.
+async function highlightMessage(msg, sender) {
+  if (
+    !sender.tab ||
+    sender.tab.incognito ||
+    sender.frameId !== 0 ||
+    !/^https?:/.test(sender.url || '')
+  )
+    throw Error('Invalid highlight sender');
+  const tabId = sender.tab.id;
+  // Chrome honours the page click's user gesture only until this handler first awaits.
+  const panel =
+    msg.type === 'highlightAsk' || (msg.type === 'highlightCreate' && msg.ask)
+      ? chrome.sidePanel.open({ tabId }).then(
+          () => true,
+          () => false,
+        )
+      : null;
+  const frame = await chrome.webNavigation.getFrame({ tabId, frameId: 0 });
+  if (!frame || (sender.documentId && frame.documentId !== sender.documentId))
+    throw Error('Stale page');
+  // sender.url keeps the load-time URL; the frame URL follows same-document (SPA) navigation.
+  const pageUrl = /^https?:/.test(frame.url || '') ? frame.url : sender.url,
+    url = documentUrl(pageUrl);
+  const title = pageText(msg.title, 500) || pageText(sender.tab.title, 500);
+  const meta = cleanPageMeta(msg.meta);
+  const context = {
+    before: pageText(msg.context?.before, 2000),
+    after: pageText(msg.context?.after, 2000),
+  };
+  if (msg.type === 'highlightResolve') {
+    const result = await vaultRequest('vault/document/resolve', { url, title, kind: 'web', meta });
+    return { url, document: result.document || null, highlights: result.highlights || [] };
+  }
+  if (msg.type === 'highlightStatus') {
+    await loaded;
+    const status = {
+      url,
+      documentId: pageText(msg.documentId, 300) || null,
+      anchored: Number.isInteger(msg.anchored) ? msg.anchored : 0,
+      unanchored: (Array.isArray(msg.unanchored) ? msg.unanchored : [])
+        .slice(0, 1000)
+        .map((id) => pageText(id, 100)),
+    };
+    highlightStatus.set(tabId, status);
+    for (const s of sessions.values())
+      if (s.tabId === tabId) for (const p of s.ports) event(p, 'codex-highlight-status', status);
+    return {};
+  }
+  if (msg.type === 'highlightCreate') {
+    const anchor = cleanWebAnchor(msg.anchor),
+      text = pageText(msg.text, 20000);
+    if (!anchor || !text.trim()) throw new VaultError('invalid_params', 'Invalid highlight');
+    const location = pageText(msg.location, 200).trim();
+    let created = {},
+      failure = null;
+    try {
+      created = await vaultRequest('vault/highlight/create', {
+        url,
+        title,
+        kind: 'web',
+        meta,
+        text,
+        anchor,
+        ...(location ? { location } : {}),
+      });
+    } catch (error) {
+      if (!msg.ask) throw error;
+      failure = error;
+    }
+    const highlight = created.highlight || null,
+      document = created.document || null;
+    if (msg.ask)
+      await handOffSelection(sender, {
+        url: pageUrl,
+        text,
+        title,
+        anchor,
+        context,
+        highlight:
+          highlight && document ? { documentId: document.id, highlightId: highlight.id } : null,
+      });
+    return {
+      url,
+      document,
+      highlight,
+      ...(panel ? { panelOpened: await panel } : {}),
+      ...(failure ? { vaultError: failure.message, code: failure.code } : {}),
+    };
+  }
+  // Existing highlights are checked against the vault record for this page's URL.
+  const resolved = await vaultRequest('vault/document/resolve', { url, title, kind: 'web' });
+  const highlight =
+    resolved.document?.id === msg.documentId &&
+    (resolved.highlights || []).find((h) => h.id === msg.highlightId);
+  if (!highlight) throw new VaultError('not_found', 'Highlight not found on this page');
+  if (msg.type === 'highlightDelete') {
+    await vaultRequest('vault/highlight/delete', {
+      documentId: resolved.document.id,
+      highlightId: highlight.id,
+    });
+    return { ok: true };
+  }
+  await handOffSelection(sender, {
+    url: pageUrl,
+    text: pageText(highlight.text, 20000) || pageText(highlight.anchor?.quote?.exact, 20000),
+    title,
+    anchor: highlight.anchor || null,
+    context,
+    highlight: { documentId: resolved.document.id, highlightId: highlight.id },
+  });
+  return { panelOpened: await panel };
+}
+// "Ask AI" reuses the page-selection quote flow, extended with the highlight and nearby text.
+async function handOffSelection(sender, { url, text, title, anchor, context, highlight }) {
+  await getSession(sender.tab.id);
+  const selectionId = crypto.randomUUID();
+  for (const s of sessions.values()) {
+    if (s.tabId !== sender.tab.id) continue;
+    s.selection = {
+      selectionId,
+      id: crypto.randomUUID(),
+      text,
+      truncated: text.length >= 20000,
+      url,
+      title,
+      frameId: sender.frameId,
+      documentId: sender.documentId,
+      tabId: sender.tab.id,
+      locator: { kind: 'web', anchor, capturedAt: new Date().toISOString() },
+      highlight,
+      context,
+    };
+    await persist();
+    for (const p of s.ports) event(p, 'codex-selection', s.selection);
+  }
+}
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   if (sender.id !== chrome.runtime.id || msg.type === 'pdfFallback') return;
+  if (highlightMessages.has(msg.type)) {
+    highlightMessage(msg, sender).then(reply, (e) =>
+      reply({ error: e.message, code: e.code || 'error' }),
+    );
+    return true;
+  }
   (async () => {
     if (msg.type === 'pageSelection' || msg.type === 'pageSelectionCleared') {
       if (
@@ -932,6 +1097,7 @@ chrome.tabs.onRemoved.addListener(async (id) => {
   agentViews.delete(id);
   agentCompanions.delete(id);
   sidebarViews.delete(id);
+  highlightStatus.delete(id);
   for (const [key, s] of sessions) {
     const remaining = [...agentViews, ...sidebarViews].find(([, owner]) => owner === key);
     if (s.tabId !== id && !(s.viewOnly && !remaining)) continue;
@@ -973,7 +1139,10 @@ chrome.tabs.onRemoved.addListener(async (id) => {
 });
 chrome.webNavigation.onCommitted.addListener(async (detail) => {
   await loaded;
+  const staleHighlights = detail.frameId === 0 && highlightStatus.delete(detail.tabId);
   for (const s of sessions.values()) {
+    if (staleHighlights && s.tabId === detail.tabId)
+      for (const p of s.ports) event(p, 'codex-highlight-status', null);
     if (
       s.tabId !== detail.tabId &&
       ![...s.ports].some((port) => port.companionTabId === detail.tabId)

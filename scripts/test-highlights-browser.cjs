@@ -1,0 +1,302 @@
+// Webpage highlights in real Chromium with the source extension and source connector.
+// A temporary profile, HOME, and CODEX_HOME isolate the browser, vault, and Codex state;
+// no account, model, or personal ReadingVault is used.
+const assert = require('node:assert/strict'),
+  crypto = require('node:crypto'),
+  fs = require('node:fs'),
+  http = require('node:http'),
+  os = require('node:os'),
+  path = require('node:path'),
+  { execSync } = require('node:child_process');
+const root = path.resolve(__dirname, '..'),
+  { chromium } = require(root + '/node_modules/playwright');
+const extension = path.join(root, 'extension');
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+async function until(check, ms = 8000) {
+  for (const end = Date.now() + ms; Date.now() < end; await wait(100)) {
+    const value = await check();
+    if (value) return value;
+  }
+  return null;
+}
+let prefix = '';
+const article = () => `<!doctype html><title>Highlight fixture</title>
+  <style>body { font: 20px/1.6 Georgia, serif; max-width: 640px; margin: 40px auto }</style>
+  ${prefix}<h1>Intrinsic motivation</h1>
+  <p id="a">Autonomy does not mean independence from others, but endorsement of one's own actions.</p>
+  <p id="b">People are more persistent when they endorse what they do, and learn more deeply.</p>
+  <div style="height: 1500px"></div>`;
+
+(async () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'tabgent-highlights-'));
+  const profile = path.join(temp, 'profile');
+  const server = http.createServer((request, response) => {
+    response.setHeader('content-type', 'text/html');
+    response.end(article());
+  });
+  let context,
+    passed = false;
+  try {
+    // Chrome reads <user-data-dir>/NativeMessagingHosts, so nothing is installed globally.
+    const key = JSON.parse(fs.readFileSync(path.join(extension, 'manifest.json'))).key;
+    const id = [...crypto.createHash('sha256').update(Buffer.from(key, 'base64')).digest('hex')]
+      .slice(0, 32)
+      .map((c) => String.fromCharCode(97 + parseInt(c, 16)))
+      .join('');
+    const host = path.join(temp, 'connector');
+    const home = path.join(temp, 'home');
+    fs.mkdirSync(path.join(home, 'codex'), { recursive: true });
+    const python = process.env.PYTHON || execSync('command -v python3').toString().trim();
+    fs.writeFileSync(
+      host,
+      `#!/bin/sh\nexport HOME='${home}' CODEX_HOME='${home}/codex'\nexec '${python}' '${path.join(extension, 'native/host.py')}' "$@" 2>>'${temp}/host.err'\n`,
+      { mode: 0o700 },
+    );
+    fs.mkdirSync(path.join(profile, 'NativeMessagingHosts'), { recursive: true });
+    fs.writeFileSync(
+      path.join(profile, 'NativeMessagingHosts/com.tabgent.codex.json'),
+      JSON.stringify({
+        name: 'com.tabgent.codex',
+        description: 'Tabgent connector for highlight tests',
+        path: host,
+        type: 'stdio',
+        allowed_origins: [`chrome-extension://${id}/`],
+      }),
+    );
+    const docs = () => {
+      const dir = path.join(temp, 'home/ReadingVault/Articles');
+      if (!fs.existsSync(dir)) return [];
+      return fs.readdirSync(dir).map((name) => ({
+        name,
+        anchors: JSON.parse(fs.readFileSync(path.join(dir, name, 'anchors.json'), 'utf8')),
+        markdown: fs.readFileSync(path.join(dir, name, 'highlights.md'), 'utf8'),
+      }));
+    };
+    const saved = () => docs().reduce((n, d) => n + d.anchors.highlights.length, 0);
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    async function launch() {
+      context = await chromium.launchPersistentContext(profile, {
+        headless: true,
+        channel: 'chromium',
+        viewport: { width: 1100, height: 800 },
+        args: [
+          `--disable-extensions-except=${extension}`,
+          `--load-extension=${extension}`,
+          '--remote-debugging-port=0',
+        ],
+      });
+      return context.serviceWorkers()[0] || context.waitForEvent('serviceworker');
+    }
+    const panels = (worker) =>
+      worker.evaluate(
+        async () => (await chrome.runtime.getContexts({ contextTypes: ['SIDE_PANEL'] })).length,
+      );
+    const painted = (page) =>
+      page.evaluate(() => CSS.highlights.get('tabgent-highlight')?.size ?? 0);
+    async function drag(page, selector, needle) {
+      const box = await page.evaluate(
+        ([selector, needle]) => {
+          const node = document.querySelector(selector).firstChild,
+            at = node.data.indexOf(needle),
+            range = document.createRange();
+          range.setStart(node, at);
+          range.setEnd(node, at + needle.length);
+          const r = range.getBoundingClientRect();
+          return { left: r.left, right: r.right, y: r.top + r.height / 2 };
+        },
+        [selector, needle],
+      );
+      await page.mouse.move(box.left + 1, box.y);
+      await page.mouse.down();
+      await page.mouse.move(box.right - 1, box.y, { steps: 6 });
+      await page.mouse.up();
+      await wait(300);
+      return box;
+    }
+    // CDP can see inside the closed shadow root; page scripts cannot.
+    async function button(page, action) {
+      const client = await page.context().newCDPSession(page);
+      const { root: document } = await client.send('DOM.getDocument', { depth: -1, pierce: true });
+      let target = null;
+      (function walk(node) {
+        const attributes = node.attributes || [];
+        const at = attributes.indexOf('data-action');
+        if (at >= 0 && attributes[at + 1] === action) target = node.backendNodeId;
+        for (const child of [...(node.children || []), ...(node.shadowRoots || [])]) walk(child);
+      })(document);
+      const { model } = await client.send('DOM.getBoxModel', { backendNodeId: target });
+      await client.detach();
+      return {
+        x: (model.border[0] + model.border[4]) / 2,
+        y: (model.border[1] + model.border[5]) / 2,
+      };
+    }
+    async function press(page, action) {
+      const { x, y } = await button(page, action);
+      await page.mouse.click(x, y);
+    }
+
+    let worker = await launch();
+    const page = await context.newPage();
+    await page.goto(base + '/article?x=1#section');
+    await wait(1500);
+    assert.equal(docs().length, 0, 'Resolving a page writes nothing');
+    assert.equal(await page.evaluate(() => typeof globalThis.tabgentWebAnchor), 'undefined');
+    await drag(page, '#a', 'independence from others');
+    await press(page, 'highlight');
+    assert(await until(() => saved() === 1));
+    const [doc] = docs();
+    assert.equal(doc.anchors.document.url, base + '/article?x=1');
+    assert.equal(doc.anchors.highlights[0].anchor.quote.exact, 'independence from others');
+    assert.match(doc.markdown, /independence from others/);
+    assert.equal(fs.existsSync(path.join(temp, 'home/ReadingVault/AGENTS.md')), true);
+    assert.equal(await until(async () => (await painted(page)) === 1), true);
+    console.log('PASS isolated content script saves to the vault files and paints a highlight');
+
+    assert.match(
+      await worker.evaluate(async () => {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        return chrome.sidePanel.open({ tabId: tab.id }).then(
+          () => 'opened',
+          (e) => e.message,
+        );
+      }),
+      /user gesture/,
+    );
+    assert.equal(await panels(worker), 0);
+    await drag(page, '#b', 'more persistent');
+    await press(page, 'ask');
+    assert(await until(() => saved() === 2));
+    assert.equal(await until(async () => (await panels(worker)) === 1, 5000), true);
+    const port = fs.readFileSync(path.join(profile, 'DevToolsActivePort'), 'utf8').split('\n')[0];
+    const target = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find((t) =>
+      t.url.endsWith('/ui/chat.html'),
+    );
+    const socket = new WebSocket(target.webSocketDebuggerUrl);
+    await new Promise((resolve) => socket.addEventListener('open', resolve, { once: true }));
+    const quote = await until(async () => {
+      const reply = new Promise((resolve) =>
+        socket.addEventListener('message', (e) => resolve(JSON.parse(e.data)), { once: true }),
+      );
+      socket.send(
+        JSON.stringify({
+          id: 1,
+          method: 'Runtime.evaluate',
+          params: {
+            returnByValue: true,
+            expression: `document.getElementById('selection')?.hidden === false && document.getElementById('selectionText').textContent`,
+          },
+        }),
+      );
+      return (await reply).result?.result?.value;
+    });
+    socket.close();
+    assert.equal(quote, 'more persistent');
+    console.log('PASS Ask AI opens the side panel from the page click and hands off the quote');
+
+    // Only a synchronous call keeps the content-script gesture.
+    const tabId = await worker.evaluate(
+      async () => (await chrome.tabs.query({ active: true, currentWindow: true }))[0].id,
+    );
+    await worker.evaluate(() => {
+      globalThis.probes = {};
+      chrome.runtime.onMessage.addListener((message, sender) => {
+        if (!message.probe) return;
+        const open = () =>
+          chrome.sidePanel
+            .open({ tabId: sender.tab.id })
+            .then(
+              () => 'opened',
+              () => 'rejected',
+            )
+            .then((result) => (globalThis.probes[message.probe] = result));
+        if (message.probe === 'sync') open();
+        if (message.probe === 'microtask') Promise.resolve().then(open);
+        if (message.probe === 'api') chrome.tabs.get(sender.tab.id).then(open);
+      });
+    });
+    for (const probe of ['sync', 'microtask', 'api']) {
+      await worker.evaluate((tabId) => chrome.sidePanel.close({ tabId }).catch(() => {}), tabId);
+      await wait(300);
+      await worker.evaluate(
+        ([tabId, probe]) =>
+          chrome.scripting.executeScript({
+            target: { tabId },
+            func: (probe) =>
+              document.addEventListener('click', () => chrome.runtime.sendMessage({ probe }), {
+                once: true,
+              }),
+            args: [probe],
+          }),
+        [tabId, probe],
+      );
+      await page.mouse.click(20, 700);
+      await until(() => worker.evaluate((probe) => globalThis.probes[probe], probe), 4000);
+    }
+    assert.deepEqual(await worker.evaluate(() => globalThis.probes), {
+      sync: 'opened',
+      microtask: 'rejected',
+      api: 'rejected',
+    });
+    console.log('PASS sidePanel.open keeps the gesture only before the first await');
+
+    await page.evaluate(() => history.pushState({}, '', '/next?y=2'));
+    await wait(1000);
+    assert.equal(await painted(page), 0, 'SPA navigation clears the old page highlights');
+    await drag(page, '#a', 'endorsement');
+    await press(page, 'highlight');
+    assert(await until(() => docs().some((d) => d.anchors.document.url === base + '/next?y=2')));
+    console.log('PASS SPA navigation saves highlights under the new URL');
+
+    await context.close();
+    worker = await launch();
+    const restored = await context.newPage();
+    await restored.goto(base + '/article?x=1');
+    assert.equal(await until(async () => (await painted(restored)) === 2), true);
+    prefix = '<p>A banner inserted above the article.</p>';
+    await restored.reload();
+    assert.equal(await until(async () => (await painted(restored)) === 2), true);
+    await restored.evaluate(() => {
+      document.querySelector('#b').textContent = 'People are tenacious when they endorse it.';
+    });
+    assert.equal(await until(async () => (await painted(restored)) === 1), true);
+    // Delete through the popover removes the record and its Markdown block.
+    const hit = await restored.evaluate(() => {
+      const node = document.querySelector('#a').firstChild,
+        at = node.data.indexOf('independence'),
+        range = document.createRange();
+      range.setStart(node, at);
+      range.setEnd(node, at + 4);
+      const r = range.getBoundingClientRect();
+      return { x: r.left + 3, y: r.top + r.height / 2 };
+    });
+    await restored.mouse.click(hit.x, hit.y);
+    await wait(300);
+    await press(restored, 'delete');
+    assert(
+      await until(
+        () =>
+          !docs()
+            .find((d) => d.anchors.document.url === base + '/article?x=1')
+            .markdown.includes('independence from others'),
+      ),
+    );
+    assert.equal(await until(async () => (await painted(restored)) === 0), true);
+    console.log('PASS delete removes the vault record and Markdown block');
+
+    console.log(
+      'PASS restart restore / inserted content re-anchors / rewritten text stays unanchored',
+    );
+    passed = true;
+  } finally {
+    await context?.close().catch(() => {});
+    server.close();
+    const errors = fs.existsSync(temp + '/host.err') && fs.readFileSync(temp + '/host.err', 'utf8');
+    if (errors && !passed) console.error(errors.slice(-2000));
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+})().catch((e) => {
+  console.error(e);
+  process.exitCode = 1;
+});

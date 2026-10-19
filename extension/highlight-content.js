@@ -1,0 +1,664 @@
+// Webpage reading layer: selection toolbar, saved highlights, and highlight actions.
+// Highlights paint through the CSS Custom Highlight API; page markup is never wrapped.
+(() => {
+  if (globalThis.tabgentHighlightsInstalled || window.top !== window || !globalThis.CSS?.highlights)
+    return;
+  globalThis.tabgentHighlightsInstalled = true;
+  const anchors = globalThis.tabgentWebAnchor;
+  const t = (key, ...values) => chrome.i18n.getMessage(key, values.map(String)) || key;
+  const paint = new Highlight(),
+    focused = new Highlight();
+  focused.priority = 1;
+  CSS.highlights.set('tabgent-highlight', paint);
+  CSS.highlights.set('tabgent-highlight-active', focused);
+  const listeners = new AbortController(),
+    signal = listeners.signal;
+  const limit = 20000;
+  let page = null,
+    records = new Map(),
+    host,
+    root,
+    toolbar,
+    popover,
+    toast,
+    draft = null,
+    dismissed = null,
+    active = null,
+    returnFocus = null,
+    pointerDown = false,
+    lastInput = 'pointer',
+    selectionTimer,
+    toastTimer;
+
+  const pageUrl = () => location.href.split('#')[0];
+  const clamp = (value, low, high) => Math.max(low, Math.min(value, high));
+  const strip = (value) => value.replace(/[\s\u00ad\u200b-\u200d\ufeff]+/g, '');
+  const index = () => anchors.buildIndex(document.body || document.documentElement, host);
+
+  async function send(message) {
+    let response;
+    try {
+      response = await chrome.runtime.sendMessage(message);
+    } catch (error) {
+      // The extension was reloaded or removed; this copy of the script is orphaned.
+      if (!chrome.runtime?.id) teardown();
+      throw error;
+    }
+    if (!response) throw Error('No response');
+    if (response.error) throw Object.assign(Error(response.error), { code: response.code });
+    return response;
+  }
+
+  function pageMeta() {
+    const content = (selector) =>
+      document.querySelector(selector)?.getAttribute('content')?.trim() || '';
+    return {
+      author: content('meta[name="author"]') || content('meta[property="article:author"]'),
+      siteName: content('meta[property="og:site_name"]'),
+      publishedAt:
+        content('meta[property="article:published_time"]') || content('meta[name="date"]'),
+    };
+  }
+  // A human-readable location: the closest heading before the highlight.
+  function sectionLabel(range) {
+    let label = '';
+    for (const heading of [...document.querySelectorAll('h1,h2,h3,h4,h5,h6')].slice(0, 2000)) {
+      if (range.comparePoint(heading, 0) > 0) break;
+      label = heading.textContent.replace(/\s+/g, ' ').trim() || label;
+    }
+    return label.slice(0, 200);
+  }
+
+  const styles = `
+    .bar { position: fixed; display: flex; gap: 2px; padding: 4px; border-radius: 10px;
+      background: #202124; color: #fff; font: 500 13px/1.2 system-ui, -apple-system, sans-serif;
+      box-shadow: 0 6px 20px rgb(0 0 0 / 0.25), 0 0 0 1px rgb(255 255 255 / 0.08);
+      user-select: none; -webkit-user-select: none; z-index: 1; }
+    .bar[hidden], .toast[hidden] { display: none; }
+    button { all: unset; box-sizing: border-box; display: inline-flex; align-items: center;
+      gap: 6px; padding: 6px 10px; border-radius: 7px; cursor: pointer; white-space: nowrap; }
+    button:hover { background: rgb(255 255 255 / 0.14); }
+    button:focus-visible { outline: 2px solid #8ab4f8; outline-offset: 1px; }
+    button:disabled { opacity: 0.5; cursor: default; }
+    .swatch { width: 10px; height: 10px; border-radius: 3px; background: rgb(255 214 102); }
+    .toast { position: fixed; right: 16px; bottom: 16px; max-width: min(360px, calc(100vw - 32px));
+      padding: 10px 12px; border-radius: 10px; background: #202124; color: #fff;
+      font: 13px/1.4 system-ui, -apple-system, sans-serif; box-shadow: 0 6px 20px rgb(0 0 0 / 0.25); }`;
+
+  function ensureUi() {
+    if (host?.isConnected) return;
+    host = document.createElement('tabgent-reader');
+    // Inline !important styles keep page CSS from moving or revealing the host.
+    for (const [name, value] of [
+      ['all', 'initial'],
+      ['position', 'fixed'],
+      ['inset', '0 auto auto 0'],
+      ['width', '0'],
+      ['height', '0'],
+      ['margin', '0'],
+      ['padding', '0'],
+      ['border', '0'],
+      ['background', 'transparent'],
+      ['overflow', 'visible'],
+      ['z-index', '2147483647'],
+    ])
+      host.style.setProperty(name, value, 'important');
+    host.popover = 'manual';
+    root = host.attachShadow({ mode: 'closed' });
+    const sheet = new CSSStyleSheet();
+    sheet.replaceSync(styles);
+    root.adoptedStyleSheets = [sheet];
+    toolbar = bar(t('highlightToolbar'), [
+      ['highlight', t('highlightAdd'), true],
+      ['ask', t('highlightAsk')],
+    ]);
+    popover = bar(t('highlightActions'), [
+      ['discuss', t('highlightAsk')],
+      ['delete', t('highlightDelete')],
+    ]);
+    toast = document.createElement('div');
+    toast.className = 'toast';
+    toast.setAttribute('role', 'status');
+    toast.hidden = true;
+    root.append(toolbar, popover, toast);
+    document.documentElement.append(host);
+  }
+  function bar(label, actions) {
+    const element = document.createElement('div');
+    element.className = 'bar';
+    element.setAttribute('role', 'toolbar');
+    element.setAttribute('aria-label', label);
+    element.hidden = true;
+    for (const [action, text, swatch] of actions) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.dataset.action = action;
+      if (swatch) {
+        const mark = document.createElement('span');
+        mark.className = 'swatch';
+        mark.setAttribute('aria-hidden', 'true');
+        button.append(mark);
+      }
+      button.append(text);
+      button.tabIndex = -1;
+      element.append(button);
+    }
+    element.firstChild.tabIndex = 0;
+    // Keep the page selection while the toolbar is clicked.
+    element.addEventListener('pointerdown', (event) => event.preventDefault());
+    element.addEventListener('mousedown', (event) => event.preventDefault());
+    element.addEventListener('click', (event) => {
+      const button = event.target.closest('button');
+      if (button && !button.disabled) act(button.dataset.action);
+    });
+    element.addEventListener('keydown', (event) => barKeys(event, element));
+    return element;
+  }
+  function syncHost() {
+    const open = [toolbar, popover, toast].some((element) => element && !element.hidden);
+    if (!host?.isConnected) return;
+    if (open && !host.matches(':popover-open')) host.showPopover();
+    if (!open && host.matches(':popover-open')) host.hidePopover();
+  }
+  function place(element, rect) {
+    element.hidden = false;
+    syncHost();
+    const width = element.offsetWidth,
+      height = element.offsetHeight;
+    let top = rect.bottom + 8;
+    if (top + height > innerHeight - 8) top = rect.top - height - 8;
+    element.style.top = `${clamp(top, 8, innerHeight - height - 8)}px`;
+    element.style.left = `${clamp(rect.left + rect.width / 2 - width / 2, 8, innerWidth - width - 8)}px`;
+  }
+  function notify(message) {
+    ensureUi();
+    toast.textContent = message;
+    toast.hidden = false;
+    syncHost();
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => {
+      toast.hidden = true;
+      syncHost();
+    }, 6000);
+  }
+  const inUi = () => !!root?.activeElement;
+  function hideToolbar() {
+    if (toolbar) toolbar.hidden = true;
+    draft = null;
+    syncHost();
+  }
+  function hidePopover() {
+    if (popover) popover.hidden = true;
+    active = null;
+    focused.clear();
+    syncHost();
+  }
+  function leaveUi() {
+    if (!inUi()) return;
+    const target = returnFocus;
+    returnFocus = null;
+    if (target?.isConnected && target !== document.body) target.focus({ preventScroll: true });
+    else root.activeElement.blur();
+  }
+  function dismiss() {
+    const range = draft?.range;
+    leaveUi();
+    hideToolbar();
+    hidePopover();
+    // Escape keeps (or returns to) the same selection without reopening the toolbar.
+    dismissed = range || null;
+    if (range && getSelection()?.isCollapsed) getSelection().addRange(range);
+  }
+  const sameRange = (a, b) =>
+    a.startContainer === b.startContainer &&
+    a.startOffset === b.startOffset &&
+    a.endContainer === b.endContainer &&
+    a.endOffset === b.endOffset;
+  function barKeys(event, element) {
+    const buttons = [...element.querySelectorAll('button')];
+    const at = buttons.indexOf(root.activeElement);
+    const move = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[event.key];
+    if (move || event.key === 'Home' || event.key === 'End') {
+      const next =
+        event.key === 'Home'
+          ? 0
+          : event.key === 'End'
+            ? buttons.length - 1
+            : (at + move + buttons.length) % buttons.length;
+      for (const button of buttons) button.tabIndex = -1;
+      buttons[next].tabIndex = 0;
+      buttons[next].focus();
+    } else if (event.key === 'Escape' || event.key === 'Tab') dismiss();
+    else return;
+    event.preventDefault();
+    event.stopPropagation();
+  }
+  function enterUi(element) {
+    returnFocus = document.activeElement;
+    (element.querySelector('button[tabindex="0"]') || element.querySelector('button')).focus();
+  }
+
+  function editable(node) {
+    const element = node?.nodeType === 1 ? node : node?.parentElement;
+    return !!(
+      element?.isContentEditable || element?.closest?.('input,textarea,select,[contenteditable]')
+    );
+  }
+  function selectionRect(selection, range) {
+    const rects = [...range.getClientRects()].filter((rect) => rect.width || rect.height);
+    if (!rects.length) return range.getBoundingClientRect();
+    const backward =
+      selection.focusNode === range.startContainer && selection.focusOffset === range.startOffset;
+    return backward ? rects[0] : rects.at(-1);
+  }
+  function evaluateSelection() {
+    if (inUi() || pointerDown) return;
+    const selection = getSelection();
+    if (!selection?.rangeCount) return hideToolbar();
+    const range = selection.getRangeAt(0);
+    if (selection.isCollapsed) {
+      hideToolbar();
+      // Caret browsing onto a highlight offers the same actions as a click.
+      if (lastInput === 'keyboard') {
+        const record = hitPoint(range.startContainer, range.startOffset);
+        if (record) showPopover(record, firstRect(record.range));
+      }
+      return;
+    }
+    const text = selection.toString();
+    if (dismissed && sameRange(dismissed, range)) return hideToolbar();
+    dismissed = null;
+    if (
+      !text.trim() ||
+      editable(range.commonAncestorContainer) ||
+      editable(document.activeElement) ||
+      !document.body?.contains(range.commonAncestorContainer)
+    )
+      return hideToolbar();
+    hidePopover();
+    ensureUi();
+    draft = { range: range.cloneRange(), text };
+    place(toolbar, selectionRect(selection, range));
+  }
+  function scheduleSelection(delay = 150) {
+    clearTimeout(selectionTimer);
+    selectionTimer = setTimeout(evaluateSelection, delay);
+  }
+
+  function firstRect(range) {
+    return (
+      [...range.getClientRects()].find((rect) => rect.width && rect.height) ||
+      range.getBoundingClientRect()
+    );
+  }
+  function hitPoint(node, offset) {
+    let found = null;
+    for (const record of records.values()) {
+      try {
+        if (record.highlight && record.range?.isPointInRange(node, offset)) found = record;
+      } catch {}
+    }
+    return found;
+  }
+  // Custom highlights receive no events: hit-test the caret, then confirm with line boxes.
+  function hit(x, y) {
+    const caret = document.caretPositionFromPoint?.(x, y);
+    const legacy = caret ? null : document.caretRangeFromPoint?.(x, y);
+    const node = caret ? caret.offsetNode : legacy?.startContainer;
+    const offset = caret ? caret.offset : legacy?.startOffset;
+    if (!node) return null;
+    let found = null;
+    for (const record of records.values()) {
+      if (!record.highlight || !record.range) continue;
+      try {
+        if (!record.range.isPointInRange(node, offset)) continue;
+      } catch {
+        continue;
+      }
+      const rect = [...record.range.getClientRects()].find(
+        (r) => x >= r.left - 1 && x <= r.right + 1 && y >= r.top - 1 && y <= r.bottom + 1,
+      );
+      if (rect) found = { record, rect };
+    }
+    return found;
+  }
+  function showPopover(record, rect) {
+    ensureUi();
+    hideToolbar();
+    active = record;
+    focused.clear();
+    focused.add(record.range);
+    const discuss = popover.querySelector('[data-action="discuss"]');
+    discuss.textContent = record.highlight.turnCount > 0 ? t('highlightOpen') : t('highlightAsk');
+    place(popover, rect);
+  }
+
+  function act(action) {
+    if (action === 'highlight' || action === 'ask') return void create(action === 'ask');
+    if (!active) return;
+    if (action === 'discuss') return void discuss(active);
+    if (action === 'delete') return void remove(active);
+  }
+  function findRecord(start, end) {
+    for (const record of records.values())
+      if (record.highlight && record.start === start && record.end === end) return record;
+    return null;
+  }
+  // Runs synchronously up to sendMessage so the click still counts as a user gesture.
+  async function create(ask) {
+    if (!draft) return;
+    const { range, text } = draft;
+    const textIndex = index();
+    const anchor = anchors.describe(range, textIndex);
+    leaveUi();
+    hideToolbar();
+    if (!anchor) return;
+    const { start, end } = anchor.position;
+    if (end - start > limit || text.length > limit * 2) return notify(t('highlightTooLong'));
+    const existing = findRecord(start, end);
+    if (existing) {
+      getSelection()?.removeAllRanges();
+      if (ask) await discuss(existing, textIndex);
+      return;
+    }
+    const exactRange = textIndex.rangeFromOffsets(start, end);
+    if (!exactRange) return;
+    const url = page?.url;
+    const request = send({
+      type: 'highlightCreate',
+      ask,
+      text: text.trim().slice(0, limit),
+      anchor,
+      title: document.title,
+      meta: pageMeta(),
+      location: sectionLabel(exactRange),
+      ...(ask ? { context: anchors.context(textIndex, start, end) } : {}),
+    });
+    const pending = { id: `pending-${crypto.randomUUID()}`, range: exactRange, start, end };
+    records.set(pending.id, pending);
+    getSelection()?.removeAllRanges();
+    repaint();
+    try {
+      const response = await request;
+      records.delete(pending.id);
+      if (response.highlight && page?.url === url) {
+        // A write returns the saved document; its ID replaces any provisional one.
+        if (response.document?.id) page.documentId = response.document.id;
+        records.set(response.highlight.id, {
+          highlight: response.highlight,
+          range: exactRange,
+          start,
+          end,
+          text: textIndex.text.slice(start, end),
+        });
+        observe();
+      }
+      if (response.vaultError) notify(t('highlightSaveFailed', response.vaultError));
+      else if (ask && response.panelOpened === false) notify(t('highlightOpenPanel'));
+    } catch (error) {
+      records.delete(pending.id);
+      notify(t(ask ? 'highlightAskFailed' : 'highlightSaveFailed', error.message));
+    }
+    repaint();
+    report();
+  }
+  async function discuss(record, textIndex = index()) {
+    const offsets = record.range && textIndex.offsetsOfRange(record.range);
+    const context = offsets
+      ? anchors.context(textIndex, offsets.start, offsets.end)
+      : { before: '', after: '' };
+    const request = send({
+      type: 'highlightAsk',
+      documentId: page?.documentId,
+      highlightId: record.highlight.id,
+      title: document.title,
+      context,
+    });
+    leaveUi();
+    hidePopover();
+    try {
+      const response = await request;
+      if (response.panelOpened === false) notify(t('highlightOpenPanel'));
+    } catch (error) {
+      notify(t('highlightAskFailed', error.message));
+    }
+  }
+  async function remove(record) {
+    leaveUi();
+    hidePopover();
+    try {
+      await send({
+        type: 'highlightDelete',
+        documentId: page?.documentId,
+        highlightId: record.highlight.id,
+        title: document.title,
+      });
+    } catch (error) {
+      // Already deleted elsewhere (another tab or the vault itself).
+      if (error.code !== 'not_found') return void notify(t('highlightDeleteFailed', error.message));
+    }
+    records.delete(record.highlight.id);
+    repaint();
+    report();
+  }
+
+  function repaint() {
+    paint.clear();
+    for (const record of records.values())
+      if (record.range && !record.range.collapsed) paint.add(record.range);
+    focused.clear();
+    if (active?.range && records.has(active.highlight?.id)) focused.add(active.range);
+  }
+  let reported = '';
+  function report() {
+    if (!page) return;
+    const saved = [...records.values()].filter((record) => record.highlight);
+    const unanchored = saved.filter((record) => !record.range).map((r) => r.highlight.id);
+    const status = {
+      type: 'highlightStatus',
+      documentId: page.documentId,
+      anchored: saved.length - unanchored.length,
+      unanchored,
+    };
+    const key = JSON.stringify([page.url, status]);
+    if (key === reported) return;
+    reported = key;
+    send(status).catch(() => {});
+  }
+
+  // Restores every saved highlight against one fresh text index.
+  let lastPass = 0,
+    lastCost = 0,
+    retries = 0,
+    passTimer = null,
+    observer = null;
+  function anchorAll() {
+    const started = performance.now();
+    const textIndex = index();
+    for (const record of records.values()) {
+      if (!record.highlight) continue;
+      if (record.range && record.text !== undefined) {
+        const offsets = textIndex.offsetsOfRange(record.range);
+        if (offsets && textIndex.text.slice(offsets.start, offsets.end) === record.text) {
+          Object.assign(record, offsets);
+          continue;
+        }
+      }
+      const match = anchors.resolve(record.highlight.anchor, textIndex);
+      record.range = match?.range || null;
+      record.method = match?.method;
+      record.start = match?.start;
+      record.end = match?.end;
+      record.text = match ? textIndex.text.slice(match.start, match.end) : undefined;
+    }
+    lastCost = performance.now() - started;
+    lastPass = Date.now();
+    if (active && !active.range) hidePopover();
+    repaint();
+    report();
+  }
+  // Late or replaced content triggers bounded re-anchoring, throttled by the last pass cost.
+  function schedulePass() {
+    if (passTimer) return;
+    const interval = Math.max(1000, lastCost * 20) * (retries > 20 ? 5 : 1);
+    passTimer = setTimeout(
+      () => {
+        passTimer = null;
+        pass();
+      },
+      Math.max(400, lastPass + interval - Date.now()),
+    );
+  }
+  function pass() {
+    if (!page) return;
+    if (pageUrl() !== page.url) return void load();
+    const saved = [...records.values()].filter((record) => record.highlight);
+    const broken = saved.some(
+      (record) => record.range && strip(record.range.toString()) !== strip(record.text || ''),
+    );
+    const missing = saved.some((record) => !record.range);
+    if (!broken && (!missing || retries >= 100)) return;
+    if (!broken) retries++;
+    anchorAll();
+  }
+  function observe() {
+    if (observer || !records.size) return;
+    observer = new MutationObserver((mutations) => {
+      if (mutations.every((m) => m.target === host || [...m.addedNodes].includes(host))) return;
+      schedulePass();
+    });
+    observer.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+  }
+
+  let loading = 0,
+    loadAttempts = 0;
+  async function load() {
+    const url = pageUrl(),
+      generation = ++loading;
+    observer?.disconnect();
+    observer = null;
+    clearTimeout(passTimer);
+    passTimer = null;
+    retries = 0;
+    page = { url, documentId: null };
+    records = new Map();
+    hideToolbar();
+    hidePopover();
+    repaint();
+    let response;
+    try {
+      response = await send({ type: 'highlightResolve', title: document.title, meta: pageMeta() });
+    } catch (error) {
+      // A connector that is starting may need a moment; a missing one does not retry.
+      if (generation === loading && error.code !== 'host_missing' && ++loadAttempts <= 3)
+        setTimeout(() => generation === loading && load(), 2000 * loadAttempts);
+      return;
+    }
+    if (generation !== loading) return;
+    if (pageUrl() !== url || response.url !== url) {
+      if (++loadAttempts <= 3) setTimeout(() => generation === loading && load(), 500);
+      return;
+    }
+    loadAttempts = 0;
+    // An unsaved page has a provisional document (createdAt null) that may be renamed.
+    page.documentId = response.document?.createdAt ? response.document.id : null;
+    for (const highlight of response.highlights || [])
+      if (highlight?.id && highlight.anchor) records.set(highlight.id, { highlight, range: null });
+    anchorAll();
+    observe();
+  }
+  function checkUrl() {
+    if (page && pageUrl() !== page.url) void load();
+  }
+
+  function teardown() {
+    listeners.abort();
+    observer?.disconnect();
+    clearTimeout(passTimer);
+    CSS.highlights.delete('tabgent-highlight');
+    CSS.highlights.delete('tabgent-highlight-active');
+    host?.remove();
+  }
+
+  const options = { capture: true, signal };
+  document.addEventListener(
+    'pointerdown',
+    (event) => {
+      lastInput = 'pointer';
+      if (event.composedPath().includes(host)) return;
+      pointerDown = true;
+      hidePopover();
+    },
+    options,
+  );
+  document.addEventListener(
+    'pointerup',
+    (event) => {
+      pointerDown = false;
+      if (!event.composedPath().includes(host)) scheduleSelection(10);
+    },
+    options,
+  );
+  document.addEventListener('pointercancel', () => (pointerDown = false), options);
+  window.addEventListener('blur', () => (pointerDown = false), { signal });
+  document.addEventListener('selectionchange', () => scheduleSelection(), { signal });
+  document.addEventListener(
+    'click',
+    (event) => {
+      if (
+        event.button !== 0 ||
+        event.altKey ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.shiftKey ||
+        event.composedPath().includes(host) ||
+        !getSelection()?.isCollapsed ||
+        event.target.closest?.(
+          'a[href],button,input,select,textarea,label,summary,[contenteditable],[role="button"],[role="link"]',
+        )
+      )
+        return;
+      const found = hit(event.clientX, event.clientY);
+      if (found) showPopover(found.record, found.rect);
+    },
+    options,
+  );
+  window.addEventListener(
+    'keydown',
+    (event) => {
+      lastInput = 'keyboard';
+      if (event.target === host) return;
+      const open = [toolbar, popover].find((element) => element && !element.hidden);
+      if (!open) return;
+      if (event.key === 'Escape') dismiss();
+      else if (
+        event.key === 'Tab' &&
+        !event.shiftKey &&
+        !event.altKey &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !editable(document.activeElement)
+      ) {
+        // The visible toolbar is the next stop after the selection.
+        event.preventDefault();
+        event.stopPropagation();
+        enterUi(open);
+      }
+    },
+    options,
+  );
+  const hideOnMove = () => {
+    if (inUi()) return;
+    hideToolbar();
+    hidePopover();
+  };
+  document.addEventListener('scroll', hideOnMove, { capture: true, passive: true, signal });
+  window.addEventListener('resize', hideOnMove, { signal });
+  window.addEventListener('popstate', checkUrl, { signal });
+  globalThis.navigation?.addEventListener('currententrychange', checkUrl, { signal });
+  void load();
+})();

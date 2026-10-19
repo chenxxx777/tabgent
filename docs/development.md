@@ -28,9 +28,11 @@ npm run format:check
 
 The default suite checks syntax and English string references, scoped-browser
 guards, selection ownership, DOM range capture, native disconnect reporting,
-upload validation, and the chat UI with a controlled bridge. Browser tests launch
-headless Chromium and use local fixtures. They do not authenticate or call a real
-model. `CHROME_PATH` can override the headless binary too.
+upload validation, and the chat UI with a controlled bridge. It also covers web
+anchor build and restore, the highlight toolbar, and vault requests with a fake
+connector port. Browser tests launch headless Chromium and use local fixtures.
+They do not authenticate or call a real model. `CHROME_PATH` can override the
+headless binary too.
 
 JavaScript/HTML/CSS/JSON/Markdown use Prettier. Python uses Black and four-space indentation.
 To format Python, use a development virtual environment:
@@ -54,6 +56,7 @@ These are deliberately excluded from `npm test`:
 | `python3 extension/tests/session-storage.py` | Installed Codex with project APIs; isolated shared-home semantics.                           |
 | `python3 extension/tests/oauth-preauth.py`   | Installed Codex and network; starts and cancels real OAuth flows without completing sign-in. |
 | `node extension/tests/browser-input.cjs`     | Loaded extension in a dedicated debug browser; manipulates local fixture pages.              |
+| `npm run test:highlights`                    | Playwright Chromium; source connector with temporary profile, HOME, and CODEX_HOME.          |
 
 Start a debug browser with:
 
@@ -86,6 +89,7 @@ Its own sidebar must have an independent thread. Close either view and verify
 the remaining view keeps its conversation. Test the Agent + button creates an empty Agent tab with the same original page,
 model, effort and scope, but no shared history, draft or attachments.
 Do not replace Chrome's native new-tab page or inject an Agent overlay into websites.
+The reading toolbar and highlight popover are the only webpage UI.
 
 ## Isolated browser input tests
 

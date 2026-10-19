@@ -17,6 +17,9 @@ flowchart LR
 | `extension/browser-tools.js`      | Scope enforcement, browser actions, page reading and frame context.         |
 | `extension/browser-input.js`      | CDP-based trusted input and coordinate actions.                             |
 | `extension/selection-content.js`  | Selected text, DOM endpoints, offsets, and frame-relative geometry.         |
+| `extension/highlight-content.js`  | Selection toolbar, saved webpage highlights, and highlight actions.         |
+| `extension/web-anchor.js`         | Normalized page text, web anchors, and verified anchor restoration.         |
+| `extension/vault-client.js`       | Reading-vault requests over the native port, with ids and timeouts.         |
 | `extension/session-config.js`     | Browser tool schema and agent instructions.                                 |
 | `extension/ui/`                   | Chat rendering, composer, attachments, previews, approvals, and onboarding. |
 | `extension/_locales/en/`          | English UI strings; i18n structure is retained.                             |
@@ -34,7 +37,8 @@ A prewarmed spare reduces startup work. Full Agent tabs hide the expand button.
 Chrome owns the toolbar's sidebar toggle. The Agent + button creates an independent
 Agent tab that inherits the source session's page and settings, without copying
 conversation content. View-only sessions close when their final Agent tab closes.
-There are no webpage overlays, layout menus, or persisted layout preferences.
+There are no layout menus or persisted layout preferences. The only interface drawn
+on websites is the reading layer described in [Webpage highlights](#webpage-highlights).
 
 The service worker checks tool scope on every request. Selection messages derive
 the owner tab and frame from Chrome's sender metadata, not a page-supplied tab ID.
@@ -95,6 +99,59 @@ files through a temporary file and rename, so concurrent requests and a second
 connector process cannot interleave. Error codes are `invalid_params`, `not_found`,
 `vault_unwritable`, `io_error`, `unknown_method`, and `internal_error`.
 
+## Webpage highlights
+
+Top-level HTTP(S) pages load `web-anchor.js` and `highlight-content.js`. A non-empty
+selection shows a small toolbar with **Highlight** and **Ask AI**. The toolbar and the
+highlight popover live in one closed shadow root on a top-layer `popover` host. Inline
+`!important` host styles and constructed stylesheets keep page CSS out and do not
+need the page's `style-src`. Pressing Tab while the toolbar is visible moves focus
+into it. Arrow keys move between actions, and Escape returns to the selection. Scrolling,
+resizing, collapsing the selection, or pressing Escape dismisses it.
+
+Highlights are painted with the CSS Custom Highlight API (`highlight.css`), so page
+markup is never wrapped or rewritten. Custom highlights receive no events. A click
+is hit-tested with `caretPositionFromPoint` and confirmed against the range's line
+boxes, then opens **Ask AI** (or **Open discussion** when turns exist) and **Delete**.
+Clicks on links and controls are left to the page. Pages can read the highlight
+registry, so a site can observe which of its passages are highlighted.
+
+A web anchor follows the shared vault contract. It stores the quote with 32
+characters of prefix and suffix, offsets into the page's normalized text, and a
+DOM path hint. Normalized text joins light-DOM text nodes and collapses whitespace
+and block boundaries into one space. Script and style text, soft hyphens, and
+zero-width characters are dropped. Restoration tries the DOM hint, then the stored
+position, and accepts either only when the quote and its full context match. Otherwise
+every occurrence of the quote is scored by context. Identical passages are decided by
+position only when one is clearly closer. A near-identical edited quote is accepted
+only between its old context. Anything less certain stays unanchored: it keeps its
+vault record, is never drawn on other text, and is reported to the tab's conversation
+as `codex-highlight-status`. Late or replaced content triggers re-anchoring from a
+mutation observer, throttled by the cost of the previous pass. SPA navigation reloads
+the page's highlights.
+
+The service worker accepts highlight messages only from the top frame of the
+sender's current document. Vault URLs come from Chrome's frame record without the
+fragment, because `sender.url` keeps the load-time URL after `history.pushState`.
+`vault-client.js` sends `op: "vault"` requests over the existing connector port,
+with request IDs, timeouts, and rejection on disconnect. Vault operations do not
+claim or wait for a Codex session; opening the port still sends its usual prewarm
+request. Delete and Ask AI on saved highlights are checked against the vault record
+for the sender's URL.
+
+**Ask AI** saves the highlight, then reuses the page-selection quote flow. The quote
+carries `highlight: { documentId, highlightId }` and nearby text in
+`context: { before, after }`. If saving fails, the quote is still sent without a
+highlight. `chrome.sidePanel.open()` is called synchronously in the runtime message
+listener. In Chrome 151, a content-script click allows the call only before the
+listener's first await: a microtask, an extension API await, or a timer loses the
+gesture. When the panel cannot open, the page asks the user to click the toolbar
+button; the quote is already waiting in the conversation.
+
+Highlights cover the top frame's light DOM. Iframes, shadow DOM, PDF and EPUB
+highlights are not drawn. Tabs opened before the extension was installed or reloaded
+need a reload to show highlights.
+
 ## Working on the UI
 
 Keep the bottom toolbar on one line. Long page titles truncate and open a details
@@ -105,9 +162,10 @@ retain their filenames. All new user-facing strings belong in the English catalo
 ## Boundaries
 
 A Chrome extension cannot reproduce all browser chrome or desktop-app behaviors.
-Side-panel opening requires a user gesture; native menus and protected pages have
-separate restrictions. Keep these limitations explicit rather than emulating a
-second browser or silently claiming unsupported capabilities.
+Side-panel opening requires a user gesture, and the call must happen before any
+await; native menus and protected pages have separate restrictions. Keep these
+limitations explicit rather than emulating a second browser or silently claiming
+unsupported capabilities.
 
 ## Native Codex tools
 

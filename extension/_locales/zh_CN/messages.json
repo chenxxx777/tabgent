@@ -67,5 +67,38 @@
   },
   "revealLocalFile": {
     "message": "在 Finder 中显示"
+  },
+  "highlightToolbar": {
+    "message": "选区操作"
+  },
+  "highlightAdd": {
+    "message": "高亮"
+  },
+  "highlightAsk": {
+    "message": "询问 AI"
+  },
+  "highlightActions": {
+    "message": "高亮操作"
+  },
+  "highlightOpen": {
+    "message": "查看讨论"
+  },
+  "highlightDelete": {
+    "message": "删除"
+  },
+  "highlightTooLong": {
+    "message": "选中的内容太长，无法高亮。"
+  },
+  "highlightSaveFailed": {
+    "message": "无法保存高亮：$1"
+  },
+  "highlightDeleteFailed": {
+    "message": "无法删除高亮：$1"
+  },
+  "highlightAskFailed": {
+    "message": "无法发送到 Tabgent：$1"
+  },
+  "highlightOpenPanel": {
+    "message": "已发送到 Tabgent。点击工具栏中的 Tabgent 按钮即可打开侧边栏。"
   }
 }
