@@ -22,6 +22,7 @@ flowchart LR
 | `extension/_locales/en/`          | English UI strings; i18n structure is retained.                             |
 | `extension/native/host.py`        | App-server discovery, sessions, authentication events, and RPC transport.   |
 | `extension/native/attachments.py` | Bounded uploads and text/PDF/DOCX reading.                                  |
+| `extension/native/vault.py`       | ReadingVault highlights, discussions, and Markdown files.                   |
 
 Each webpage tab owns a session. Agent tabs share that session through runtime
 ports and retain its original page context. The sidebar beside an Agent tab has
@@ -63,6 +64,36 @@ the original bytes in Chrome and sends them to PDFKit in the native host. These
 reads are limited to 10 MB and temporary files are deleted. Screenshot, pointer,
 keyboard, and scroll tools operate the native viewer directly. Neither text
 reading path implements OCR for scanned pages.
+
+## ReadingVault
+
+The connector keeps reading highlights and discussions in a local Markdown folder,
+`~/ReadingVault` by default. The extension sends `{ op: "vault", id, method, params }`
+on the existing native port and receives `{ op: "vault", id, result }` or
+`{ op: "vault", id, error: { code, message } }`. Vault requests run on their own
+single-worker queue in arrival order. They never use `warm` settings, sessions, or
+the Codex app-server, so highlights save while Codex is offline or signed out.
+
+`vault/configure` stores a chosen folder in `$CODEX_HOME/projects/tabgent/vault.json`;
+otherwise the default folder is created on the first write. Each write scaffolds
+`AGENTS.md` (layout, `rg` retrieval hints, and reading rules for Codex), `Articles/`,
+and `Books/`. Web pages live in `Articles/article-<title slug>-<URL hash>/`; PDF and
+EPUB documents will use `Books/`. URLs are matched without their fragment, as in page
+history, through `.tabgent/index.json`, which is rebuilt from the folders if missing.
+
+`anchors.json` is the machine record: anchors, highlight IDs (`h001`, never reused),
+and discussion turns, which are idempotent on thread and turn ID. `highlights.md` is
+the readable record with YAML front matter, one `## Highlight NNN` section per
+highlight, and a `## 文档对话` section for document-level discussion. HTML comment
+markers delimit Tabgent's blocks. After a file exists, Tabgent only inserts into or
+removes those blocks, so edits elsewhere are preserved; a deleted highlight removes
+its whole block. Missing blocks or files are restored from `anchors.json` on the next
+write to them. Unreadable JSON or non-UTF-8 Markdown is reported, never replaced.
+
+Writes hold a process lock plus an advisory lock on `.tabgent/lock`, and replace
+files through a temporary file and rename, so concurrent requests and a second
+connector process cannot interleave. Error codes are `invalid_params`, `not_found`,
+`vault_unwritable`, `io_error`, `unknown_method`, and `internal_error`.
 
 ## Working on the UI
 
@@ -118,7 +149,6 @@ the same thread; IDs remain available in a details menu. Adjacent child notices 
 within a minute collapse into a group. Reconnects and duplicate notifications do not
 duplicate notices.
 
-
 ## Page conversation history
 
 The collapsible Page conversations drawer indexes thread IDs, titles, settings, and
@@ -138,7 +168,6 @@ cloning a chat and injected lineage notes do not qualify. Older index entries ar
 checked against Codex history on first access; empty entries are removed from the
 index, while unavailable records remain hidden for a later retry.
 
-
 ## Per-message browser context
 
 Each Agent view retains its own companion tab, independently of its shared thread.
@@ -150,7 +179,6 @@ page in the composer. Page titles and URLs are treated as untrusted data.
 Every browser action requires an explicit `tabId`, including `context`, `tabs`, and
 `open` (where it identifies the source window's tab). Missing IDs fail validation;
 there is no implicit target. The message's originating tab anchors window scope.
-
 
 Agent-authored Markdown links can carry the exact title `browser:current` or
 `browser:new`. The Agent chooses using task context; the renderer converts the

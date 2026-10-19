@@ -1,10 +1,7 @@
 {
   "capturedAt": "2026-10-07T11:10:22.664Z",
   "model": "gpt-6-astra",
-  "sources": [
-    "https://www.vam.ac.uk/south-kensington/visit",
-    "https://www.vam.ac.uk/young"
-  ],
+  "sources": ["https://www.vam.ac.uk/south-kensington/visit", "https://www.vam.ac.uk/young"],
   "resultUrl": "https://www.vam.ac.uk/south-kensington/visit",
   "prompt": "I am choosing between V&A South Kensington and Young V&A for a family day out with a 7-year-old. Read these open official pages. Compare free admission, booking requirements and what children can do. Recommend one based on these pages and link to visitor information. Do not book anything. Answer in English in under 150 words.",
   "answers": [

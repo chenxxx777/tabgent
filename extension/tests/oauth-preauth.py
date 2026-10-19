@@ -4,9 +4,7 @@ import json, os, queue, struct, subprocess, sys, tempfile, threading, time, urll
 from pathlib import Path
 
 root = Path(__file__).resolve().parents[1]
-with tempfile.TemporaryDirectory(
-    prefix="tabgent-oauth-preauth-"
-) as directory:
+with tempfile.TemporaryDirectory(prefix="tabgent-oauth-preauth-") as directory:
     home = Path(directory)
     (home / "auth.json").symlink_to(home / "isolated-auth.json")
     p = subprocess.Popen(

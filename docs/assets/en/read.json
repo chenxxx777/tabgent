@@ -1,9 +1,7 @@
 {
   "capturedAt": "2026-10-07T10:21:53.431Z",
   "model": "gpt-6-astra",
-  "sources": [
-    "https://www.zotero.org/support/sync"
-  ],
+  "sources": ["https://www.zotero.org/support/sync"],
   "resultUrl": "https://www.zotero.org/support/sync",
   "prompt": "I have Zotero on two computers, but my PDFs are missing on the second one. Read this official page: what is the difference between data sync and file sync, and does the 300 MB limit apply to my references? Give me three practical checks, in English, under 130 words.",
   "answers": [
