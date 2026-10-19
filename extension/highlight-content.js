@@ -663,5 +663,8 @@
   window.addEventListener('resize', hideOnMove, { signal });
   window.addEventListener('popstate', checkUrl, { signal });
   globalThis.navigation?.addEventListener('currententrychange', checkUrl, { signal });
-  void load();
+  // A prerendered document is not the primary frame yet, so the worker would reject it.
+  if (document.prerendering)
+    document.addEventListener('prerenderingchange', () => void load(), { once: true, signal });
+  else void load();
 })();

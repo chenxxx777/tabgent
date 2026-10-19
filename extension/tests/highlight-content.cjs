@@ -349,6 +349,63 @@ const assert = require('node:assert/strict'),
     await page.waitForTimeout(1500);
     assert.equal(await page.evaluate(() => builds), 0, 'Unrelated mutations must not re-anchor');
     console.log('PASS highlights across inline scripts settle; unrelated mutations do no work');
+
+    // A prerendered page is not the primary frame yet: restore once the user activates it.
+    const prerendered = await browser.newPage();
+    await prerendered.route('https://reader.test/**', (route) =>
+      route.fulfill({
+        contentType: 'text/html',
+        body: '<!doctype html><p id="kept">A prerendered page keeps its saved highlight.</p>',
+      }),
+    );
+    await prerendered.goto('https://reader.test/prerendered');
+    await prerendered.evaluate(() => {
+      globalThis.prerendering = true;
+      Object.defineProperty(document, 'prerendering', { get: () => globalThis.prerendering });
+      globalThis.sent = [];
+      globalThis.chrome = {
+        i18n: { getMessage: (key) => key },
+        runtime: {
+          id: 'test',
+          sendMessage: async (message) => {
+            sent.push(message);
+            // While prerendering, the worker rejects the non-primary sender.
+            if (prerendering) return { error: 'Invalid highlight sender', code: 'error' };
+            if (message.type !== 'highlightResolve') return {};
+            return {
+              url: location.href,
+              document: { id: 'article-pre', createdAt: '2026-10-20T12:00:00+08:00' },
+              highlights: [
+                {
+                  id: 'h001',
+                  text: 'saved highlight',
+                  anchor: {
+                    kind: 'web',
+                    quote: { exact: 'saved highlight', prefix: 'keeps its ', suffix: '.' },
+                    position: { start: 30, end: 45 },
+                  },
+                },
+              ],
+            };
+          },
+        },
+      };
+    });
+    await prerendered.addScriptTag({ path: path.resolve(__dirname, '../web-anchor.js') });
+    await prerendered.addScriptTag({ path: path.resolve(__dirname, '../highlight-content.js') });
+    await prerendered.waitForTimeout(500);
+    assert.deepEqual(
+      await prerendered.evaluate(() => sent),
+      [],
+      'Nothing is sent while prerendering',
+    );
+    await prerendered.evaluate(() => {
+      prerendering = false;
+      document.dispatchEvent(new Event('prerenderingchange'));
+    });
+    await prerendered.waitForFunction(() => CSS.highlights.get('tabgent-highlight').size === 1);
+    assert.equal(await prerendered.evaluate(() => sent[0].type), 'highlightResolve');
+    console.log('PASS prerendered pages restore highlights when activated');
   } finally {
     await browser.close();
   }
