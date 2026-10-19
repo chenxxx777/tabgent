@@ -294,21 +294,22 @@ def append_discussion(settings, params):
     if source is None and ident is None:
         raise VaultError("invalid_params", "documentId or url is required")
     root = _root(settings)
-    if source is None and not _folder(root, ident).is_dir():
-        raise VaultError("not_found", f"Document {ident} does not exist")
+    # Only a first document-level turn may create its document. Reject everything
+    # else before taking the lock, which would create the vault folder.
+    creatable = source is not None and highlight_id is None
+    if not creatable and _find(root, ident, source) is None:
+        raise VaultError("not_found", f"Document {ident or source[0]} does not exist")
     with _locked(root):
-        _scaffold(root)
-        data = _load(root, ident) if ident else None
-        if data is None:
-            if source is None:
-                raise VaultError("not_found", f"Document {ident} does not exist")
-            data = _ensure_document(root, *source)
-        document = _public_document(
-            root, data["document"], data["document"]["createdAt"]
-        )
-        if any(
+        data = _find(root, ident, source)
+        if data is None and not creatable:
+            raise VaultError(
+                "not_found", f"Document {ident or source[0]} does not exist"
+            )
+        if data is not None and any(
             t["threadId"] == thread_id and t["turnId"] == turn_id for t in data["turns"]
         ):
+            document = data["document"]
+            document = _public_document(root, document, document["createdAt"])
             return {"ok": True, "duplicate": True, "document": document}
         item = None
         if highlight_id is not None:
@@ -319,6 +320,12 @@ def append_discussion(settings, params):
                 raise VaultError(
                     "not_found", f"Highlight {highlight_id} does not exist"
                 )
+        _scaffold(root)
+        if data is None:
+            data = _ensure_document(root, *source)
+        document = _public_document(
+            root, data["document"], data["document"]["createdAt"]
+        )
         turn = {
             "highlightId": highlight_id,
             "threadId": thread_id,
@@ -767,6 +774,16 @@ def _claim(root, urls, url, title, kind, preferred=None):
         elif not _folder(root, ident).exists():
             return ident, None
     raise VaultError("io_error", "Could not choose a document folder")
+
+
+def _find(root, ident, source):
+    """The saved document by ID, else by source URL. Never writes."""
+    data = _load(root, ident) if ident else None
+    if data is None and source is not None:
+        url, title, kind, _ = source
+        urls, _ = _index(root)
+        _, data = _claim(root, urls, url, title, kind, urls.get(url))
+    return data
 
 
 def _ensure_document(root, url, title, kind, meta):

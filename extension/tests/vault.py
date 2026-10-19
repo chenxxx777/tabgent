@@ -80,6 +80,20 @@ with tempfile.TemporaryDirectory(prefix="tabgent-vault-") as directory:
         assert resolved["document"]["url"] == "https://example.com/essay?id=7"
         bad = {**page, "text": "x", "anchor": {"kind": "web", "quote": {}}}
         assert code(settings, "vault/highlight/create", bad) == "invalid_params"
+        # A turn for a highlight cannot create its document, even with the URL.
+        orphan = {
+            **page,
+            "highlightId": "h001",
+            "threadId": "thread-old",
+            "turnId": "1",
+            "user": "q",
+            "assistant": "a",
+        }
+        for params in [orphan, {**orphan, "documentId": document_id}]:
+            assert code(settings, "vault/discussion/append", params) == "not_found"
+        stray = {k: v for k, v in orphan.items() if k not in page}
+        stray = {**stray, "highlightId": None, "documentId": document_id}
+        assert code(settings, "vault/discussion/append", stray) == "not_found"
         assert (
             not default.exists()
         ), "Reads and rejected writes must not create the vault"
@@ -395,6 +409,11 @@ with tempfile.TemporaryDirectory(prefix="tabgent-vault-") as directory:
             "assistant": "It claims...",
         }
         assert code(settings, "vault/discussion/append", doc_turn) == "not_found"
+        index_text = (default / ".tabgent/index.json").read_text()
+        orphan = {**doc_turn, **fresh_page, "highlightId": "h001"}
+        assert code(settings, "vault/discussion/append", orphan) == "not_found"
+        assert not Path(fresh["folder"]).exists()
+        assert (default / ".tabgent/index.json").read_text() == index_text
         created = call(settings, "vault/discussion/append", {**doc_turn, **fresh_page})
         assert (
             created["document"]["id"] == fresh["id"]
