@@ -109,6 +109,17 @@ console.log(
   'PASS owner routing / source URL / clear identity / stale and private rejection / frame navigation clears',
 );
 
+// Chrome keeps the load-time sender.url after history.pushState; the frame URL is current.
+const getFrame = chrome.webNavigation.getFrame;
+chrome.webNavigation.getFrame = async () => ({
+  documentId: 'current',
+  url: 'https://frame.test/next?page=2',
+});
+await call(message, source);
+assert.equal(one.messages.at(-1).value.url, 'https://frame.test/next?page=2');
+chrome.webNavigation.getFrame = getFrame;
+console.log('PASS page selections use the current frame URL after pushState');
+
 chrome.sidePanel.open = async () => {};
 chrome.contextMenus.onClicked.listeners[0](
   {
