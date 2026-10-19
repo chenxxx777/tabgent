@@ -429,6 +429,7 @@ const assert = require('node:assert/strict'),
         i18n: { getMessage: (key) => key },
         runtime: {
           id: 'test',
+          onMessage: { addListener() {}, removeListener() {} },
           sendMessage: async (message) => {
             sent.push(message);
             // While prerendering, the worker rejects the non-primary sender.
