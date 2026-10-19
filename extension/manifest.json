@@ -52,7 +52,7 @@
     },
     {
       "matches": ["http://*/*", "https://*/*"],
-      "js": ["web-anchor.js", "highlight-content.js"],
+      "js": ["web-anchor.js", "highlight-note.js", "highlight-content.js"],
       "css": ["highlight.css"],
       "run_at": "document_idle"
     }

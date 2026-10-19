@@ -307,8 +307,10 @@ function onKey(event) {
   if (!state.view || event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey)
     return;
   if (event.key === 'Tab' && !event.target?.closest?.('.floating')) {
-    // Tab moves from a selection in the book to its toolbar or highlight menu.
-    const open = document.querySelector('.floating:popover-open button');
+    // Tab moves from a selection in the book to its toolbar, highlight menu or note.
+    const open = document.querySelector(
+      '#noteEditor:popover-open textarea, .floating:popover-open button',
+    );
     if (open) {
       event.preventDefault();
       return void open.focus();
@@ -325,7 +327,7 @@ function onKey(event) {
 addEventListener('keydown', onKey);
 for (const menu of document.querySelectorAll('.floating'))
   menu.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') hideFloating();
+    if (event.key === 'Escape' && !event.isComposing) hideFloating();
   });
 
 // Table of contents and highlight list.
@@ -416,7 +418,14 @@ function renderHighlightList() {
       badge.textContent = ' · ' + t('epubUnanchored');
       meta.append(badge);
     }
-    button.append(quote, meta);
+    button.append(quote);
+    if (entry.record.note) {
+      const note = document.createElement('span');
+      note.className = 'note';
+      note.textContent = entry.record.note;
+      button.append(note);
+    }
+    button.append(meta);
     button.onclick = () => {
       if (entry.status === 'unanchored') return toast(t('epubUnanchoredHint'));
       void state.view?.goTo(entry.cfi || entry.record.anchor.cfi);
@@ -552,7 +561,10 @@ function onSectionLoad({ detail: { doc, index } }) {
   doc.addEventListener('selectionchange', schedule);
   doc.addEventListener('pointerup', schedule);
   doc.addEventListener('keydown', onKey);
-  doc.addEventListener('pointerdown', () => $('#highlightMenu').hidePopover());
+  doc.addEventListener('pointerdown', () => {
+    $('#highlightMenu').hidePopover();
+    if (!noteChanged()) closeNote();
+  });
 }
 
 let selectionId = null;
@@ -619,6 +631,8 @@ function hideToolbar() {
 function hideFloating() {
   hideToolbar();
   if ($('#highlightMenu').matches(':popover-open')) $('#highlightMenu').hidePopover();
+  // A note with unsaved text stays open; Cancel or Escape discards it.
+  if (!noteChanged()) closeNote();
 }
 
 // Chrome allows sidePanel.open() only synchronously inside the click.
@@ -674,13 +688,103 @@ function showHighlightMenu({ value, index, range }) {
   const offsets = text.offsetsOfRange(range);
   state.menuFor = {
     id,
+    doc,
+    range,
     context: offsets
       ? globalThis.tabgentWebAnchor.context(text, offsets.start, offsets.end)
       : { before: '', after: '' },
   };
   $('#menuAsk').textContent = t(entry.record.turnCount ? 'highlightOpen' : 'highlightAsk');
+  // The user's own note shows above the actions.
+  $('#menuNote').hidden = !entry.record.note;
+  $('#menuNoteText').textContent = entry.record.note || '';
+  $('#menuNoteEdit').textContent = t(entry.record.note ? 'highlightNoteEdit' : 'highlightNoteAdd');
   place($('#highlightMenu'), doc, range);
 }
+
+// The note editor: opens at the highlight and keeps focus until saved or closed.
+let noteFor = null;
+const noteChanged = () =>
+  !!noteFor && $('#noteText').value.trim() !== (noteFor.initial || '').trim();
+function openNote(target) {
+  const entry = state.highlights.get(target.id);
+  if (!entry) return;
+  $('#highlightMenu').hidePopover();
+  noteFor = {
+    id: target.id,
+    initial: entry.record.note || '',
+    returnFocus: document.activeElement,
+  };
+  $('#noteText').value = entry.record.note || '';
+  $('#noteQuote').textContent = `“${entry.record.text.replace(/\s+/g, ' ').trim()}”`;
+  $('#noteError').hidden = true;
+  place($('#noteEditor'), target.doc, target.range);
+  $('#noteText').focus();
+  $('#noteText').setSelectionRange($('#noteText').value.length, $('#noteText').value.length);
+}
+function closeNote() {
+  if (!noteFor) return;
+  const { returnFocus } = noteFor;
+  noteFor = null;
+  if ($('#noteEditor').matches(':popover-open')) $('#noteEditor').hidePopover();
+  // The menu button that opened the editor is hidden now.
+  if (
+    returnFocus?.isConnected &&
+    returnFocus !== document.body &&
+    !returnFocus.closest('.floating')
+  )
+    returnFocus.focus();
+  else if (document.activeElement?.closest('#noteEditor')) document.activeElement.blur();
+}
+async function saveNote() {
+  const target = noteFor;
+  if (!target || $('#noteSave').disabled) return;
+  const note = $('#noteText').value.trim();
+  $('#noteSave').disabled = $('#noteCancel').disabled = true;
+  $('#noteError').hidden = true;
+  try {
+    const reply = await library.send({
+      type: 'epubHighlightNote',
+      sha256: state.sha256,
+      title: state.title,
+      meta: state.meta,
+      documentId: state.documentId,
+      highlightId: target.id,
+      note,
+    });
+    const entry = state.highlights.get(target.id);
+    if (entry && reply.highlight) entry.record = reply.highlight;
+    if (noteFor === target) closeNote();
+    renderHighlightList();
+    toast(t(note ? 'highlightNoteSaved' : 'highlightNoteRemoved'));
+  } catch (error) {
+    $('#noteError').textContent = loadTimeData.getStringF('highlightNoteFailed', error.message);
+    $('#noteError').hidden = false;
+    $('#noteText').focus();
+  } finally {
+    $('#noteSave').disabled = $('#noteCancel').disabled = false;
+  }
+}
+$('#menuNoteEdit').onclick = () => state.menuFor && openNote(state.menuFor);
+$('#noteSave').onclick = () => void saveNote();
+$('#noteCancel').onclick = () => closeNote();
+$('#noteEditor').addEventListener('keydown', (event) => {
+  // Enter and Escape also confirm or cancel an input method's composition.
+  if (event.isComposing || event.keyCode === 229) return;
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    closeNote();
+  } else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+    event.preventDefault();
+    void saveNote();
+  } else if (event.key === 'Tab') {
+    // Focus stays in the editor until it is saved or closed.
+    const order = [$('#noteText'), $('#noteCancel'), $('#noteSave')];
+    const at = order.indexOf(document.activeElement);
+    event.preventDefault();
+    order[(at + (event.shiftKey ? -1 : 1) + order.length) % order.length].focus();
+  }
+});
 
 $('#menuAsk').onclick = async () => {
   const target = state.menuFor;
@@ -718,6 +822,7 @@ $('#menuDelete').onclick = async () => {
       highlightId: target.id,
     });
     if (!state.highlights.delete(target.id)) return;
+    if (noteFor?.id === target.id) closeNote();
     if (entry.cfi) {
       state.painted.delete(entry.cfi);
       void state.view.deleteAnnotation({ value: entry.cfi });
@@ -732,6 +837,7 @@ $('#menuDelete').onclick = async () => {
 // The side panel's highlight list jumps to a highlight or asks for its nearby text.
 library.handleCommands(async (command) => {
   if (command?.type !== 'tabgentHighlight') throw Error('Unknown command');
+  if (command.action === 'refresh') return void (await refreshHighlights());
   const entry = state.highlights.get(command.highlightId);
   if (!entry || !state.view) return { found: false };
   const href = entry.record.anchor?.chapter?.href || '';
@@ -748,6 +854,24 @@ library.handleCommands(async (command) => {
   const found = locate(doc, index, entry.record);
   return { ...(found?.context || { before: '', after: '' }), chapterFile: chapterFile(href) };
 });
+
+// Saved notes and turns change what a highlight shows; anchors and painting stay as they are.
+async function refreshHighlights() {
+  const view = state.view;
+  if (!view || !state.sha256) return;
+  const result = await library.send({
+    type: 'epubResolve',
+    sha256: state.sha256,
+    title: state.title,
+    meta: state.meta,
+  });
+  if (state.view !== view) return;
+  for (const record of result.highlights || []) {
+    const entry = state.highlights.get(record.id);
+    if (entry) entry.record = record;
+  }
+  renderHighlightList();
+}
 
 const book = new URLSearchParams(location.search).get('book');
 if (book) void openFromVault(book);

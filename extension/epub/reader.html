@@ -107,11 +107,38 @@
       id="highlightMenu"
       class="floating"
       popover="manual"
-      role="menu"
+      role="toolbar"
       aria-label="$i18n{highlightActions}"
+      aria-describedby="menuNote"
     >
-      <button id="menuAsk" role="menuitem"></button
-      ><button id="menuDelete" role="menuitem">$i18n{highlightDelete}</button>
+      <div id="menuNote" class="note" hidden>
+        <span class="label">$i18n{highlightNoteLabel}</span><span id="menuNoteText"></span>
+      </div>
+      <button id="menuAsk"></button><button id="menuNoteEdit">$i18n{highlightNoteAdd}</button
+      ><button id="menuDelete">$i18n{highlightDelete}</button>
+    </div>
+    <div
+      id="noteEditor"
+      class="floating editor"
+      popover="manual"
+      role="dialog"
+      aria-labelledby="noteLabel"
+    >
+      <span id="noteLabel" class="label">$i18n{highlightNoteLabel}</span>
+      <span id="noteQuote" class="quote"></span>
+      <textarea
+        id="noteText"
+        rows="4"
+        maxlength="20000"
+        placeholder="$i18n{highlightNotePlaceholder}"
+        aria-labelledby="noteLabel"
+      ></textarea>
+      <div id="noteError" class="error" role="alert" hidden></div>
+      <div class="row">
+        <span class="hint">$i18n{highlightNoteHint}</span
+        ><button id="noteCancel">$i18n{highlightNoteCancel}</button
+        ><button id="noteSave" class="primary">$i18n{highlightNoteSave}</button>
+      </div>
     </div>
     <div id="toast" popover="manual" role="alert"></div>
   </body>

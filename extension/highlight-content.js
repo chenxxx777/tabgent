@@ -4,7 +4,8 @@
   if (globalThis.tabgentHighlightsInstalled || window.top !== window || !globalThis.CSS?.highlights)
     return;
   globalThis.tabgentHighlightsInstalled = true;
-  const anchors = globalThis.tabgentWebAnchor;
+  const anchors = globalThis.tabgentWebAnchor,
+    notes = globalThis.tabgentHighlightNote;
   const t = (key, ...values) => chrome.i18n.getMessage(key, values.map(String)) || key;
   const paint = new Highlight(),
     focused = new Highlight();
@@ -20,10 +21,13 @@
     root,
     toolbar,
     popover,
+    notePreview,
+    noteEditor,
     toast,
     draft = null,
     dismissed = null,
     active = null,
+    noteTarget = null,
     returnFocus = null,
     pointerDown = false,
     lastInput = 'pointer',
@@ -109,7 +113,7 @@
     host.popover = 'manual';
     root = host.attachShadow({ mode: 'closed' });
     const sheet = new CSSStyleSheet();
-    sheet.replaceSync(styles);
+    sheet.replaceSync(styles + notes.styles);
     root.adoptedStyleSheets = [sheet];
     toolbar = bar(t('highlightToolbar'), [
       ['highlight', t('highlightAdd'), true],
@@ -117,13 +121,20 @@
     ]);
     popover = bar(t('highlightActions'), [
       ['discuss', t('highlightAsk')],
+      ['note', t('highlightNoteAdd')],
       ['delete', t('highlightDelete')],
     ]);
+    // Clicking a highlight shows the user's note above its actions.
+    notePreview = notes.preview(document, t);
+    popover.classList.add('card');
+    popover.prepend(notePreview);
+    popover.setAttribute('aria-describedby', notePreview.id);
+    noteEditor = notes.editor(document, t, { save: saveNote, close: closeEditor });
     toast = document.createElement('div');
     toast.className = 'toast';
     toast.setAttribute('role', 'status');
     toast.hidden = true;
-    root.append(toolbar, popover, toast);
+    root.append(toolbar, popover, noteEditor.element, toast);
     document.documentElement.append(host);
   }
   function bar(label, actions) {
@@ -146,7 +157,7 @@
       button.tabIndex = -1;
       element.append(button);
     }
-    element.firstChild.tabIndex = 0;
+    element.querySelector('button').tabIndex = 0;
     // Keep the page selection while the toolbar is clicked.
     element.addEventListener('pointerdown', (event) => event.preventDefault());
     element.addEventListener('mousedown', (event) => event.preventDefault());
@@ -158,7 +169,9 @@
     return element;
   }
   function syncHost() {
-    const open = [toolbar, popover, toast].some((element) => element && !element.hidden);
+    const open = [toolbar, popover, noteEditor?.element, toast].some(
+      (element) => element && !element.hidden,
+    );
     if (!host?.isConnected) return;
     if (open && !host.matches(':popover-open')) host.showPopover();
     if (!open && host.matches(':popover-open')) host.hidePopover();
@@ -194,6 +207,7 @@
     if (popover) popover.hidden = true;
     active = null;
     focused.clear();
+    if (noteTarget?.range) focused.add(noteTarget.range);
     syncHost();
   }
   function leaveUi() {
@@ -333,13 +347,54 @@
     focused.add(record.range);
     const discuss = popover.querySelector('[data-action="discuss"]');
     discuss.textContent = record.highlight.turnCount > 0 ? t('highlightOpen') : t('highlightAsk');
+    popover.querySelector('[data-action="note"]').textContent = t(
+      record.highlight.note ? 'highlightNoteEdit' : 'highlightNoteAdd',
+    );
+    notePreview.show(record.highlight.note);
     place(popover, rect);
+  }
+
+  // The note editor opens where the highlight is and keeps focus until saved or closed.
+  function openEditor(record) {
+    if (!record.range) return;
+    if (!inUi()) returnFocus = document.activeElement;
+    closeEditor(true);
+    hidePopover();
+    noteTarget = record;
+    focused.add(record.range);
+    noteEditor.open({ note: record.highlight.note || '', text: record.highlight.text || '' });
+    place(noteEditor.element, firstRect(record.range));
+    noteEditor.focus();
+  }
+  function closeEditor(keepFocus = false) {
+    if (!noteEditor?.visible) return;
+    if (!keepFocus) leaveUi();
+    noteEditor.hide();
+    noteTarget = null;
+    focused.clear();
+    if (active?.range) focused.add(active.range);
+    syncHost();
+  }
+  async function saveNote(note) {
+    const record = noteTarget;
+    if (!record?.highlight) return;
+    const response = await send({
+      type: 'highlightNote',
+      documentId: page?.documentId,
+      highlightId: record.highlight.id,
+      note,
+      title: document.title,
+    });
+    if (response.highlight) record.highlight = response.highlight;
+    closeEditor();
+    notify(t(note ? 'highlightNoteSaved' : 'highlightNoteRemoved'));
   }
 
   function act(action) {
     if (action === 'highlight' || action === 'ask') return void create(action === 'ask');
     if (!active) return;
     if (action === 'discuss') return void discuss(active);
+    if (action === 'note') return void openEditor(active);
     if (action === 'delete') return void remove(active);
   }
   function findRecord(start, end) {
@@ -442,6 +497,7 @@
       if (error.code !== 'not_found') return void notify(t('highlightDeleteFailed', error.message));
     }
     records.delete(record.highlight.id);
+    if (noteTarget === record) closeEditor();
     repaint();
     report();
   }
@@ -451,7 +507,8 @@
     for (const record of records.values())
       if (record.range && !record.range.collapsed) paint.add(record.range);
     focused.clear();
-    if (active?.range && records.has(active.highlight?.id)) focused.add(active.range);
+    for (const record of [active, noteTarget])
+      if (record?.range && records.has(record.highlight?.id)) focused.add(record.range);
   }
   let reported = '';
   function report() {
@@ -549,6 +606,7 @@
     retries = 0;
     page = { url, documentId: null };
     records = new Map();
+    closeEditor();
     hideToolbar();
     hidePopover();
     repaint();
@@ -595,6 +653,8 @@
       if (event.composedPath().includes(host)) return;
       pointerDown = true;
       hidePopover();
+      // A note with unsaved text stays open; Cancel or Escape discards it.
+      if (!noteEditor?.changed) closeEditor();
     },
     options,
   );
@@ -658,6 +718,7 @@
     if (inUi()) return;
     hideToolbar();
     hidePopover();
+    if (!noteEditor?.changed) closeEditor();
   };
   document.addEventListener('scroll', hideOnMove, { capture: true, passive: true, signal });
   window.addEventListener('resize', hideOnMove, { signal });

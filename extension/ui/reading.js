@@ -3,7 +3,9 @@
 export function createReading({ i18n, request, showError, selection, reload }) {
   const $ = (id) => document.getElementById(id);
   let state = null,
-    revision = 0;
+    revision = 0,
+    // The highlight whose note is being edited: { id, draft, error, busy }.
+    editing = null;
   const number = (id) => Number.parseInt(String(id).slice(1), 10) || 0;
 
   async function refresh() {
@@ -65,6 +67,12 @@ export function createReading({ i18n, request, showError, selection, reload }) {
   function renderHighlights() {
     const list = $('highlightList');
     $('highlightSection').hidden = !state.page;
+    // Refreshes arrive while the user types; the editor keeps its text and focus.
+    const typing = document.activeElement?.closest?.('.highlight-note-form')
+      ? document.activeElement
+      : null;
+    const caret = typing?.tagName === 'TEXTAREA' && [typing.selectionStart, typing.selectionEnd];
+    if (editing && !state.highlights.some((h) => h.id === editing.id)) editing = null;
     list.replaceChildren();
     if (!state.highlights.length) {
       list.textContent = state.error ? i18n('readingError', state.error) : i18n('highlightsEmpty');
@@ -119,9 +127,109 @@ export function createReading({ i18n, request, showError, selection, reload }) {
           open.disabled = false;
         }
       };
-      entry.append(quote, meta, open);
+      const note = document.createElement('button');
+      note.type = 'button';
+      note.className = 'highlight-open highlight-note-button';
+      note.textContent = i18n(highlight.note ? 'highlightNoteEdit' : 'highlightNoteAdd');
+      note.setAttribute('aria-expanded', String(editing?.id === highlight.id));
+      note.onclick = () => {
+        editing = editing?.id === highlight.id ? null : { id: highlight.id, draft: highlight.note };
+        render();
+        if (editing) list.querySelector('.highlight-note-form textarea')?.focus();
+      };
+      const actions = document.createElement('span');
+      actions.className = 'highlight-actions';
+      actions.append(note, open);
+      entry.append(quote);
+      if (highlight.note && editing?.id !== highlight.id) {
+        const text = document.createElement('p');
+        text.className = 'highlight-note';
+        text.textContent = highlight.note;
+        text.title = i18n('highlightNoteLabel');
+        entry.append(text);
+      }
+      if (editing?.id === highlight.id) entry.append(noteForm(highlight));
+      entry.append(meta, actions);
       list.append(entry);
     }
+    if (caret) {
+      const input = list.querySelector('.highlight-note-form textarea');
+      input?.focus();
+      input?.setSelectionRange(...caret);
+    }
+  }
+
+  // An inline editor for the user's own note; an empty note removes it.
+  function noteForm(highlight) {
+    const form = document.createElement('form');
+    form.className = 'highlight-note-form';
+    const input = document.createElement('textarea');
+    input.rows = 3;
+    input.maxLength = 20000;
+    input.value = editing.draft || '';
+    input.placeholder = i18n('highlightNotePlaceholder');
+    input.setAttribute('aria-label', i18n('highlightNoteLabel'));
+    input.oninput = () => (editing.draft = input.value);
+    const error = document.createElement('p');
+    error.className = 'highlight-note-error';
+    error.setAttribute('role', 'alert');
+    error.hidden = !editing.error;
+    error.textContent = editing.error || '';
+    const row = document.createElement('div');
+    row.className = 'highlight-note-actions';
+    const hint = document.createElement('small');
+    hint.textContent = i18n('highlightNoteHint');
+    const cancel = document.createElement('button');
+    cancel.type = 'button';
+    cancel.textContent = i18n('highlightNoteCancel');
+    const save = document.createElement('button');
+    save.type = 'submit';
+    save.textContent = i18n('highlightNoteSave');
+    save.disabled = cancel.disabled = !!editing.busy;
+    row.append(hint, cancel, save);
+    form.append(input, error, row);
+    const close = () => {
+      editing = null;
+      render();
+      $('highlightList')
+        .querySelector(`[data-highlight-id="${highlight.id}"] .highlight-note-button`)
+        ?.focus();
+    };
+    cancel.onclick = close;
+    input.onkeydown = (event) => {
+      if (event.isComposing || event.keyCode === 229) return;
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        close();
+      } else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+        event.preventDefault();
+        form.requestSubmit();
+      }
+    };
+    form.onsubmit = async (event) => {
+      event.preventDefault();
+      if (editing?.busy) return;
+      const target = editing;
+      target.busy = true;
+      target.error = '';
+      render();
+      try {
+        await update('readingNote', {
+          documentId: state.document?.id,
+          highlightId: highlight.id,
+          note: input.value.trim(),
+        });
+        if (editing === target) close();
+      } catch (failure) {
+        target.busy = false;
+        target.error = i18n('highlightNoteFailed', failure.message);
+        if (editing === target) {
+          render();
+          $('highlightList').querySelector('.highlight-note-form textarea')?.focus();
+        }
+      }
+    };
+    return form;
   }
 
   $('readingSave').onchange = async (event) => {
