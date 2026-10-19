@@ -11,6 +11,7 @@ for (const file of [
   'attachments.py',
   'local-files.py',
   'vault.py',
+  'epub-vault.py',
   'resource-files.mjs',
   'resource-download.cjs',
   'message-fork.py',

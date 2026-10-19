@@ -1,5 +1,6 @@
 """Exercise installation in an isolated home, without touching browser profiles."""
 
+import ast
 import json
 import os
 from pathlib import Path
@@ -14,6 +15,14 @@ if sys.platform != "darwin":
     raise SystemExit(0)
 
 root = Path(__file__).resolve().parents[1]
+# Local modules the helper imports must be copied beside it by both installers.
+modules = {p.stem for p in (root / "native").glob("*.py")}
+helper = set()
+for name in modules - {"install"}:
+    for node in ast.walk(ast.parse((root / "native" / f"{name}.py").read_text())):
+        if isinstance(node, ast.Import):
+            helper |= {alias.name for alias in node.names} & modules
+helper.add("host")
 with tempfile.TemporaryDirectory(prefix="tabgent-install-") as directory:
     user_home = Path(directory)
     codex_home = user_home / "custom Codex home"
@@ -40,6 +49,9 @@ with tempfile.TemporaryDirectory(prefix="tabgent-install-") as directory:
     assert not (installed / "extension/native").exists()
     launcher = installed / "connector"
     assert os.access(launcher, os.X_OK)
+    assert {"vault", "epub_text"} <= helper
+    for name in helper:
+        assert (installed / f"{name}.py").is_file(), name
     assert (
         "export CODEX_HOME=" + shlex.quote(str(codex_home.resolve()))
         in launcher.read_text()
@@ -92,6 +104,8 @@ with tempfile.TemporaryDirectory(prefix="tabgent-install-") as directory:
         archive.extractall(output)
     package = output / "Tabgent Connector"
     assert store_id in (package / "Install Connector.command").read_text()
+    for name in helper:
+        assert (package / "native" / f"{name}.py").is_file(), name
     assert not (package / "manifest.json").exists()
     untouched = installed / "extension/keep.txt"
     untouched.write_text("Chrome manages this directory")
