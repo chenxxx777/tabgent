@@ -81,7 +81,9 @@ export async function startHighlights({ app, frame, source, name }) {
     pointerDown = false,
     selectionTimer,
     toastTimer,
-    repaintTimer;
+    repaintTimer,
+    flashing = null,
+    flashTimer;
 
   // Page text as getTextContent reports it, with the text layer's own parameters.
   const known = new Map(),
@@ -172,10 +174,9 @@ export async function startHighlights({ app, frame, source, name }) {
         }
       }
     }
-    focused.clear();
-    if (active && records.get(active.highlight.id) === active && active.ranges.length)
-      for (const range of active.ranges) focused.add(range);
-    else if (active) hidePopover();
+    if (active && !(records.get(active.highlight.id) === active && active.ranges.length))
+      hidePopover();
+    else refocus();
   }
   const scheduleRepaint = () => {
     clearTimeout(repaintTimer);
@@ -286,8 +287,15 @@ export async function startHighlights({ app, frame, source, name }) {
   function hidePopover() {
     if (popover) popover.hidden = true;
     active = null;
-    focused.clear();
+    refocus();
     syncHost();
+  }
+  // The stronger color marks the popover's highlight and one just shown by a jump.
+  function refocus() {
+    focused.clear();
+    for (const record of [flashing, active])
+      if (record && records.get(record.highlight.id) === record)
+        for (const range of record.ranges) focused.add(range);
   }
   function leaveUi() {
     if (!inUi()) return;
@@ -493,6 +501,7 @@ export async function startHighlights({ app, frame, source, name }) {
           highlight: response.highlight,
           segments,
           ranges: [],
+          resolved: true,
         });
       }
       if (response.vaultError) notify(t('highlightSaveFailed', response.vaultError));
@@ -557,15 +566,14 @@ export async function startHighlights({ app, frame, source, name }) {
     ensureUi();
     hideToolbar();
     active = record;
-    focused.clear();
-    for (const range of record.ranges) focused.add(range);
+    refocus();
     popover.querySelector('[data-action="discuss"]').textContent =
       record.highlight.turnCount > 0 ? t('highlightOpen') : t('highlightAsk');
     place(popover, rect);
   }
 
   let reported = '',
-    restoring = false;
+    restoring = 0;
   // Saved highlights still being restored are not reported as unanchored.
   function report() {
     if (restoring) return;
@@ -585,18 +593,19 @@ export async function startHighlights({ app, frame, source, name }) {
 
   // Unconfident anchors stay unpainted and are reported as unanchored.
   async function anchorAll() {
-    restoring = true;
+    restoring++;
     try {
       for (const record of [...records.values()]) {
-        if (!record.highlight) continue;
+        if (!record.highlight || record.resolved) continue;
         const match = await anchors.resolve(record.highlight.anchor, pages).catch(() => null);
         record.segments = match?.segments || null;
         record.method = match?.method;
+        record.resolved = true;
         prefetch(record.segments);
         scheduleRepaint();
       }
     } finally {
-      restoring = false;
+      restoring--;
     }
     repaint();
     report();
@@ -614,12 +623,62 @@ export async function startHighlights({ app, frame, source, name }) {
     attempts = 0;
     // An unsaved document has a provisional ID (createdAt null) that may still change.
     documentId = response.document?.createdAt ? response.document.id : null;
+    // A refresh keeps restored highlights (and an open popover) whose anchor is unchanged.
+    const previous = records;
     records = new Map();
-    for (const highlight of response.highlights || [])
-      if (highlight?.id && highlight.anchor)
-        records.set(highlight.id, { highlight, segments: null, ranges: [] });
+    for (const highlight of response.highlights || []) {
+      if (!highlight?.id || !highlight.anchor) continue;
+      const old = previous.get(highlight.id);
+      records.set(
+        highlight.id,
+        old?.resolved && JSON.stringify(old.highlight.anchor) === JSON.stringify(highlight.anchor)
+          ? Object.assign(old, { highlight })
+          : { highlight, segments: null, ranges: [] },
+      );
+    }
+    for (const [id, record] of previous) if (!record.highlight) records.set(id, record);
     await anchorAll();
   }
+
+  // The service worker asks about this viewer's highlights (reading-companion.js): reload
+  // after a saved turn, nearby text for a discussion, and showing one in the document.
+  async function reveal(record) {
+    if (!record.ranges?.length) {
+      app.pdfViewer.scrollPageIntoView({ pageNumber: record.segments[0].page });
+      for (let i = 0; i < 60 && !record.ranges?.length; i++)
+        await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    const node = record.ranges?.[0]?.startContainer;
+    if (!node) return;
+    (node.nodeType === 1 ? node : node.parentElement)?.scrollIntoView({
+      block: 'center',
+      behavior: 'smooth',
+    });
+    clearTimeout(flashTimer);
+    flashing = record;
+    repaint();
+    flashTimer = setTimeout(() => {
+      flashing = null;
+      repaint();
+    }, 1600);
+  }
+  chrome.runtime.onMessage.addListener((message, sender, reply) => {
+    if (
+      sender.id !== chrome.runtime.id ||
+      sender.tab ||
+      sender.url !== chrome.runtime.getURL('background.js') ||
+      message?.type !== 'tabgentHighlight'
+    )
+      return;
+    if (message.action === 'refresh') return void load();
+    const record = records.get(message.highlightId);
+    if (message.action === 'context') reply(record?.segments ? contextOf(record.segments) : null);
+    if (message.action === 'jump') {
+      if (!record?.segments) return void reply({ found: false });
+      void reveal(record);
+      reply({ found: true });
+    }
+  });
 
   const options = { capture: true };
   doc.addEventListener(

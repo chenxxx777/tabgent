@@ -202,7 +202,11 @@ The vault document is the original PDF URL without its fragment. Its title is th
 metadata title, chosen as PDF.js does, or the file name; `meta` carries the PDF author
 and the host name. The service worker accepts PDF highlight messages only from the
 current viewer document of the tab, the same check as PDF selections, and sends
-`kind: "pdf"` with an anchor reshaped by `cleanPdfAnchor`.
+`kind: "pdf"` with an anchor reshaped by `cleanPdfAnchor`. Like the webpage layer, the
+viewer answers `tabgentHighlight` messages from the service worker in its top frame:
+`context` returns a highlight's nearby text, `jump` scrolls its page into view and
+marks it briefly, and `refresh` reloads the saved highlights (for example after a
+saved turn) while keeping restored ones in place.
 
 **Ask AI** follows the same gesture rule as webpages. The quote carries `highlight`,
 `context` with up to 1500 characters before and after (including the previous and

@@ -75,6 +75,15 @@ const calls = [];
 let saved = { document: null, highlights: [], next: 1 };
 chrome.runtime.onMessage.addListener((m, sender, reply) => {
   if (m.type === 'calls') return void reply(calls);
+  if (m.type === 'toViewer') {
+    // As reading-companion.js does: worker → the tab's top frame.
+    chrome.tabs.sendMessage(m.tabId, m.message, { frameId: 0 }).then(reply, (e) => reply({ error: e.message }));
+    return true;
+  }
+  if (m.type === 'turns') {
+    for (const h of saved.highlights) h.turnCount = 2;
+    return void reply({});
+  }
   if (m.type === 'read') {
     pdfCommand(m.tabId, { action: 'read', page: m.page }).then(reply, (e) => reply({ error: e.message }));
     return true;
@@ -386,6 +395,55 @@ chrome.runtime.onMessage.addListener((m, sender, reply) => {
       'independence from other people',
     ]);
     console.log('PASS Ask AI creates the highlight with nearby text from this and the next page');
+
+    // The worker's reading companion asks the viewer about its highlights.
+    const toViewer = (message) =>
+      ctl.evaluate(
+        ([tabId, message]) => chrome.runtime.sendMessage({ type: 'toViewer', tabId, message }),
+        [tabId, message],
+      );
+    const id = (await calls('highlightCreate')).find((m) => m.ask) && 'h002';
+    const context = await toViewer({
+      type: 'tabgentHighlight',
+      action: 'context',
+      highlightId: id,
+    });
+    assert.match(context.before, /It does not mean $/);
+    assert.match(context.after, /^\. Readers who endorse/);
+    assert.equal(
+      await toViewer({ type: 'tabgentHighlight', action: 'context', highlightId: 'h404' }),
+      null,
+    );
+    await showPage(3);
+    assert.deepEqual(
+      await toViewer({ type: 'tabgentHighlight', action: 'jump', highlightId: id }),
+      { found: true },
+    );
+    assert.equal(
+      await until(() => pdf.evaluate(() => PDFViewerApplication.page === 2)),
+      true,
+      'Jump scrolls the highlight page into view',
+    );
+    assert.deepEqual(
+      await until(async () => {
+        const active = await pdf.evaluate(() =>
+          [...(CSS.highlights.get('tabgent-highlight-active') || [])].map(String),
+        );
+        return active.length && active;
+      }),
+      ['independence from other people'],
+    );
+    assert.deepEqual(
+      await toViewer({ type: 'tabgentHighlight', action: 'jump', highlightId: 'h404' }),
+      { found: false },
+    );
+    const resolvesBefore = (await calls('highlightResolve')).length;
+    await ctl.evaluate(() => chrome.runtime.sendMessage({ type: 'turns' }));
+    await toViewer({ type: 'tabgentHighlight', action: 'refresh' });
+    assert(await until(async () => (await calls('highlightResolve')).length > resolvesBefore));
+    await wait(300);
+    assert.deepEqual(await painted(), ['independence from other people']);
+    console.log('PASS the worker can ask a PDF viewer for context, jump to a highlight, refresh');
 
     // A selection across the page break becomes one highlight on both pages.
     await showPage(1);
