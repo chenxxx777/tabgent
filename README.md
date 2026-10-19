@@ -163,7 +163,7 @@ Read [Privacy & permissions](docs/privacy.md) for data flow, storage locations, 
 
 Tabgent is an early preview. **macOS and Chrome are the primary supported setup.** Some older Codex versions may need an update. Tabgent conversations do not synchronize live with Codex Desktop, and after a browser restart, saved conversations may no longer open their original tabs automatically.
 
-Webpage highlights work on the top-level page, not inside frames. PDF highlights need Tabgent's PDF viewer and selectable text, and the PDF itself is not copied into your notes folder. Fixed-layout EPUB books save highlights without displaying them. If a highlighted passage can no longer be found, Tabgent keeps the note and marks it as not found rather than highlighting other text; it cannot be re-attached yet.
+Webpage highlights work on the top-level page, not inside frames. PDF highlights work in Tabgent's PDF viewer, which opens online (HTTP or HTTPS) PDFs with selectable text; local PDF files open in Chrome's own viewer without highlights, and PDFs are not copied into your notes folder. Fixed-layout EPUB books save highlights without displaying them. If a highlighted passage can no longer be found, Tabgent keeps the note and marks it as not found rather than highlighting other text; it cannot be re-attached yet.
 
 ## Contribute
 
