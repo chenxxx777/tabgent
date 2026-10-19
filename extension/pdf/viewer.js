@@ -1,6 +1,7 @@
 import { paintAgentPointer } from '../agent-pointer.js';
 import { t } from '../i18n.js';
 import { pdfSource } from '../pdf-routing.js';
+import { startHighlights } from './pdf-highlights.js';
 const frame = document.querySelector('#viewer');
 const status = document.querySelector('#status');
 const source = pdfSource(location.href);
@@ -194,7 +195,9 @@ document.addEventListener('webviewerloaded', async (event) => {
     externalLinkTarget: 2,
     locale: 'en-US',
     enableComment: true,
-    enableHighlightFloatingButton: true,
+    // Tabgent's selection toolbar (Highlight / Ask AI) replaces the PDF.js floating button;
+    // the PDF.js highlight tool still annotates the PDF for savePdf.
+    enableHighlightFloatingButton: false,
     enableAltTextModelDownload: false,
   });
   app = win.PDFViewerApplication;
@@ -232,6 +235,7 @@ document.addEventListener('webviewerloaded', async (event) => {
       true,
     );
     connect();
+    startHighlights({ app, frame, source, name }).catch((e) => console.warn(e));
   } catch {
     clearTimeout(timer);
     status.textContent = t('pdfFailed');

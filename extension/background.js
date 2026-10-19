@@ -15,6 +15,7 @@ import {
   VaultError,
   createVaultClient,
   cleanWebAnchor,
+  cleanPdfAnchor,
   cleanPageMeta,
   documentUrl,
   bookUrl,
@@ -747,13 +748,15 @@ const highlightMessages = new Set([
   'highlightStatus',
 ]);
 const pageText = (value, limit) => (typeof value === 'string' ? value.slice(0, limit) : '');
-// Webpage highlights belong to top-level HTTP(S) documents named by Chrome's sender metadata.
+// Highlights belong to top-level HTTP(S) documents named by Chrome's sender metadata, or to
+// the current PDF.js viewer, whose document is the original PDF URL.
 async function highlightMessage(msg, sender) {
+  const pdf = pdfSource(sender.url);
   if (
     !sender.tab ||
     sender.tab.incognito ||
     sender.frameId !== 0 ||
-    !/^https?:/.test(sender.url || '')
+    (!pdf && !/^https?:/.test(sender.url || ''))
   )
     throw Error('Invalid highlight sender');
   const tabId = sender.tab.id;
@@ -765,12 +768,22 @@ async function highlightMessage(msg, sender) {
           () => false,
         )
       : null;
-  const frame = await chrome.webNavigation.getFrame({ tabId, frameId: 0 });
-  if (!frame || (sender.documentId && frame.documentId !== sender.documentId))
-    throw Error('Stale page');
-  // sender.url keeps the load-time URL; the frame URL follows same-document (SPA) navigation.
-  const pageUrl = /^https?:/.test(frame.url || '') ? frame.url : sender.url,
-    url = documentUrl(pageUrl);
+  let pageUrl = pdf;
+  if (pdf) {
+    // Chrome hides extension documents from webNavigation.getFrame.
+    if (!(await isCurrentPdfSender(sender))) throw Error('Stale PDF viewer');
+  } else {
+    const frame = await chrome.webNavigation.getFrame({ tabId, frameId: 0 });
+    if (!frame || (sender.documentId && frame.documentId !== sender.documentId))
+      throw Error('Stale page');
+    // sender.url keeps the load-time URL; the frame URL follows same-document (SPA) navigation.
+    pageUrl = /^https?:/.test(frame.url || '') ? frame.url : sender.url;
+  }
+  const url = documentUrl(pageUrl),
+    kind = pdf ? 'pdf' : 'web';
+  // PDF quotes name their page; webpages keep handOffSelection's default locator.
+  const locator = (anchor) =>
+    pdf ? { kind: 'pdf', anchor, ...(anchor ? { page: anchor.page } : {}) } : null;
   const title = pageText(msg.title, 500) || pageText(sender.tab.title, 500);
   const meta = cleanPageMeta(msg.meta);
   const context = {
@@ -778,7 +791,7 @@ async function highlightMessage(msg, sender) {
     after: pageText(msg.context?.after, 2000),
   };
   if (msg.type === 'highlightResolve') {
-    const result = await vaultRequest('vault/document/resolve', { url, title, kind: 'web', meta });
+    const result = await vaultRequest('vault/document/resolve', { url, title, kind, meta });
     return { url, document: result.document || null, highlights: result.highlights || [] };
   }
   if (msg.type === 'highlightStatus') {
@@ -797,7 +810,7 @@ async function highlightMessage(msg, sender) {
     return {};
   }
   if (msg.type === 'highlightCreate') {
-    const anchor = cleanWebAnchor(msg.anchor),
+    const anchor = pdf ? cleanPdfAnchor(msg.anchor) : cleanWebAnchor(msg.anchor),
       text = pageText(msg.text, 20000);
     if (!anchor || !text.trim()) throw new VaultError('invalid_params', 'Invalid highlight');
     const location = pageText(msg.location, 200).trim();
@@ -807,7 +820,7 @@ async function highlightMessage(msg, sender) {
       created = await vaultRequest('vault/highlight/create', {
         url,
         title,
-        kind: 'web',
+        kind,
         meta,
         text,
         anchor,
@@ -828,7 +841,10 @@ async function highlightMessage(msg, sender) {
         context,
         location,
         highlight:
-          highlight && document ? { documentId: document.id, highlightId: highlight.id } : null,
+          highlight && document
+            ? { documentId: document.id, highlightId: highlight.id, kind }
+            : null,
+        locator: locator(anchor),
       });
     return {
       url,
@@ -839,7 +855,7 @@ async function highlightMessage(msg, sender) {
     };
   }
   // Existing highlights are checked against the vault record for this page's URL.
-  const resolved = await vaultRequest('vault/document/resolve', { url, title, kind: 'web' });
+  const resolved = await vaultRequest('vault/document/resolve', { url, title, kind });
   const highlight =
     resolved.document?.id === msg.documentId &&
     (resolved.highlights || []).find((h) => h.id === msg.highlightId);
@@ -858,7 +874,8 @@ async function highlightMessage(msg, sender) {
     anchor: highlight.anchor || null,
     context,
     location: pageText(highlight.location, 200),
-    highlight: { documentId: resolved.document.id, highlightId: highlight.id },
+    highlight: { documentId: resolved.document.id, highlightId: highlight.id, kind },
+    locator: locator(highlight.anchor || null),
   });
   return { panelOpened: await panel };
 }

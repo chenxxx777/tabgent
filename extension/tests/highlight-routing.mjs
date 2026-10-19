@@ -169,7 +169,11 @@ assert.deepEqual(opened, [{ tabId: 1 }], 'sidePanel.open runs synchronously in t
 const askResult = await asked;
 assert.equal(askResult.panelOpened, true);
 const selection = messages.filter((m) => m.name === 'codex-selection').at(-1).value;
-assert.deepEqual(selection.highlight, { documentId: document.id, highlightId: 'h002' });
+assert.deepEqual(selection.highlight, {
+  documentId: document.id,
+  highlightId: 'h002',
+  kind: 'web',
+});
 assert.equal(selection.context.before.length, 2000);
 assert.equal(selection.context.after, 'after text');
 assert.equal(selection.text, 'quoted words');
@@ -221,7 +225,7 @@ const existing = new Promise((resolve) =>
 assert.equal(opened.length, 1);
 assert.equal((await existing).panelOpened, true);
 const reopened = messages.filter((m) => m.name === 'codex-selection').at(-1).value;
-assert.deepEqual(reopened.highlight, { documentId: document.id, highlightId: 'h001' });
+assert.deepEqual(reopened.highlight, { documentId: document.id, highlightId: 'h001', kind: 'web' });
 assert.equal(reopened.text, saved.text, 'Existing highlight text comes from the vault record');
 console.log('PASS asking about a saved highlight reuses its vault record');
 

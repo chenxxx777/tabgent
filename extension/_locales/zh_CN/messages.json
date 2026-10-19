@@ -101,6 +101,12 @@
   "highlightOpenPanel": {
     "message": "已发送到 Tabgent。点击工具栏中的 Tabgent 按钮即可打开侧边栏。"
   },
+  "pdfPageLabel": {
+    "message": "第 $1 页"
+  },
+  "pdfPagesLabel": {
+    "message": "第 $1–$2 页"
+  },
   "readingNotes": {
     "message": "阅读笔记"
   },

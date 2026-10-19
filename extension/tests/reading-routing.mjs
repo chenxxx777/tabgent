@@ -236,7 +236,7 @@ try {
   assert.equal(asked.highlight.id, 'h001');
   const documentId = asked.document.id;
   const selection = view.events('codex-selection').at(-1);
-  assert.deepEqual(selection.highlight, { documentId, highlightId: 'h001' });
+  assert.deepEqual(selection.highlight, { documentId, highlightId: 'h001', kind: 'web' });
   assert.equal(selection.location, 'Chapter 3');
   assert.equal(view.events('codex-view-changed').length, 0, 'An empty conversation is reused');
   console.log('PASS Ask AI hands the highlight to the empty sidebar conversation');

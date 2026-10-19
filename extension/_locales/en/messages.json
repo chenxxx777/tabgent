@@ -880,6 +880,12 @@
   "highlightOpenPanel": {
     "message": "Sent to Tabgent. Click the Tabgent toolbar button to open the side panel."
   },
+  "pdfPageLabel": {
+    "message": "p. $1"
+  },
+  "pdfPagesLabel": {
+    "message": "pp. $1–$2"
+  },
   "readingNotes": {
     "message": "Reading notes"
   },
