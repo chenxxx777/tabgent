@@ -155,7 +155,7 @@ that the sidebar shows “Codex connected”. Report what you verified.
 - **Choose which windows the assistant can use:** the current window or all windows. This setting only limits Tabgent’s browser actions; it does not restrict other Codex tools or connected services.
 - **Connects to your local Codex installation:** Tabgent connects to Codex on your Mac. There is no separate Tabgent cloud service processing your conversations.
 - **Conversation content is sent to Codex:** to answer questions or carry out tasks, your messages, supplied page content and relevant attachments are sent to your configured Codex service. They are not processed solely on your computer.
-- **Reading notes stay in a local folder:** highlights, saved discussions and opened EPUB books are stored in your ReadingVault folder, and Tabgent does not upload it. When a question needs earlier notes, Codex reads only the note files Tabgent writes there; what it reads is sent to your Codex service like other conversation content.
+- **Reading notes stay in a local folder:** highlights, saved discussions and opened EPUB books are stored in your ReadingVault folder, and Tabgent does not upload it. The Tabgent reading-vault tool reads only the note files Tabgent writes there; Codex commands follow your permission mode and are not limited to those files. What Codex reads is sent to your Codex service like other conversation content.
 
 Read [Privacy & permissions](docs/privacy.md) for data flow, storage locations, and Chrome permissions. Report security concerns using [SECURITY.md](SECURITY.md).
 
