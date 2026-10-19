@@ -37,7 +37,7 @@ limit which tabs tools can access; they do not validate the intentions of a page
 | `nativeMessaging`                     | Connect to the installed local Python host.                                           |
 | `debugger`                            | Perform trusted browser input and screenshots. Chrome may show an attachment notice.  |
 | `declarativeNetRequestWithHostAccess` | Open online PDF documents in the bundled local viewer; allow native fallback per tab. |
-| `contextMenus`                        | Quote selected text, including in Chrome's PDF viewer; open the EPUB reader.          |
+| `contextMenus`                        | Quote selected text, including in Chrome's PDF viewer; open the library.              |
 
 Browser tools enforce current-window or all-windows scope on each operation.
 Incognito and internal browser pages are excluded from ordinary page automation.
@@ -57,6 +57,7 @@ symlink so existing attachment paths remain valid.
 | `$CODEX_HOME/projects/tabgent/attachments/` | User-uploaded file copies, each in a generated subdirectory.            |
 | `~/ReadingVault/` or the configured folder  | Saved highlights, their page URLs and anchors, and saved discussions.   |
 | `Books/book-*/` in the vault                | Imported EPUB files, their SHA-256 record, and chapter text.            |
+| `Books/paper-*/` in the vault               | PDF highlights; PDFs imported from the computer and their SHA-256 file. |
 | Chrome extension local storage              | Reading-note saves waiting for a retry (at most 100), EPUB positions.   |
 | `$CODEX_HOME/projects/tabgent/vault.json`   | The configured ReadingVault folder.                                     |
 | Shared Codex session storage and index      | Conversation history and project association.                           |
@@ -103,9 +104,16 @@ Highlights made with Tabgent's selection toolbar (**Highlight** or **Ask AI**) a
 saved to the local ReadingVault like webpage highlights, in `Books/paper-*/`
 (`highlights.md` and `anchors.json`): the PDF URL, its title and author from the PDF
 metadata, the host name, each highlighted passage with its page, and the saved
-discussion. The PDF file itself is not copied into the vault. Highlights, comments and
+discussion. A PDF opened from the web is not copied into the vault. Highlights, comments and
 edits made with the PDF.js annotation tools are not saved to the vault; they are saved
 only when you download the edited PDF.
+
+A PDF you choose or drop in the library is copied into the vault as
+`Books/paper-*/original.pdf`, with `source.json` recording its file name, size, SHA-256
+and import time, so it can be reopened later without the original file. Its notes name
+it `urn:sha256:<hash>` instead of a URL. The copy is read back only by the bundled PDF.js
+viewer, and opening it does not send it to Codex. Delete the folder to remove it.
+The library lists the vault's documents locally; nothing is uploaded.
 
 The EPUB reader renders books locally in an extension page with book scripts and
 remote resources blocked. Opening a book copies it into the reading vault, with its

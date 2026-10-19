@@ -23,7 +23,7 @@ flowchart LR
 | `extension/pdf/viewer.js`         | PDF.js wrapper: loading, fallback, live quotes, and Agent PDF commands.     |
 | `extension/pdf/pdf-highlights.js` | Selection toolbar, saved PDF highlights, and highlight actions in PDF.js.   |
 | `extension/pdf/pdf-anchor.js`     | PDF page text, PDF anchors, and verified anchor restoration.                |
-| `extension/epub/`                 | Bundled EPUB reader page: library, rendering, anchors and highlights.       |
+| `extension/epub/`                 | Library and EPUB reader page: vault documents, imports, books, highlights.  |
 | `extension/epub-routing.js`       | EPUB reader port registry and sender checks.                                |
 | `extension/reading-companion.js`  | Highlight and page conversations: reading context and saved turns.          |
 | `extension/reading.js`            | Reading context parts, turn records, and vault append parameters.           |
@@ -94,8 +94,10 @@ the Codex app-server, so highlights save while Codex is offline or signed out.
 otherwise the default folder is created on the first write. Each write scaffolds
 `AGENTS.md` (layout, `rg` retrieval hints, and reading rules for Codex), `Articles/`,
 and `Books/`. Web pages live in `Articles/article-<title slug>-<URL hash>/`, PDF
-documents in `Books/paper-<title slug>-<URL hash>/`, and EPUB books in `Books/` (see [EPUB reader](#epub-reader)). URLs are matched without their fragment, as in page
-history, through `.tabgent/index.json`, which is rebuilt from the folders if missing.
+documents in `Books/paper-<title slug>-<URL hash>/`, and EPUB books in `Books/` (see [EPUB reader](#epub-reader)). A PDF imported from the computer is a `paper-*` document
+named `urn:sha256:<hex>` (see [Library and local PDFs](#library-and-local-pdfs)). URLs are
+matched without their fragment, as in page history, through `.tabgent/index.json`, which
+is rebuilt from the folders if missing. `vault/documents/list` lists every document.
 
 `anchors.json` is the machine record: anchors, highlight IDs (`h001`, never reused),
 and discussion turns, which are idempotent on thread and turn ID. `highlights.md` is
@@ -205,8 +207,9 @@ the same URL. Identical passages are decided only when one is clearly closer to 
 saved position. Anything less certain stays unanchored and unpainted, and is reported
 as `codex-highlight-status`.
 
-The vault document is the original PDF URL without its fragment. Its title is the PDF
-metadata title, chosen as PDF.js does, or the file name; `meta` carries the PDF author
+The vault document is the original PDF URL without its fragment, or `urn:sha256:<hex>`
+for an imported PDF. Its title is the PDF metadata title, chosen as PDF.js does
+(`pdf-info.js`), or the file name; `meta` carries the PDF author
 and the host name. The service worker accepts PDF highlight messages only from the
 current viewer document of the tab, the same check as PDF selections, and sends
 `kind: "pdf"` with an anchor reshaped by `cleanPdfAnchor`. Like the webpage layer, the
@@ -231,11 +234,11 @@ cannot be highlighted, and page labels use physical page numbers, not printed on
 
 ## EPUB reader
 
-The bundled reader is an extension page, `epub/reader.html`, opened from the toolbar
-button's context menu (**Open EPUB reader**). It renders books with foliate-js
+The bundled reader is an extension page, `epub/reader.html`, whose start screen is the
+[library](#library-and-local-pdfs). It renders books with foliate-js
 (`extension/vendor/foliate-js`) in paginated or scrolled mode, with a table of contents,
 font size, and the reading position stored in `chrome.storage.local`. A book is opened
-by choosing or dropping a file, or from the list of books in the vault.
+by choosing or dropping a file, or from the library.
 
 A book's identity is the SHA-256 of its file: the vault URL is `urn:sha256:<hex>`, so a
 re-picked file or the vault copy maps to the same `Books/book-<title slug>-<hash>/`
@@ -293,6 +296,47 @@ files through `reading_vault` instead.
 Fixed-layout books use foliate's fixed-layout renderer, which has no overlay layer, so
 their highlights are saved but not drawn. Book search, notes on highlights, and EPUB
 files opened from websites or `file://` URLs are not supported.
+
+## Library and local PDFs
+
+The library is the start screen of `epub/reader.html`. It opens from the toolbar
+button's context menu and from **Open library** in the side panel's Reading notes menu,
+which opens it in a tab next to the page. It lists every vault document with
+`vault/documents/list`, most recently updated first: title, kind (webpage, PDF, imported
+PDF or EPUB), author or host, highlight count and the last update. Each entry is a link:
+
+| Document     | Opens                                                        |
+| ------------ | ------------------------------------------------------------ |
+| Webpage      | Its HTTP(S) URL; the page restores its highlights.           |
+| PDF (web)    | `pdf/viewer.html?url=<PDF URL>`, the bundled PDF.js viewer.  |
+| Imported PDF | `pdf/viewer.html?url=urn:sha256:<hex>`, from the vault copy. |
+| EPUB         | `reader.html?book=<document ID>`, from the vault copy.       |
+
+Entries whose original is not in the vault (an EPUB that was never imported, or a removed
+file) are listed but not openable. Other URL schemes from the vault are never opened.
+
+Choosing or dropping a file accepts EPUB books (handled as in [EPUB reader](#epub-reader))
+and PDFs, recognized by their first bytes. A PDF is limited to 100 MiB, the vault's
+limit for originals. The library reads its title and author with PDF.js, as the viewer
+does, which also refuses a damaged file before it is copied; an encrypted PDF is named by
+its file. Its identity is the SHA-256 of its bytes: `vault/source/save` stores it with
+`kind: "pdf"` and the URL `urn:sha256:<hex>` in the same 2 MiB chunks, resumable uploads
+and checks as an EPUB, as `Books/paper-<title slug>-<hash>/original.pdf` with
+`source.json`. The vault refuses a `urn:sha256:` URL that is not the file's hash. The same
+file always maps to the same document, so dropping it again opens its existing copy.
+After the import the tab opens the viewer for that identity.
+
+`pdfSource()` accepts `urn:sha256:<64 lowercase hex>` as a PDF source, so the viewer
+tab is a PDF tab everywhere: highlights, Ask AI, plain selections, page history, the
+per-message browser context, `pageDocument()` for page notes, and `browser read`. The
+viewer of an imported PDF reads the vault copy with `pdfLocalRead` messages. The service
+worker accepts them only from the tab's current top-frame viewer whose `pdf` port is
+registered, resolves the document from the viewer's own address (never from the page's
+request), and relays `vault/source/read`. The viewer checks the bytes against the hash
+in its address and opens them with `PDFViewerApplication.open({ data })`. There is no
+web address, so **Open in Chrome viewer** is hidden and `pdfFallback` is refused. An
+imported PDF is not in the vault any more when the vault folder is changed; the viewer
+then reports that it cannot be opened.
 
 ## Reading conversations
 

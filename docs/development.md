@@ -60,10 +60,16 @@ These are deliberately excluded from `npm test`:
 | `npm run test:highlights`                    | Playwright Chromium; source connector with temporary profile, HOME, and CODEX_HOME.          |
 | `npm run test:pdf-highlights`                | Same isolation, fixture app-server for Codex; PDF.js highlights, saved turns, and restore.   |
 | `npm run test:epub`                          | Playwright Chromium and Python; the real connector with temporary `HOME` and `CODEX_HOME`.   |
+| `npm run test:library`                       | Same isolation, fixture app-server for Codex; library, local PDF import, reopen and restore. |
 
 `npm run test:epub` imports a generated book into a temporary vault, checks highlights,
 Ask AI, reopening, a browser restart and blocked book scripts. Codex discovery is
 disabled, so no app-server or account is used.
+
+`npm run test:library` seeds a webpage and an online PDF into a temporary vault, imports a
+generated PDF and EPUB from the library, highlights and asks about the PDF (saving a turn
+from the fixture app-server), opens the library from the side panel, opens every kind of
+document from it, restarts the browser and checks drag and drop.
 
 Start a debug browser with:
 
