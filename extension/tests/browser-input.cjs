@@ -172,7 +172,7 @@ const { chromium } = require('playwright');
     const { browserTool } = await import('./browser-tools.js');
     return browserTool(
       { tabId: id, scope: 'window' },
-      { action: 'read', page: 1 },
+      { tabId: id, action: 'read', page: 1 },
       window.readPdfBytes,
     );
   }, id);
