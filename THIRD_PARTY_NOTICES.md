@@ -29,3 +29,9 @@ Its browser ESM build parses YAML locally for the collapsible code view.
 
 Mermaid 12.1.0 is bundled in `extension/vendor/mermaid/` under MIT.
 Its ESM build and diagram chunks render Mermaid code locally, without a CDN.
+
+foliate-js by John Factotum (commit `78914ae`) is bundled in
+`extension/vendor/foliate-js/` under MIT, with the zip.js 2.8.22 build it ships
+(by Gildas Lormeau, BSD-3-Clause). Both license files and a `README.md` with the
+source and update steps accompany it. EPUB rendering runs locally, with book
+scripts disabled.
