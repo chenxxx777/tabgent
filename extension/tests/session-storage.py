@@ -49,6 +49,7 @@ with tempfile.TemporaryDirectory(prefix="tabgent-storage-") as directory, patch.
         assert [tool["name"] for tool in params["dynamicTools"]] == [
             "browser",
             "read_attachment",
+            "reading_vault",
         ]
         assert params["sandbox"] == "read-only"
         assert params["approvalPolicy"] == "untrusted"
