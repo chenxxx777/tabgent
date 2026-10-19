@@ -265,8 +265,10 @@ sandbox already allows reading the vault folder, but in Ask for approval mode Co
 asks before every shell command, including `rg` and `cat`. The connector therefore
 adds a `reading_vault` dynamic tool next to `read_attachment`. The host answers it
 locally on the vault queue: `list` names the documents, `search` ranks lines of
-`highlights.md`, `source.md` and EPUB `chapters/*.md` by matching keywords (notes before
-book text, optionally within one `document`), and `read` returns numbered lines of the
+`highlights.md` and `source.md` by matching keywords, optionally within one `document`.
+A book's `chapters/*.md` are searched only when `document` names that book, and its
+notes still rank first, so book text never crowds out the user's notes and a search
+never scans the whole library. `read` returns numbered lines of the
 vault's `AGENTS.md`, a document's `highlights.md`, `source.md` or `anchors.json`, or an
 imported book's `chapters/NN-<title>.md`. The vault folder may be shared, for example
 with Obsidian or the home folder, so no other file is readable. Each file must sit at

@@ -401,8 +401,57 @@ with tempfile.TemporaryDirectory(prefix="tabgent-epub-vault-") as directory:
             "text": "Autonomy does not mean independence from others, but "
             "endorsement of one\u2019s own actions.",
         }
-        cjk = vault.tool(settings, {"action": "search", "query": "独立于他人"})
+        cjk = vault.tool(
+            settings, {"action": "search", "query": "独立于他人", "document": ident}
+        )
         assert cjk["matches"][0]["path"].endswith("02-chapter-two-repetition.md")
+        # Without document, book text is not searched: only the user's notes compete.
+        assert (
+            vault.tool(settings, {"action": "search", "query": "独立于他人"})["matches"]
+            == []
+        )
+        # A two-word query: many lines of another book contain both words, and one
+        # note line contains one of them. The note is never crowded out.
+        crowded = epub_fixture.build(
+            title="Crowded Book",
+            chapters=[
+                (
+                    "c.xhtml",
+                    "Crowd",
+                    "".join(
+                        f"<p>Autonomy and endorsement, line {n}.</p>" for n in range(80)
+                    ),
+                )
+            ],
+        )
+        digest = hashlib.sha256(crowded).hexdigest()
+        other = call(
+            settings,
+            "vault/source/save",
+            {
+                "url": "urn:sha256:" + digest,
+                "title": "Crowded Book",
+                "kind": "epub",
+                "sha256": digest,
+                "size": len(crowded),
+                "offset": 0,
+                "data": b64(crowded),
+            },
+        )["document"]["id"]
+        query = {"action": "search", "query": "autonomy endorsement"}
+        everywhere = vault.tool(settings, query)
+        assert [m["path"] for m in everywhere["matches"]] == [
+            f"Books/{ident}/highlights.md"
+        ], everywhere
+        in_book = vault.tool(settings, {**query, "document": other})["matches"]
+        assert len(in_book) == vault.TOOL_RESULTS
+        assert all(m["path"].startswith(f"Books/{other}/chapters/") for m in in_book)
+        # Within a book, its notes come first even when chapter lines score higher.
+        mine = vault.tool(settings, {**query, "document": ident})["matches"]
+        assert mine[0]["path"] == f"Books/{ident}/highlights.md"
+        assert mine[1]["text"].startswith("Autonomy does not mean"), mine
+        shutil.rmtree(root / "Books" / other)
+        (root / ".tabgent" / "index.json").unlink()
         text = vault.tool(
             settings,
             {
