@@ -72,6 +72,11 @@ const assert = require('node:assert/strict'),
         i18n: { getMessage: (key, values) => (values?.length ? `${key}:${values}` : key) },
         runtime: {
           id: 'test',
+          listeners: [],
+          onMessage: {
+            addListener: (fn) => chrome.runtime.listeners.push(fn),
+            removeListener: () => {},
+          },
           sendMessage: async (message) => {
             sent.push(JSON.parse(JSON.stringify(message)));
             return respond(message);
@@ -266,6 +271,63 @@ const assert = require('node:assert/strict'),
     );
     assert.equal((await lastSent('highlightCreate')).anchor.quote.exact, 'Autonomy');
     console.log('PASS keyboard toolbar access / Escape keeps selection / Enter activates');
+
+    // Side panel actions arrive from the service worker: jump, nearby text, turn counts.
+    const deliver = (message, sender = { id: 'test' }) =>
+      page.evaluate(
+        ([message, sender]) =>
+          new Promise((resolve) => {
+            for (const fn of chrome.runtime.listeners) fn(message, sender, resolve);
+            setTimeout(() => resolve('no reply'), 300);
+          }),
+        [message, sender],
+      );
+    await page.evaluate(() => window.scrollTo(0, 0));
+    assert.deepEqual(
+      await deliver({ type: 'tabgentHighlight', action: 'jump', highlightId: 'h100' }),
+      { found: true },
+    );
+    assert.equal(await page.evaluate(() => CSS.highlights.get('tabgent-highlight-active').size), 1);
+    assert.deepEqual(
+      await deliver({ type: 'tabgentHighlight', action: 'jump', highlightId: 'h404' }),
+      { found: false },
+    );
+    const nearby = await deliver({
+      type: 'tabgentHighlight',
+      action: 'context',
+      highlightId: 'h100',
+    });
+    assert(nearby.after.startsWith(' that should be restored'));
+    assert.equal(
+      await deliver(
+        { type: 'tabgentHighlight', action: 'jump', highlightId: 'h100' },
+        { id: 'test', tab: { id: 1 } },
+      ),
+      'no reply',
+      'Messages from pages are ignored',
+    );
+    await page.evaluate(() => (vault.highlights.find((h) => h.id === 'h101').turnCount = 3));
+    await deliver({ type: 'tabgentHighlight', action: 'refresh' });
+    await page.waitForTimeout(100);
+    const lazy = await page.evaluate(() => {
+      const node = [...document.querySelectorAll('p')].find((p) =>
+          p.textContent.startsWith('Lazy'),
+        ).firstChild,
+        range = document.createRange();
+      range.setStart(node, 0);
+      range.setEnd(node, 4);
+      const r = range.getBoundingClientRect();
+      return { x: r.left + 5, y: r.top + r.height / 2 };
+    });
+    await page.mouse.click(lazy.x, lazy.y);
+    await page.waitForFunction(() => !ui.querySelectorAll('.bar')[1].hidden);
+    assert.equal(
+      await page.evaluate(() => ui.querySelector('[data-action="discuss"]').textContent),
+      'highlightOpen',
+      'Saved turns switch Ask AI to Open discussion without a reload',
+    );
+    await page.keyboard.press('Escape');
+    console.log('PASS side panel jump / nearby text / refreshed discussion state');
 
     await page.evaluate(() => (document.body.style.paddingBottom = '2000px'));
     await drag('#other', 'paragraph for');

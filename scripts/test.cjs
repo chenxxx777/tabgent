@@ -8,6 +8,8 @@ for (const file of [
   'native-disconnect.mjs',
   'vault-client.mjs',
   'highlight-routing.mjs',
+  'reading.mjs',
+  'reading-routing.mjs',
   'attachments.py',
   'local-files.py',
   'vault.py',
