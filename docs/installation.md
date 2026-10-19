@@ -85,14 +85,14 @@ not change the Tabgent installation path. `Install.command` opens
 
 ## Troubleshooting
 
-| Symptom                                                 | What to check                                                                                                                        |
-| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| The setup screen asks for the connector                 | Run the installer and reload the extension. The extension and native-host registration must use the same extension ID.               |
-| Codex is installed but cannot start                     | Check app-server compatibility and update Codex.                                                                                     |
-| Sign-in is requested                                    | Complete Codex sign-in. The extension checks for the updated account state; use Retry if needed.                                     |
-| The sidebar is closed on a new tab                      | Click the toolbar icon to reopen the sidebar.                                                                                        |
-| A file cannot be read                                   | Check its size and format. Scanned PDFs need OCR elsewhere; this connector does not extract text from every binary file.             |
-| A conversation is missing from the desktop project list | Add `~/.codex/projects/tabgent` as a project directory in the desktop app. Shared history remains in the Codex home. |
+| Symptom                                                 | What to check                                                                                                            |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| The setup screen asks for the connector                 | Run the installer and reload the extension. The extension and native-host registration must use the same extension ID.   |
+| Codex is installed but cannot start                     | Check app-server compatibility and update Codex.                                                                         |
+| Sign-in is requested                                    | Complete Codex sign-in. The extension checks for the updated account state; use Retry if needed.                         |
+| The sidebar is closed on a new tab                      | Click the toolbar icon to reopen the sidebar.                                                                            |
+| A file cannot be read                                   | Check its size and format. Scanned PDFs need OCR elsewhere; this connector does not extract text from every binary file. |
+| A conversation is missing from the desktop project list | Add `~/.codex/projects/tabgent` as a project directory in the desktop app. Shared history remains in the Codex home.     |
 
 ## Uninstall
 

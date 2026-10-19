@@ -1,10 +1,7 @@
 {
   "capturedAt": "2026-10-07T10:19:05.320Z",
   "model": "gpt-6-astra",
-  "sources": [
-    "https://www.zotero.org/storage",
-    "https://www.zotero.org/support/sync"
-  ],
+  "sources": ["https://www.zotero.org/storage", "https://www.zotero.org/support/sync"],
   "resultUrl": "https://www.zotero.org/storage",
   "prompt": "阅读已打开的两份 Zotero 官方页面。我需要和研究小组共享 1 GB 的 PDF。用小表格比较 Zotero Storage 与 WebDAV：是否支持群组文件、空间由谁提供、相关费用。仅根据这两个页面给出建议，不要购买。用中文简洁回答。",
   "answers": [

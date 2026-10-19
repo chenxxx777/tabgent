@@ -1,9 +1,7 @@
 {
   "capturedAt": "2026-10-07T10:22:31.862Z",
   "model": "gpt-6-astra",
-  "sources": [
-    "https://arxiv.org/pdf/1706.03762v7"
-  ],
+  "sources": ["https://arxiv.org/pdf/1706.03762v7"],
   "resultUrl": "chrome-extension://lfbgkeagkfmndclpgmipadggnkoimkee/pdf/viewer.html?url=https://arxiv.org/pdf/1706.03762v7",
   "prompt": "请阅读这篇论文第 3 页和图 1，用中文通俗解释编码器、解码器各做什么，为什么解码器要使用掩码注意力。高亮第 3 页选中的原文，回答简洁一些。",
   "answers": [

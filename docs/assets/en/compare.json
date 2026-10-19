@@ -1,10 +1,7 @@
 {
   "capturedAt": "2026-10-07T10:18:45.106Z",
   "model": "gpt-6-astra",
-  "sources": [
-    "https://www.zotero.org/storage",
-    "https://www.zotero.org/support/sync"
-  ],
+  "sources": ["https://www.zotero.org/storage", "https://www.zotero.org/support/sync"],
   "resultUrl": "https://www.zotero.org/storage",
   "prompt": "Read both open Zotero pages. I need to share 1 GB of PDFs with a research group. Compare Zotero Storage and WebDAV in a small table: group-file support, who supplies storage, and relevant costs. Recommend an option based only on these pages. Do not purchase anything. Answer in English, under 150 words.",
   "answers": [
