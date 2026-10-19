@@ -1045,6 +1045,9 @@ export function saveScopePreference(){}
         assert((await page.locator('.worklog').innerText()).includes('Checking the page'));
         // Desktop defaults to queueing; Steer belongs to the queued-message strip.
         await page.locator('#prompt').fill('Focus on the introduction');
+        // The composer ignores Enter until the previous send is acknowledged, as its disabled
+        // send button shows; the fixture answers on a timer, so wait instead of racing it.
+        await page.waitForFunction(() => !document.querySelector('#send').disabled);
         await page.keyboard.press('Enter');
         await page.locator('.followup-text').waitFor();
         assert.equal(
@@ -1157,6 +1160,7 @@ export function saveScopePreference(){}
         await page.getByRole('button', { name: 'Queued message actions', exact: true }).click();
         await page.getByRole('button', { name: 'Turn on queueing', exact: true }).click();
         await page.locator('#prompt').fill('Shortcut steer');
+        await page.waitForFunction(() => !document.querySelector('#send').disabled);
         await page.locator('#prompt').press('Control+Enter');
         await page.waitForFunction(() =>
           setupTest.requests.some(

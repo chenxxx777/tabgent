@@ -91,11 +91,6 @@ restriction on native Codex tools. The attachment reader only accepts files
 under the upload directory, and the reading-vault tool only reads the notes Tabgent
 writes in the configured ReadingVault folder.
 
-## Reporting a concern
-
-See [SECURITY.md](../SECURITY.md). Do not include credentials, private page contents,
-or unredacted conversation logs in public issues.
-
 PDF.js renders documents locally in an extension page. PDF scripts and automatic
 alt-text model downloads are disabled. Opening a PDF alone does not send it to
 Codex; submitting a quote or asking Agent to read it supplies that context.
@@ -114,3 +109,8 @@ alone does not send it to Codex. Reading positions and reader settings stay in C
 extension storage.
 
 Webpage resources requested by the user are saved through Chrome Downloads, using browser authentication where applicable. Suggested filenames are placed under `Downloads/Tabgent`; Chrome may prompt or block a download according to its settings. Files are never automatically opened. Local file links in assistant replies can be opened with the default application or revealed in Finder when clicked.
+
+## Reporting a concern
+
+See [SECURITY.md](../SECURITY.md). Do not include credentials, private page contents,
+or unredacted conversation logs in public issues.

@@ -4,7 +4,7 @@
 
 Start with a page you already use and tell Tabgent what you need. These examples cover cooking, days out, documents and website tasks. Adapt the questions to your own plans.
 
-[Real examples](#cook-for-your-household) · [PDFs](#work-with-pdfs) · [Attachments and page context](#give-tabgent-the-right-context) · [Chat history](#keep-your-chats-connected) · [Task controls](#guide-a-task-as-it-runs) · [Settings and export](#make-it-fit-your-work)
+[Real examples](#cook-for-your-household) · [PDFs](#work-with-pdfs) · [Reading notes](#read-and-keep-notes) · [Attachments and page context](#give-tabgent-the-right-context) · [Chat history](#keep-your-chats-connected) · [Task controls](#guide-a-task-as-it-runs) · [Settings and export](#make-it-fit-your-work)
 
 ## Cook for your household
 
@@ -46,7 +46,7 @@ Ask Tabgent:
 
 > Read page 3 of this paper, including Figure 1. Explain the encoder and decoder in plain English, and why the decoder has masked attention. Highlight the selected passage on page 3. Keep the explanation under 130 words.
 
-Select PDF text to ask about a specific passage. After annotating, use the viewer’s download button to keep your edits. Scanned documents may not have selectable text. You can switch to Chrome’s viewer if a PDF will not open, but precise highlighting needs Tabgent’s PDF viewer. Uploading an attachment lets you discuss it; it does not automatically open the annotation viewer. The paper belongs to its original authors.
+Select PDF text to ask about a specific passage. Passages you mark with Tabgent's **Highlight** or **Ask AI** toolbar are saved to your [reading notes](#read-and-keep-notes). Highlights, comments and edits made with the viewer's own annotation tools are kept only in a downloaded copy: after annotating, use the viewer’s download button to keep them. Scanned documents may not have selectable text. You can switch to Chrome’s viewer if a PDF will not open, but precise highlighting needs Tabgent’s PDF viewer. Uploading an attachment lets you discuss it; it does not automatically open the annotation viewer. The paper belongs to its original authors.
 
 ### Link to a passage
 
@@ -93,6 +93,33 @@ Source: [arXiv Advanced Search](https://arxiv.org/search/advanced)
 Ask Tabgent:
 
 > Use this arXiv search form to find the original 2020 paper whose title contains Retrieval-Augmented Generation. Set the title field and the year, then run the search. Report the matching title and link in English. Do not use another search service.
+
+## Read and keep notes
+
+Tabgent saves your highlights and discussions as you read webpages, PDFs and EPUB books. They are Markdown files on your Mac, so a later reading, or a question about another document, can build on them.
+
+**Highlight a passage.** Select text on a webpage, in Tabgent's PDF viewer or in the EPUB reader. A small toolbar appears beside the selection:
+
+- **Highlight** saves the passage and marks it in soft yellow.
+- **Ask AI** saves it too, opens the sidebar with the passage quoted, and starts a conversation about that highlight. Type a question, then keep asking follow-ups.
+
+Click a highlighted passage to ask about it, open its discussion, or **Delete** it. Highlights are saved even when Codex is not connected, and they reappear when you reopen the page, PDF or book.
+
+**What Codex knows about the passage.** With each message, Tabgent tells Codex which document you are reading, the highlighted passage and its location, the text around it, and earlier saved notes on that highlight. Codex is asked to answer around the source text, to keep the author's views apart from its own inferences, and to point to the location it refers to.
+
+**Pick up where you left off.** Each highlight has its own conversation. Click the passage and choose **Open discussion** to reopen it with its earlier questions and answers and keep going, also after restarting Chrome. **Page chats** in the sidebar also lists the page's highlights: click one to scroll to it, or open its discussion from there.
+
+**Ask about the whole document.** Ask without selecting anything to discuss the current page, PDF or book. The button beside the message box shows where the conversation is saved: a highlight, **Page notes** or **Not saved**. Open it to turn **Save to reading notes** on or off. It starts on when the document already has notes. Conversations about a highlight are always saved.
+
+**Your notes folder.** Notes go to `~/ReadingVault` unless you choose another folder in the same menu; notes already saved are not moved. Every document has its own folder: webpages under `Articles/`, PDFs and EPUB books under `Books/`. Its `highlights.md` starts with the title and source, then lists each highlight with its location (the section heading, page or chapter), the time, the quoted passage and the conversation beneath it. Questions about the whole document are kept under **文档对话**. The field labels in the file are currently in Chinese. `anchors.json` holds the positions used to restore highlights. Open the files in Obsidian, VS Code or any editor; text you write outside Tabgent's marked blocks is kept.
+
+**Ask about earlier reading.** Ask, for example, “Have I read anything before that makes a similar point?” Codex searches your notes folder with a read-only tool that needs no approval, then names the document, highlight and file it used, or says that it found nothing relevant. The tool reads only the note files Tabgent writes and cannot change them. When commands are allowed, Codex may also search the folder with shell commands; those follow your permission mode and are not limited to Tabgent's note files. It matches keywords, so questions that use words from your notes work best.
+
+**Reading more of the source.** Codex reads more text only when a question needs it: a PDF page you ask about, or an EPUB chapter from the chapter text saved with the book.
+
+**EPUB books.** Right-click the Tabgent toolbar button, choose **Open EPUB reader**, then choose or drop an EPUB file. The book is copied into your notes folder with one Markdown file of text per chapter. It is listed in the reader for reopening at your last position. The reader has contents and highlights lists, font size controls, and page or scroll layout. Scripts in the book, and remote images, fonts and styles, are blocked.
+
+**Limits.** Webpage highlights work on the top-level page, not inside frames; reload tabs that were open before Tabgent was installed or updated. PDF highlights work in Tabgent's PDF viewer, which opens online (HTTP or HTTPS) PDFs with selectable text; local PDF files open in Chrome's own viewer without highlights, and PDFs are not copied into your notes folder. Fixed-layout EPUB books save highlights without displaying them. When a highlighted passage can no longer be found, Tabgent keeps the note and marks it as not found instead of highlighting other text; it cannot be re-attached yet. See [Privacy & permissions](privacy.md) for what is stored and sent.
 
 ## Give Tabgent the right context
 
