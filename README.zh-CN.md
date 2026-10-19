@@ -155,7 +155,7 @@ python3 extension/native/install.py
 - **选择助手可以使用的窗口：** 当前窗口或所有窗口。这项设置只限制 Tabgent 对浏览器的操作；Codex 的其他工具和已连接服务不受此设置限制。
 - **连接本机 Codex：** Tabgent 连接 Mac 上已安装的 Codex，没有单独处理会话的 Tabgent 云端服务。
 - **对话内容会发送到 Codex 服务：** 为了回答问题或执行任务，你的消息、提供的网页内容及使用的附件会发送到你配置的 Codex 服务，并非只在这台电脑上处理。
-- **阅读笔记保存在本地文件夹：** 高亮、已保存的讨论和打开过的 EPUB 电子书都存放在你的 ReadingVault 文件夹中，Tabgent 不会上传这些内容。Tabgent 的阅读库工具只读取 Tabgent 在其中写入的笔记文件；Codex 执行的命令遵循你选择的权限模式，不受此限制。Codex 读取的内容会像其他对话内容一样发送到你的 Codex 服务。
+- **阅读笔记保存在本地文件夹：** 高亮、已保存的讨论和打开过的 EPUB 电子书都存放在你的 ReadingVault 文件夹中，Tabgent 不会上传这些内容。Tabgent 的 `reading_vault` 工具只读取 Tabgent 在其中写入的笔记文件；Codex 自身的命令遵循你选择的权限模式，不限于这些文件。读取的内容会像其他对话内容一样发送到你的 Codex 服务。
 
 数据流、存储位置和 Chrome 权限详见[隐私与权限](docs/privacy.md)。安全问题请按 [SECURITY.md](SECURITY.md) 中的方式报告。
 
