@@ -165,3 +165,15 @@ export async function takeForkInput() {
   if (result.error) throw Error(result.error);
   return result.input;
 }
+
+// Reading notes for this view's conversation and companion page (reading-companion.js).
+export async function readingRequest(type, params = {}) {
+  const result = await chrome.runtime.sendMessage({
+    type,
+    conversationKey: state.conversationKey,
+    companionTabId: state.companionTabId,
+    ...params,
+  });
+  if (result?.error) throw Error(result.error);
+  return result;
+}
