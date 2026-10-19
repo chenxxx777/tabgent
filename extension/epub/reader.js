@@ -58,6 +58,7 @@ addEventListener('drop', (event) => {
   void openFile(event.dataTransfer?.files?.[0]);
 });
 $('#library').onclick = () => {
+  opening++;
   closeBook();
   history.replaceState(null, '', location.pathname);
   void showLibrary();
@@ -102,37 +103,48 @@ async function showLibrary() {
   }
 }
 
+// Each open (or a return to the library) supersedes the ones still loading, which stop
+// at their next step so two books never share the reader state or an upload.
+let opening = 0;
+
 async function openFile(file) {
   if (!file) return;
+  const token = ++opening;
   const bytes = new Uint8Array(await file.arrayBuffer());
+  if (token !== opening) return;
   if (bytes[0] !== 0x50 || bytes[1] !== 0x4b) return toast(t('epubNotEpub'));
   const sha256 = await library.sha256Hex(bytes);
+  if (token !== opening) return;
   closeBook();
   history.replaceState(null, '', location.pathname);
-  if (!(await showBook(file, sha256))) return;
-  void importIntoVault(bytes, file.name);
+  if (!(await showBook(file, sha256, token))) return;
+  void importIntoVault(bytes, file.name, sha256);
 }
 
 async function openFromVault(documentId) {
+  const token = ++opening;
   status(loadTimeData.getStringF('epubLoadingVault', ''));
   try {
     const loaded = await library.loadBook(documentId, (fraction) =>
       status(loadTimeData.getStringF('epubLoadingVault', percent(fraction))),
     );
+    if (token !== opening) return;
+    // Known before the first chapter renders, so labels match the vault's chapter files.
     state.source = loaded.source;
     state.documentId = loaded.document.id;
     status('');
-    await showBook(loaded.file, loaded.sha256);
+    await showBook(loaded.file, loaded.sha256, token);
   } catch (error) {
+    if (token !== opening) return;
     status('');
     failure('epubOpenFailed', error);
     await showLibrary();
   }
 }
 
-async function importIntoVault(bytes, name) {
-  const sha256 = state.sha256;
+async function importIntoVault(bytes, name, sha256) {
   const current = () => state.sha256 === sha256;
+  if (!current()) return;
   status(loadTimeData.getStringF('epubSaving', '0%'));
   try {
     const result = await library.importBook({
@@ -159,16 +171,18 @@ async function importIntoVault(bytes, name) {
 
 // Book view.
 
-async function showBook(file, sha256) {
+async function showBook(file, sha256, token) {
   status(t('epubLoading'));
   let book;
   try {
     book = await openBook(file);
   } catch (error) {
+    if (token !== opening) return false;
     status('');
     failure('epubOpenFailed', error);
     return false;
   }
+  if (token !== opening) return false;
   state.book = book;
   state.sha256 = sha256;
   state.title = label(book.metadata?.title) || file.name.replace(/\.epub$/i, '');
@@ -182,34 +196,39 @@ async function showBook(file, sha256) {
   const view = document.createElement('foliate-view');
   state.view = view;
   $('#book').replaceChildren(view);
-  view.addEventListener('load', onSectionLoad);
-  view.addEventListener('relocate', onRelocate);
+  // A closed view can still finish loading; only the current view updates the reader.
+  const on = (name, handler) =>
+    view.addEventListener(name, (event) => state.view === view && handler(event));
+  on('load', onSectionLoad);
+  on('relocate', onRelocate);
   // foliate attaches the chapter's overlayer just after this event; paint a microtask later.
-  view.addEventListener('create-overlay', ({ detail }) =>
-    queueMicrotask(() => paintSection(detail.index)),
-  );
-  view.addEventListener('draw-annotation', ({ detail }) =>
-    detail.draw(Overlayer.highlight, { color: COLOR }),
-  );
-  view.addEventListener('show-annotation', ({ detail }) => showHighlightMenu(detail));
+  on('create-overlay', ({ detail }) => queueMicrotask(() => paintSection(detail.index)));
+  on('draw-annotation', ({ detail }) => detail.draw(Overlayer.highlight, { color: COLOR }));
+  on('show-annotation', ({ detail }) => showHighlightMenu(detail));
   view.addEventListener('external-link', (event) => {
     event.preventDefault();
     const href = event.detail.a.getAttribute('href') || '';
-    if (/^(?:https?|mailto):/i.test(href)) open(href, '_blank', 'noopener');
+    if (state.view === view && /^(?:https?|mailto):/i.test(href)) open(href, '_blank', 'noopener');
   });
-  const highlights = loadHighlights();
+  const highlights = loadHighlights(view);
   await view.open(book);
+  if (state.view !== view) return false;
   applySettings();
   buildToc(book.toc || []);
   const saved = await library.position(sha256);
   await highlights;
+  if (state.view !== view) return false;
   await view.init({ lastLocation: saved?.cfi, showTextStart: !saved?.cfi });
+  if (state.view !== view) return false;
   status('');
   void verifyAll();
   return true;
 }
 
 function closeBook() {
+  // The tab's conversation no longer shows this book's highlight status.
+  if (state.sha256)
+    void library.send({ type: 'epubHighlightStatus', sha256: null }).catch(() => {});
   hideToolbar();
   $('#highlightMenu').hidePopover?.();
   state.view?.close();
@@ -351,6 +370,13 @@ function chapterOf(index, doc) {
 }
 const chapterFile = (href) =>
   state.source?.chapters?.find((chapter) => chapter.href === href)?.file || '';
+// The absolute path of a chapter's Markdown file, as the service worker builds for Ask AI.
+const chapterPath = (href) => {
+  const file = chapterFile(href);
+  return file && state.source?.chaptersPath
+    ? state.source.chaptersPath + file.slice('chapters'.length)
+    : '';
+};
 
 function renderHighlightList() {
   const list = $('#highlightList');
@@ -412,7 +438,7 @@ function onRelocate({ detail }) {
 
 // Highlights: restore, paint, create and act on them.
 
-async function loadHighlights() {
+async function loadHighlights(view) {
   try {
     const result = await library.send({
       type: 'epubResolve',
@@ -420,6 +446,7 @@ async function loadHighlights() {
       title: state.title,
       meta: state.meta,
     });
+    if (state.view !== view) return;
     if (result.document?.createdAt) state.documentId = result.document.id;
     for (const record of result.highlights)
       state.highlights.set(record.id, { record, status: 'pending', cfi: null });
@@ -549,7 +576,15 @@ function captureSelection(doc, index) {
       truncated: text.length > 20000,
       title: state.title,
       selectionId,
-      locator: { kind: 'epub', anchor: described.anchor, capturedAt: new Date().toISOString() },
+      locator: {
+        kind: 'epub',
+        anchor: described.anchor,
+        documentId: state.documentId,
+        ...(chapterPath(described.anchor.chapter.href)
+          ? { chapterFile: chapterPath(described.anchor.chapter.href) }
+          : {}),
+        capturedAt: new Date().toISOString(),
+      },
     })
     .catch(() => {});
 }

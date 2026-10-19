@@ -1,7 +1,9 @@
 """Builds a small, synthetic EPUB 3 book for tests. Deterministic: the same bytes (and
-SHA-256) on every run. Usage: python3 epub_fixture.py <output.epub>"""
+SHA-256) on every run. Usage: python3 epub_fixture.py <output.epub> [title] [noise characters]
+"""
 
 import io
+import os
 from pathlib import Path
 import sys
 import zipfile
@@ -123,4 +125,11 @@ def build(chapters=CHAPTERS, title=TITLE, author=AUTHOR):
 
 
 if __name__ == "__main__":
-    Path(sys.argv[1]).write_bytes(build())
+    # Optional: a title, and a number of random hex characters that make the book large.
+    title = sys.argv[2] if len(sys.argv) > 2 else TITLE
+    noise = int(sys.argv[3]) if len(sys.argv) > 3 else 0
+    chapters = CHAPTERS
+    if noise:
+        filler = "<p>" + os.urandom(noise // 2).hex() + "</p>"
+        chapters = [*CHAPTERS, ("noise.xhtml", "Noise", filler)]
+    Path(sys.argv[1]).write_bytes(build(chapters, title))

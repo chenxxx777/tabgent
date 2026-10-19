@@ -311,6 +311,8 @@ assert.deepEqual(messages.filter((m) => m.name === 'codex-highlight-status').at(
   anchored: 1,
   unanchored: ['h009'],
 });
+await call({ type: 'epubHighlightStatus', sha256: null });
+assert.equal(messages.filter((m) => m.name === 'codex-highlight-status').at(-1).value, null);
 console.log(
   'PASS Delete and Ask on saved highlights are scoped to the book; status reaches the chat',
 );

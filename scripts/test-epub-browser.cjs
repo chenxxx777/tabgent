@@ -28,10 +28,15 @@ async function until(check, ms = 10000) {
     home = path.join(temp, 'home'),
     codexHome = path.join(temp, 'codex'),
     vault = path.join(home, 'ReadingVault'),
-    book = path.join(temp, 'small-book.epub');
+    book = path.join(temp, 'small-book.epub'),
+    second = path.join(temp, 'second-book.epub'),
+    large = path.join(temp, 'large-book.epub');
   fs.mkdirSync(home);
-  const built = spawnSync(python, [path.join(extension, 'tests/fixtures/epub_fixture.py'), book]);
-  assert.equal(built.status, 0, String(built.stderr));
+  const fixture = path.join(extension, 'tests/fixtures/epub_fixture.py');
+  for (const args of [[book], [second, 'Second Book'], [large, 'Large Book', '40000000']]) {
+    const built = spawnSync(python, [fixture, ...args]);
+    assert.equal(built.status, 0, String(built.stderr));
+  }
   const digest = crypto.createHash('sha256').update(fs.readFileSync(book)).digest('hex');
   let context;
   const requests = [],
@@ -279,6 +284,19 @@ async function until(check, ms = 10000) {
     assert(await until(async () => (await chapterTitle()) === 'Chapter Two: Repetition'));
     await page.click('#contentsButton');
     await select('独立于他人');
+    // A plain selection already names the book and its chapter file, as Ask AI does.
+    const plain = await until(() =>
+      worker.evaluate(async (tabId) => {
+        const { conversations = [] } = await chrome.storage.session.get('conversations');
+        const s = conversations.find(([, s]) => s.tabId === tabId)?.[1];
+        return s?.selection?.text === '独立于他人' && s.selection;
+      }, tabId),
+    );
+    assert.equal(plain.locator.documentId, documentId);
+    assert.equal(
+      plain.locator.chapterFile,
+      path.join(folder, 'chapters/02-chapter-two-repetition.md'),
+    );
     await page.click('#highlightAdd');
     await until(() => saved().highlights.length === 3);
     assert.equal(saved().highlights[2].location, 'Chapter Two: Repetition');
@@ -395,6 +413,27 @@ async function until(check, ms = 10000) {
       'small-book.epub',
     );
     console.log('PASS drag and drop opens a book; the same file maps to the same vault book');
+
+    // A newer open supersedes one still loading: the books never mix in state or uploads.
+    await openReader();
+    await page.waitForSelector('#books button');
+    await page.setInputFiles('#file', large);
+    await page.evaluate(async (base64) => {
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([Uint8Array.fromBase64(base64)], 'second-book.epub'));
+      dispatchEvent(new DragEvent('drop', { dataTransfer: transfer, cancelable: true }));
+    }, fs.readFileSync(second).toString('base64'));
+    assert(await text('#status', 'epubSaved'), 'The second book is imported');
+    await wait(3000); // Let a superseded open reach its next step.
+    assert.equal(await page.title(), 'Second Book');
+    assert.equal(await page.locator('#toc button').count(), 4);
+    const books = fs.readdirSync(path.join(vault, 'Books')).sort();
+    assert.equal(books.length, 2, books.join());
+    assert(books.includes(documentId) && books.some((name) => name.startsWith('book-second')));
+    assert.match(page.url(), /\?book=book-second-book-/);
+    const uploads = path.join(vault, '.tabgent/uploads');
+    assert.deepEqual(fs.existsSync(uploads) ? fs.readdirSync(uploads) : [], []);
+    console.log('PASS a second open supersedes a loading book; only that book is shown and saved');
 
     assert(!logs.some((line) => line.startsWith('pageerror')), logs.join('\n'));
   } catch (error) {

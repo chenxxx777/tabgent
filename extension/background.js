@@ -866,6 +866,14 @@ async function epubMessage(msg, sender) {
       { documentId: pageText(msg.documentId, 300), offset: msg.offset, length: msg.length },
       { timeout: 60000 },
     );
+  if (msg.type === 'epubHighlightStatus' && msg.sha256 == null) {
+    // The reader left its book: the tab shows no highlight status any more.
+    await loaded;
+    highlightStatus.delete(tabId);
+    for (const s of sessions.values())
+      if (s.tabId === tabId) for (const p of s.ports) event(p, 'codex-highlight-status', null);
+    return {};
+  }
   const url = bookUrl(msg.sha256);
   if (!url) throw new VaultError('invalid_params', 'Invalid book');
   const title = pageText(msg.title, 500);
