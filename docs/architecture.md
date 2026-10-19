@@ -20,6 +20,9 @@ flowchart LR
 | `extension/highlight-content.js`  | Selection toolbar, saved webpage highlights, and highlight actions.         |
 | `extension/web-anchor.js`         | Normalized page text, web anchors, and verified anchor restoration.         |
 | `extension/vault-client.js`       | Reading-vault requests over the native port, with ids and timeouts.         |
+| `extension/pdf/viewer.js`         | PDF.js wrapper: loading, fallback, live quotes, and Agent PDF commands.     |
+| `extension/pdf/pdf-highlights.js` | Selection toolbar, saved PDF highlights, and highlight actions in PDF.js.   |
+| `extension/pdf/pdf-anchor.js`     | PDF page text, PDF anchors, and verified anchor restoration.                |
 | `extension/session-config.js`     | Browser tool schema and agent instructions.                                 |
 | `extension/ui/`                   | Chat rendering, composer, attachments, previews, approvals, and onboarding. |
 | `extension/_locales/en/`          | English UI strings; i18n structure is retained.                             |
@@ -47,9 +50,11 @@ Online PDF documents in top-level tabs are redirected to a bundled PDF.js viewer
 using a response-header declarative rule. The source URL and Chrome tab ID remain
 the conversation context. PDF.js runs locally with PDF JavaScript disabled. It
 provides text-layer selections with page numbers/PDF coordinates, page reads,
-exact text selection, highlights, and annotated PDF downloads. The viewer's
-native annotation tools also support manual comments and edits. Changes must be
-downloaded to save a copy; they are not automatically persisted across reloads.
+exact text selection, highlights, and annotated PDF downloads. Highlights made with
+Tabgent's selection toolbar are saved to the ReadingVault (see
+[PDF highlights](#pdf-highlights)). The viewer's native annotation tools also support
+manual highlights, comments and edits. Those PDF.js changes must be downloaded to
+save a copy; they are not automatically persisted across reloads.
 
 PDF viewer ports are validated by extension URL, tab, frame, and document ID;
 Chrome hides extension documents from `webNavigation.getFrame`. Browser commands
@@ -81,8 +86,8 @@ the Codex app-server, so highlights save while Codex is offline or signed out.
 `vault/configure` stores a chosen folder in `$CODEX_HOME/projects/tabgent/vault.json`;
 otherwise the default folder is created on the first write. Each write scaffolds
 `AGENTS.md` (layout, `rg` retrieval hints, and reading rules for Codex), `Articles/`,
-and `Books/`. Web pages live in `Articles/article-<title slug>-<URL hash>/`; PDF and
-EPUB documents will use `Books/`. URLs are matched without their fragment, as in page
+and `Books/`. Web pages live in `Articles/article-<title slug>-<URL hash>/` and PDF
+documents in `Books/paper-<title slug>-<URL hash>/`; EPUB documents will use `Books/`. URLs are matched without their fragment, as in page
 history, through `.tabgent/index.json`, which is rebuilt from the folders if missing.
 
 `anchors.json` is the machine record: anchors, highlight IDs (`h001`, never reused),
@@ -148,9 +153,66 @@ listener's first await: a microtask, an extension API await, or a timer loses th
 gesture. When the panel cannot open, the page asks the user to click the toolbar
 button; the quote is already waiting in the conversation.
 
-Highlights cover the top frame's light DOM. Iframes, shadow DOM, PDF and EPUB
-highlights are not drawn. Tabs opened before the extension was installed or reloaded
+Highlights cover the top frame's light DOM. Iframes, shadow DOM, and EPUB highlights
+are not drawn; PDF highlights are described next. Tabs opened before the extension was installed or reloaded
 need a reload to show highlights.
+
+## PDF highlights
+
+The bundled PDF.js viewer has the same reading layer as webpages. `pdf-highlights.js`
+runs in the viewer page and works inside the PDF.js frame. A text selection shows
+**Highlight** and **Ask AI**; a click on a saved highlight shows **Ask AI** (or
+**Open discussion**) and **Delete**. Strings, colors, keyboard behavior, and vault
+messages are the webpage ones. `highlight.css` is linked, because the PDF.js page CSP
+(`style-src 'self'`) blocks inline styles. The PDF.js floating highlight button is
+turned off so there is one **Highlight** action; the PDF.js highlight tool still adds
+annotations for `savePdf`.
+
+Highlights are painted with the CSS Custom Highlight API on PDF.js text layers. They
+are repainted when PDF.js renders a text layer again or splits it for find-bar
+matches. The PDF bytes and the PDF.js annotation storage are never changed:
+annotated downloads contain only PDF.js edits, and a saved highlight does not make
+the native-viewer fallback warn about unsaved changes.
+
+A page's text is its text-layer text, normalized like webpage text: whitespace runs
+and line ends become one space. The text layer and
+`getTextContent({ includeMarkedContent: true, disableNormalization: true })` give the
+same text, so pages that are not rendered can still be searched. A PDF anchor is:
+
+```text
+{ kind: "pdf", page, endPage?, quote: { exact, prefix, suffix },
+  textLayer: { start, end }, rects: [{ page, pdf: [x1, y1, x2, y2] }] }
+```
+
+`page` is one-based. `endPage` is present when a highlight crosses a page break; the
+quote then joins the pages' text with one space, and `textLayer` offsets index that
+joined text. `rects` are PDF user-space points merged per line. They are kept for
+reference and are not used to restore. The location label is the localized page,
+such as `p. 12` or `pp. 12–13`.
+
+Restoration accepts the saved offsets on the saved page only when the quote and its
+full context match. Next, the saved page is searched for the quote with the webpage
+scoring (`matchQuote` in `web-anchor.js`). Only if that fails is the whole document
+searched, which finds text that moved to another page, for example in a revised PDF at
+the same URL. Identical passages are decided only when one is clearly closer to the
+saved position. Anything less certain stays unanchored and unpainted, and is reported
+as `codex-highlight-status`.
+
+The vault document is the original PDF URL without its fragment. Its title is the PDF
+metadata title, chosen as PDF.js does, or the file name; `meta` carries the PDF author
+and the host name. The service worker accepts PDF highlight messages only from the
+current viewer document of the tab, the same check as PDF selections, and sends
+`kind: "pdf"` with an anchor reshaped by `cleanPdfAnchor`.
+
+**Ask AI** follows the same gesture rule as webpages. The quote carries `highlight`,
+`context` with up to 1500 characters before and after (including the previous and
+next page, whose text is loaded in advance so the click never waits), and
+`locator: { kind: "pdf", anchor, page }`. Codex reads PDFs one page at a time with
+`browser read` (`page` and `offset`; the result includes the page count), so a long
+PDF is never sent whole.
+
+The native fallback viewer has no highlights. Scanned pages without a text layer
+cannot be highlighted, and page labels use physical page numbers, not printed ones.
 
 ## Working on the UI
 

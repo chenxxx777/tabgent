@@ -17,6 +17,8 @@ const { chromium } = require('playwright');
     'browser-input.js',
     'agent-pointer.js',
     'i18n.js',
+    'web-anchor.js',
+    'highlight.css',
   ])
     fs.copyFileSync('extension/' + name, ext + '/' + name);
   const manifest = JSON.parse(fs.readFileSync('extension/manifest.json'));

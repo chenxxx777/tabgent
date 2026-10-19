@@ -8,6 +8,8 @@ for (const file of [
   'native-disconnect.mjs',
   'vault-client.mjs',
   'highlight-routing.mjs',
+  'pdf-anchor.mjs',
+  'pdf-highlight-routing.mjs',
   'attachments.py',
   'local-files.py',
   'vault.py',
@@ -21,6 +23,7 @@ for (const file of [
   'web-anchor.cjs',
   'highlight-content.cjs',
   'pdf.cjs',
+  'pdf-highlights.cjs',
   'setup-ui.cjs',
   'math.cjs',
 ]) {

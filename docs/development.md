@@ -57,6 +57,7 @@ These are deliberately excluded from `npm test`:
 | `python3 extension/tests/oauth-preauth.py`   | Installed Codex and network; starts and cancels real OAuth flows without completing sign-in. |
 | `node extension/tests/browser-input.cjs`     | Loaded extension in a dedicated debug browser; manipulates local fixture pages.              |
 | `npm run test:highlights`                    | Playwright Chromium; source connector with temporary profile, HOME, and CODEX_HOME.          |
+| `npm run test:pdf-highlights`                | Same isolation as `test:highlights`; PDF.js highlights, Ask AI, restore, and delete.         |
 
 Start a debug browser with:
 

@@ -92,6 +92,45 @@ export function cleanWebAnchor(anchor) {
   return clean;
 }
 
+// PDF anchors: one-based page (endPage when a highlight crosses pages), the quote from the
+// pages' text-layer text, offsets into that text, and PDF user-space rects.
+export function cleanPdfAnchor(anchor) {
+  const exact = text(anchor?.quote?.exact, 20000);
+  const page = Number.isInteger(anchor?.page) && anchor.page >= 1 ? anchor.page : null;
+  if (anchor?.kind !== 'pdf' || !exact.trim() || !page || page > 1000000) return null;
+  const endPage =
+    Number.isInteger(anchor.endPage) && anchor.endPage > page && anchor.endPage <= page + 50
+      ? anchor.endPage
+      : page;
+  const clean = {
+    kind: 'pdf',
+    page,
+    ...(endPage > page ? { endPage } : {}),
+    quote: {
+      exact,
+      prefix: text(anchor.quote.prefix, 64),
+      suffix: text(anchor.quote.suffix, 64),
+    },
+  };
+  const start = offset(anchor.textLayer?.start),
+    end = offset(anchor.textLayer?.end);
+  if (start !== null && end !== null && end > start) clean.textLayer = { start, end };
+  const rects = (Array.isArray(anchor.rects) ? anchor.rects : [])
+    .slice(0, 200)
+    .filter(
+      (rect) =>
+        Number.isInteger(rect?.page) &&
+        rect.page >= page &&
+        rect.page <= endPage &&
+        Array.isArray(rect.pdf) &&
+        rect.pdf.length === 4 &&
+        rect.pdf.every(Number.isFinite),
+    )
+    .map((rect) => ({ page: rect.page, pdf: rect.pdf.map((n) => Math.round(n * 100) / 100) }));
+  if (rects.length) clean.rects = rects;
+  return clean;
+}
+
 export function cleanPageMeta(meta) {
   const clean = {};
   for (const key of ['author', 'siteName', 'publishedAt']) {
