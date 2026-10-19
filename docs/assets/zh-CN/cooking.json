@@ -1,9 +1,7 @@
 {
   "capturedAt": "2026-10-07T11:06:07.487Z",
   "model": "gpt-6-astra",
-  "sources": [
-    "https://www.bbcgoodfood.com/recipes/easy-pancakes"
-  ],
+  "sources": ["https://www.bbcgoodfood.com/recipes/easy-pancakes"],
   "resultUrl": "https://www.bbcgoodfood.com/recipes/easy-pancakes",
   "prompt": "我只想做6张煎饼。请根据这份食谱把材料用量减半，整理一份简短的材料清单、制作步骤和所需时间。只根据当前食谱，用中文简洁回答。",
   "answers": [

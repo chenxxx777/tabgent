@@ -40,12 +40,12 @@ The workspace is `$CODEX_HOME/projects/tabgent`. On upgrade, the previous
 `browser-agent-connector` directory is moved there and kept as a compatibility
 symlink so existing attachment paths remain valid.
 
-| Location                                                    | Contents                                                                |
-| ----------------------------------------------------------- | ----------------------------------------------------------------------- |
-| `~/Library/Application Support/Tabgent/`                    | Installed connector and, for normal installations, extension files.     |
+| Location                                    | Contents                                                                |
+| ------------------------------------------- | ----------------------------------------------------------------------- |
+| `~/Library/Application Support/Tabgent/`    | Installed connector and, for normal installations, extension files.     |
 | `$CODEX_HOME/projects/tabgent/attachments/` | User-uploaded file copies, each in a generated subdirectory.            |
-| Shared Codex session storage and index                      | Conversation history and project association.                           |
-| Chrome extension session storage                            | Tab bindings, selection drafts, text drafts, and attachment references. |
+| Shared Codex session storage and index      | Conversation history and project association.                           |
+| Chrome extension session storage            | Tab bindings, selection drafts, text drafts, and attachment references. |
 
 Removing an attachment from the composer removes its draft reference. It does not
 delete the saved file. Sent attachments remain available for conversation history.

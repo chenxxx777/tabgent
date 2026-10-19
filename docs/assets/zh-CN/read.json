@@ -1,9 +1,7 @@
 {
   "capturedAt": "2026-10-07T10:22:08.513Z",
   "model": "gpt-6-astra",
-  "sources": [
-    "https://www.zotero.org/support/sync"
-  ],
+  "sources": ["https://www.zotero.org/support/sync"],
   "resultUrl": "https://www.zotero.org/support/sync",
   "prompt": "我在两台电脑上用 Zotero，但第二台电脑没有 PDF。请阅读这份官方文档：数据同步与文件同步有什么区别，300 MB 限额会限制我的文献条目吗？用中文简洁解释，给我三个排查步骤。",
   "answers": [

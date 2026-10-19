@@ -118,7 +118,6 @@ the same thread; IDs remain available in a details menu. Adjacent child notices 
 within a minute collapse into a group. Reconnects and duplicate notifications do not
 duplicate notices.
 
-
 ## Page conversation history
 
 The collapsible Page conversations drawer indexes thread IDs, titles, settings, and
@@ -138,7 +137,6 @@ cloning a chat and injected lineage notes do not qualify. Older index entries ar
 checked against Codex history on first access; empty entries are removed from the
 index, while unavailable records remain hidden for a later retry.
 
-
 ## Per-message browser context
 
 Each Agent view retains its own companion tab, independently of its shared thread.
@@ -150,7 +148,6 @@ page in the composer. Page titles and URLs are treated as untrusted data.
 Every browser action requires an explicit `tabId`, including `context`, `tabs`, and
 `open` (where it identifies the source window's tab). Missing IDs fail validation;
 there is no implicit target. The message's originating tab anchors window scope.
-
 
 Agent-authored Markdown links can carry the exact title `browser:current` or
 `browser:new`. The Agent chooses using task context; the renderer converts the
