@@ -198,9 +198,11 @@ asks before every shell command, including `rg` and `cat`. The connector therefo
 adds a `reading_vault` dynamic tool next to `read_attachment`. The host answers it
 locally on the vault queue: `list` names the documents, `search` ranks lines of
 `highlights.md` and `source.md` by matching keywords, and `read` returns numbered
-lines of a `.md` or `.json` file. Paths must resolve inside the configured vault
-folder (symlinks included) and `.tabgent/` is excluded; the tool cannot write. Shell
-reads still work where the permission mode allows them. The instructions in
+lines of the vault's `AGENTS.md` or a document's `highlights.md`, `source.md` or
+`anchors.json`. The vault folder may be shared, for example with Obsidian or the home
+folder, so no other file is readable. Each file must sit at its exact place under
+`Articles/` or `Books/` with Tabgent's file names and no symlink in between. The tool
+cannot write. Shell reads still work where the permission mode allows them. The instructions in
 `session-config.js` and the vault's `AGENTS.md` describe both.
 
 ## Working on the UI

@@ -16,7 +16,9 @@ context: the document's title, URL and kind, the bound highlight's text and
 location, up to five earlier saved turns about that highlight, and the path of the
 ReadingVault folder. When a question refers to earlier reading, Codex can list,
 search and read the notes in that folder with the read-only `reading_vault` tool,
-without an approval prompt; it cannot read outside the folder or write. Notes it
+without an approval prompt. It reads only the notes Tabgent writes (`AGENTS.md` and
+each document's `highlights.md`, `source.md` and `anchors.json`), never other files
+in or outside the folder, and it cannot write. Notes it
 reads are sent to the model like any other tool result.
 
 Browser content and selection metadata are marked as untrusted context. Do not
@@ -84,8 +86,8 @@ read-only sandbox with on-request approvals; Full access removes the sandbox
 restriction and uses no approval prompts.
 Browser tab/window scope applies to the plugin's browser tool; it is not a scope
 restriction on native Codex tools. The attachment reader only accepts files
-under the upload directory, and the reading-vault tool only reads notes inside the
-configured ReadingVault folder.
+under the upload directory, and the reading-vault tool only reads the notes Tabgent
+writes in the configured ReadingVault folder.
 
 ## Reporting a concern
 
