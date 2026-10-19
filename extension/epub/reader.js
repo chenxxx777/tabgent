@@ -43,7 +43,11 @@ const status = (text) => ($('#status').textContent = text);
 // Library: choose, drop or reopen a vault book.
 
 $('#choose').onclick = () => $('#file').click();
-$('#file').onchange = () => void openFile($('#file').files[0]);
+$('#file').onchange = () => {
+  const file = $('#file').files[0];
+  $('#file').value = ''; // Choosing the same file again still opens it.
+  void openFile(file);
+};
 addEventListener('dragover', (event) => {
   if (![...(event.dataTransfer?.types || [])].includes('Files')) return;
   event.preventDefault();
@@ -59,6 +63,7 @@ addEventListener('drop', (event) => {
 });
 $('#library').onclick = () => {
   opening++;
+  status('');
   closeBook();
   history.replaceState(null, '', location.pathname);
   void showLibrary();
@@ -109,10 +114,12 @@ let opening = 0;
 
 async function openFile(file) {
   if (!file) return;
+  // A file that is not a ZIP archive is rejected without cancelling a book still opening.
+  const head = new Uint8Array(await file.slice(0, 2).arrayBuffer());
+  if (head[0] !== 0x50 || head[1] !== 0x4b) return toast(t('epubNotEpub'));
   const token = ++opening;
   const bytes = new Uint8Array(await file.arrayBuffer());
   if (token !== opening) return;
-  if (bytes[0] !== 0x50 || bytes[1] !== 0x4b) return toast(t('epubNotEpub'));
   const sha256 = await library.sha256Hex(bytes);
   if (token !== opening) return;
   closeBook();
@@ -125,8 +132,10 @@ async function openFromVault(documentId) {
   const token = ++opening;
   status(loadTimeData.getStringF('epubLoadingVault', ''));
   try {
-    const loaded = await library.loadBook(documentId, (fraction) =>
-      status(loadTimeData.getStringF('epubLoadingVault', percent(fraction))),
+    const loaded = await library.loadBook(
+      documentId,
+      (fraction) =>
+        token === opening && status(loadTimeData.getStringF('epubLoadingVault', percent(fraction))),
     );
     if (token !== opening) return;
     // Known before the first chapter renders, so labels match the vault's chapter files.

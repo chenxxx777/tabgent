@@ -435,6 +435,23 @@ async function until(check, ms = 10000) {
     assert.deepEqual(fs.existsSync(uploads) ? fs.readdirSync(uploads) : [], []);
     console.log('PASS a second open supersedes a loading book; only that book is shown and saved');
 
+    // A non-EPUB drop is refused without cancelling a book that is opening, and returning
+    // to the library leaves no loading status behind.
+    await page.setInputFiles('#file', large);
+    await page.evaluate(() => {
+      const transfer = new DataTransfer();
+      transfer.items.add(new File(['plain text'], 'notes.txt'));
+      dispatchEvent(new DragEvent('drop', { dataTransfer: transfer, cancelable: true }));
+    });
+    assert(await text('#toast', 'epubNotEpub'), 'The text file is refused');
+    assert(await until(async () => (await page.title()) === 'Large Book', 20000));
+    await page.click('#library');
+    await page.waitForSelector('#start:not([hidden])');
+    assert.equal(await page.textContent('#status'), '');
+    await wait(1000);
+    assert.equal(await page.textContent('#status'), '', 'A stale import does not report here');
+    console.log('PASS non-EPUB drops keep the opening book; the library shows no stale status');
+
     assert(!logs.some((line) => line.startsWith('pageerror')), logs.join('\n'));
   } catch (error) {
     console.error(logs.join('\n'));
