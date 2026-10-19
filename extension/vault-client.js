@@ -150,3 +150,35 @@ export function documentUrl(url) {
     return '';
   }
 }
+
+// An EPUB is identified by the SHA-256 of its file, so a reopened vault copy or a re-picked
+// file maps to the same vault document, while a different edition is a different book.
+export function bookUrl(sha256) {
+  return typeof sha256 === 'string' && /^[0-9a-f]{64}$/.test(sha256) ? `urn:sha256:${sha256}` : '';
+}
+
+// Reader-supplied EPUB anchors are bounded and reshaped to the contract before reaching the host.
+export function cleanEpubAnchor(anchor) {
+  const exact = text(anchor?.quote?.exact, 20000),
+    cfi = text(anchor?.cfi, 4000);
+  if (anchor?.kind !== 'epub' || !exact.trim() || !/^epubcfi\(.+\)$/s.test(cfi)) return null;
+  const clean = {
+    kind: 'epub',
+    cfi,
+    quote: {
+      exact,
+      prefix: text(anchor.quote.prefix, 64),
+      suffix: text(anchor.quote.suffix, 64),
+    },
+    chapter: {
+      href: text(anchor.chapter?.href, 2000),
+      title: text(anchor.chapter?.title, 500),
+    },
+  };
+  const index = offset(anchor.chapter?.index);
+  if (index !== null) clean.chapter.index = index;
+  const start = offset(anchor.position?.start),
+    end = offset(anchor.position?.end);
+  if (start !== null && end !== null && end > start) clean.position = { start, end };
+  return clean;
+}

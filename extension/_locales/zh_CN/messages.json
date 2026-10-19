@@ -181,5 +181,101 @@
   },
   "highlightTurns": {
     "message": "已保存 $1 条"
+  },
+  "epubOpenReader": {
+    "message": "打开 EPUB 阅读器"
+  },
+  "epubReaderTitle": {
+    "message": "EPUB 阅读器"
+  },
+  "epubDropHint": {
+    "message": "将 EPUB 文件拖到这里，或选择一个文件。它会保存到你的阅读库，之后可以在这里直接重新打开。"
+  },
+  "epubChoose": {
+    "message": "选择 EPUB 文件"
+  },
+  "epubVaultBooks": {
+    "message": "阅读库中的书"
+  },
+  "epubNoBooks": {
+    "message": "还没有书。"
+  },
+  "epubBooksUnavailable": {
+    "message": "无法访问阅读库：$1"
+  },
+  "epubHighlightCount": {
+    "message": "$1 条高亮"
+  },
+  "epubReadPercent": {
+    "message": "已读 $1"
+  },
+  "epubUntitled": {
+    "message": "未命名"
+  },
+  "epubNotEpub": {
+    "message": "请选择 EPUB 文件。"
+  },
+  "epubLoading": {
+    "message": "正在打开…"
+  },
+  "epubLoadingVault": {
+    "message": "正在从阅读库读取… $1"
+  },
+  "epubOpenFailed": {
+    "message": "无法打开这本书：$1"
+  },
+  "epubSaving": {
+    "message": "正在保存到阅读库… $1"
+  },
+  "epubSaved": {
+    "message": "已保存到阅读库"
+  },
+  "epubSaveFailed": {
+    "message": "未保存到阅读库：$1"
+  },
+  "epubContents": {
+    "message": "目录"
+  },
+  "epubHighlights": {
+    "message": "高亮"
+  },
+  "epubNoHighlights": {
+    "message": "这本书还没有高亮。"
+  },
+  "epubUnanchored": {
+    "message": "未在原文中找到"
+  },
+  "epubUnanchoredHint": {
+    "message": "无法在书中定位这条高亮，它的记录仍保存在阅读库中。"
+  },
+  "epubSection": {
+    "message": "第 $1 部分"
+  },
+  "epubFontSize": {
+    "message": "字号"
+  },
+  "epubFontSmaller": {
+    "message": "减小字号"
+  },
+  "epubFontLarger": {
+    "message": "增大字号"
+  },
+  "epubScrolled": {
+    "message": "滚动"
+  },
+  "epubPaginated": {
+    "message": "分页"
+  },
+  "epubLibrary": {
+    "message": "书库"
+  },
+  "epubPrevious": {
+    "message": "上一页"
+  },
+  "epubNext": {
+    "message": "下一页"
+  },
+  "epubProgress": {
+    "message": "阅读进度"
   }
 }

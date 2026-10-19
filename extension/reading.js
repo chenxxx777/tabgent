@@ -82,6 +82,7 @@ export function readingContext({ document, highlight, notes, vault, saving }) {
       kind: document.kind,
       ...(document.id ? { id: document.id } : {}),
       ...(document.notes ? { notes: document.notes } : {}),
+      ...(document.chapters ? { chapters: document.chapters } : {}),
     };
   if (highlight)
     value.highlight = {
