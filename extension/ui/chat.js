@@ -7,6 +7,7 @@ import { createCommands } from './commands.js';
 import { markdownFragment } from './markdown.js';
 import { addMermaidView } from './mermaid-code.js';
 import { addStructuredView } from './structured-code.js';
+import { createReading } from './reading.js';
 import {
   bridge,
   pageHistory,
@@ -21,6 +22,7 @@ import {
   readViewDraft,
   scopePreference,
   saveScopePreference,
+  readingRequest,
 } from '../bridge.js';
 import { localize } from '../i18n.js';
 localize();
@@ -148,7 +150,7 @@ function scheduleMessage(record) {
     if (follow) scrollEnd();
   });
 }
-import { tool, instructions, pageContextPrefix } from '../session-config.js';
+import { tool, instructions, pageContextPrefix, readingContextPrefix } from '../session-config.js';
 function showError(text) {
   if (!text) return;
   const last = $('messages').lastElementChild;
@@ -390,6 +392,25 @@ const composerSettings = createComposerSettings({
   thread: () => threadId,
   ready: () => ready,
 });
+const reading = createReading({
+  i18n,
+  request: readingRequest,
+  showError,
+  selection: () => selectedPageText,
+  reload() {
+    saveDraft();
+    location.reload();
+  },
+});
+addWebUiListener('codex-reading-changed', () => void reading.refresh());
+addWebUiListener('codex-reading-saved', (value) => reading.saved(value));
+addWebUiListener('codex-highlight-status', () => void reading.refresh());
+// A highlight opened its conversation in this sidebar; show that conversation instead.
+addWebUiListener('codex-view-changed', () => {
+  saveDraft();
+  location.reload();
+});
+void reading.refresh();
 function positionHistoryUrlDetails() {
   const rect = $('historyUrl').getBoundingClientRect();
   const popup = $('historyUrlDetails');
@@ -489,7 +510,10 @@ function toggleHistory(open) {
   $('historyToggle').setAttribute('aria-expanded', String(open));
   document.body.classList.toggle('history-open', open);
   sessionStorage.setItem('historyOpen', String(open));
-  if (open) void refreshHistory();
+  if (open) {
+    void refreshHistory();
+    void reading.refresh();
+  }
 }
 setInterval(() => {
   if (!document.hidden) void refreshHistory();
@@ -1374,7 +1398,12 @@ const followups = createFollowups({
     const quotes = [];
     const text = [];
     for (const part of normalizeUserInput(entry.input)) {
-      if (part.type === 'text' && part.text.startsWith(pageContextPrefix)) continue;
+      // Routing and reading context are rebuilt when the message is queued again.
+      if (
+        part.type === 'text' &&
+        [pageContextPrefix, readingContextPrefix].some((prefix) => part.text.startsWith(prefix))
+      )
+        continue;
       if (readAnnotations(part).length) {
         quotes.push(...readAnnotations(part));
       } else if (part.type === 'text' && part.text.startsWith(selectionContextPrefix)) {
@@ -1749,6 +1778,7 @@ function renderSelection() {
   $('selectionText').setAttribute('aria-expanded', 'false');
   $('selectionText').textContent = selectedPageText?.text || '';
   $('selectionText').title = selectedPageText?.truncated ? i18n('selectionLimit') : '';
+  reading.render();
 }
 addWebUiListener('codex-selection', (value) => {
   selectedPageText = value;
@@ -1763,9 +1793,14 @@ $('selectionRemove').onclick = () => {
   selectedPageText = null;
   renderSelection();
 };
+let readingPage = null;
 addWebUiListener('codex-context', (value) => {
   context = value;
   void refreshHistory();
+  if (readingPage !== (value.page?.url || '')) {
+    readingPage = value.page?.url || '';
+    void reading.refresh();
+  }
   $('context').hidden = !value.page;
   for (const [id, text] of [
     ['contextText', value.page ? value.page.title || value.page.url : ''],

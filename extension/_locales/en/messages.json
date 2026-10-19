@@ -879,5 +879,80 @@
   },
   "highlightOpenPanel": {
     "message": "Sent to Tabgent. Click the Tabgent toolbar button to open the side panel."
+  },
+  "readingNotes": {
+    "message": "Reading notes"
+  },
+  "readingHint": {
+    "message": "Save this conversation to your reading notes"
+  },
+  "readingSave": {
+    "message": "Save to reading notes"
+  },
+  "readingLabelHighlight": {
+    "message": "Highlight $1"
+  },
+  "readingLabelPage": {
+    "message": "Page notes"
+  },
+  "readingLabelOff": {
+    "message": "Not saved"
+  },
+  "readingTargetHighlight": {
+    "message": "Questions and answers are saved with highlight $1 on this page."
+  },
+  "readingTargetDocument": {
+    "message": "Questions and answers are saved to this page's notes."
+  },
+  "readingTargetOff": {
+    "message": "This conversation is not saved. Turn this on to keep questions about this page."
+  },
+  "readingUnavailable": {
+    "message": "This page cannot be saved to reading notes."
+  },
+  "readingFolder": {
+    "message": "Folder"
+  },
+  "readingFolderUnavailable": {
+    "message": "Connector unavailable"
+  },
+  "readingChange": {
+    "message": "Change"
+  },
+  "readingFolderPlaceholder": {
+    "message": "Absolute path, for example ~/ReadingVault"
+  },
+  "readingFolderHint": {
+    "message": "Existing notes are not moved."
+  },
+  "readingFolderSave": {
+    "message": "Use folder"
+  },
+  "readingSaveFailed": {
+    "message": "Not saved to reading notes: $1"
+  },
+  "readingSaveQueued": {
+    "message": "Not saved to reading notes yet ($1). Tabgent will retry."
+  },
+  "readingError": {
+    "message": "Reading notes are unavailable: $1"
+  },
+  "highlightsHeading": {
+    "message": "Highlights"
+  },
+  "highlightsEmpty": {
+    "message": "No highlights on this page yet."
+  },
+  "highlightJump": {
+    "message": "Show on page"
+  },
+  "highlightUnanchored": {
+    "message": "Not found on page"
+  },
+  "highlightUnanchoredHint": {
+    "message": "This highlight's text was not found on the current page. Its notes are kept."
+  },
+  "highlightTurns": {
+    "message": "$1 saved"
   }
 }

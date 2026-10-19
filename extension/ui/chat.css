@@ -1561,7 +1561,8 @@ select option {
   outline-offset: 4px;
   border-radius: 3px;
 }
-.history-date {
+.history-date,
+#highlightHeading {
   color: var(--muted);
   font-size: 11px;
   font-weight: 500;
@@ -1947,4 +1948,168 @@ body.history-open {
   padding: 3px;
   color: var(--muted);
   flex-shrink: 0;
+}
+
+#readingButton {
+  anchor-name: --composer-reading;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  min-width: 0;
+  padding: 5px 7px;
+  font-size: 12px;
+  white-space: nowrap;
+  color: var(--muted);
+}
+#readingButton[hidden] {
+  display: none;
+}
+#readingButton svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+#readingButton[data-state='on'] {
+  color: var(--ink);
+}
+#readingButton[data-state='on'] svg {
+  fill: color-mix(in srgb, #e9b949 45%, transparent);
+}
+#readingLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#readingMenu {
+  position-anchor: --composer-reading;
+  --menu-width: 320px;
+}
+.reading-switch {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px 2px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.reading-switch input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+.reading-folder {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 10px 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--muted);
+}
+.reading-folder code {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+}
+.composer-menu .reading-folder button,
+.composer-menu .reading-actions button {
+  width: auto;
+  padding: 5px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+}
+#readingFolderForm {
+  margin: 10px 10px 0;
+}
+#readingPathInput {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--ink);
+  font:
+    12px ui-monospace,
+    monospace;
+}
+#readingFolderForm p {
+  margin: 6px 0;
+}
+.reading-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+#readingError {
+  color: var(--error);
+}
+#highlightSection {
+  margin-bottom: 8px;
+}
+#highlightList {
+  color: var(--muted);
+  font-size: 12px;
+  padding: 0 8px;
+}
+.highlight-entry {
+  margin: 0 -8px 2px;
+  padding: 6px 8px;
+  border-radius: 7px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 6px;
+  color: var(--ink);
+}
+.highlight-entry:hover {
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
+}
+.highlight-quote {
+  grid-column: 1 / -1;
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  font-size: 12px;
+  line-height: 17px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  border-inline-start: 2px solid #e9b949;
+  border-radius: 0;
+  padding-inline-start: 6px;
+  cursor: pointer;
+}
+.highlight-quote:disabled {
+  cursor: default;
+  opacity: 1;
+}
+.highlight-entry[data-unanchored='true'] .highlight-quote {
+  border-inline-start-style: dashed;
+  border-inline-start-color: var(--muted);
+  color: var(--muted);
+}
+.highlight-entry small {
+  color: var(--muted);
+  font-size: 10px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  align-self: center;
+}
+.highlight-open {
+  padding: 2px 6px;
+  border-radius: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.highlight-open:hover {
+  color: var(--ink);
 }

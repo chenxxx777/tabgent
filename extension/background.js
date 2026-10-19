@@ -10,6 +10,7 @@ import {
   cleanPageMeta,
   documentUrl,
 } from './vault-client.js';
+import { createReadingCompanion } from './reading-companion.js';
 startPdfRouting();
 const sessions = new Map(),
   requests = new Map(),
@@ -70,6 +71,27 @@ const event = (port, name, value) => {
 const broadcast = (s, message) => {
   for (const port of s.ports) event(port, 'codex-message', message);
 };
+// Highlight and document conversations saved to the ReadingVault (reading-companion.js).
+const reading = createReadingCompanion({
+  sessions,
+  sidebarViews,
+  agentViews,
+  agentCompanions,
+  highlightStatus,
+  getSession,
+  loaded,
+  persist,
+  event,
+  vault,
+  pdfSource,
+});
+const readingMessages = new Set([
+  'readingState',
+  'readingSave',
+  'readingJump',
+  'readingOpen',
+  'vaultConfigure',
+]);
 async function getSession(tabId) {
   await loaded;
   const key = sidebarViews.get(tabId) ?? (agentViews.has(tabId) ? `sidebar:${tabId}` : tabId);
@@ -389,6 +411,7 @@ async function receive(message) {
         await persist();
         for (const port of s.ports) event(port, 'codex-history-changed');
       }
+      if (r.method === 'thread/resume' && !m.error) await reading.resumed(s, m.result?.thread);
       if (r.method === 'bridge/thread/forkMessage' && m.result?.thread?.id) {
         s.messageForks ||= [];
         s.messageForks.push(m.result.thread.id);
@@ -430,6 +453,7 @@ async function receive(message) {
   }
   if (m.method === 'turn/started') s.turnPending = true;
   if (m.method === 'turn/completed' || m.method === 'bridge/closed') s.turnPending = false;
+  reading.notification(s, m);
   broadcast(s, m);
 }
 chrome.runtime.onConnect.addListener((port) => {
@@ -505,6 +529,9 @@ chrome.runtime.onConnect.addListener((port) => {
             files: ['selection-content.js'],
           })
           .catch(() => {});
+        // A highlight may have switched this sidebar's conversation while it attached.
+        if (!port.sender.tab && (sidebarViews.get(msg.tabId) ?? s.key) !== s.key)
+          event(port, 'codex-view-changed');
         return;
       }
       const s = session;
@@ -558,7 +585,9 @@ chrome.runtime.onConnect.addListener((port) => {
           messagePageUrl = messagePage.url;
           s.pageUrls ||= {};
           if (messagePageUrl) s.pageUrls[messagePage.tabId] = messagePageUrl;
-          m.params.input = input;
+          m.params.input = await reading
+            .input(s, { ...m.params, input }, messagePage)
+            .catch(() => input);
           if (m.method !== 'thread/queue/add')
             messageTabId = JSON.parse(page.text.slice(pageContextPrefix.length)).tabId;
         }
@@ -774,6 +803,7 @@ async function highlightMessage(msg, sender) {
         title,
         anchor,
         context,
+        location,
         highlight:
           highlight && document ? { documentId: document.id, highlightId: highlight.id } : null,
       });
@@ -804,30 +834,37 @@ async function highlightMessage(msg, sender) {
     title,
     anchor: highlight.anchor || null,
     context,
+    location: pageText(highlight.location, 200),
     highlight: { documentId: resolved.document.id, highlightId: highlight.id },
   });
   return { panelOpened: await panel };
 }
 // "Ask AI" reuses the page-selection quote flow, extended with the highlight and nearby text.
-async function handOffSelection(sender, { url, text, title, anchor, context, highlight }) {
+// A saved highlight opens its own conversation (reading-companion.js).
+async function handOffSelection(
+  sender,
+  { url, text, title, anchor, context, location, highlight },
+) {
+  const selection = {
+    selectionId: crypto.randomUUID(),
+    id: crypto.randomUUID(),
+    text,
+    truncated: text.length >= 20000,
+    url,
+    title,
+    frameId: sender.frameId,
+    documentId: sender.documentId,
+    tabId: sender.tab.id,
+    locator: { kind: 'web', anchor, capturedAt: new Date().toISOString() },
+    location: location || '',
+    highlight,
+    context,
+  };
+  if (highlight) return reading.focusHighlight(selection, { tabId: sender.tab.id });
   await getSession(sender.tab.id);
-  const selectionId = crypto.randomUUID();
   for (const s of sessions.values()) {
     if (s.tabId !== sender.tab.id) continue;
-    s.selection = {
-      selectionId,
-      id: crypto.randomUUID(),
-      text,
-      truncated: text.length >= 20000,
-      url,
-      title,
-      frameId: sender.frameId,
-      documentId: sender.documentId,
-      tabId: sender.tab.id,
-      locator: { kind: 'web', anchor, capturedAt: new Date().toISOString() },
-      highlight,
-      context,
-    };
+    s.selection = { ...selection, id: crypto.randomUUID() };
     await persist();
     for (const p of s.ports) event(p, 'codex-selection', s.selection);
   }
@@ -849,7 +886,9 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
         (msg.type === 'pageSelection' && (typeof msg.text !== 'string' || !msg.text.trim()))
       )
         throw Error('Invalid selection');
-      if (pdfSource(sender.url)) {
+      // sender.url keeps the load-time URL after history.pushState; the frame URL is current.
+      let selectionUrl = pdfSource(sender.url);
+      if (selectionUrl) {
         // Chrome hides extension documents from webNavigation.getFrame.
         if (!(await isCurrentPdfSender(sender))) throw Error('Stale PDF selection');
       } else {
@@ -859,6 +898,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
         });
         if (!frame || (sender.documentId && frame.documentId !== sender.documentId))
           throw Error('Stale selection');
+        selectionUrl = /^https?:/.test(frame.url || '') ? frame.url : sender.url;
       }
       await getSession(sender.tab.id);
       for (const s of sessions.values()) {
@@ -881,7 +921,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
           id: crypto.randomUUID(),
           text: msg.text.slice(0, 20000),
           truncated: !!msg.truncated || msg.text.length > 20000,
-          url: pdfSource(sender.url) || sender.url,
+          url: selectionUrl,
           title: typeof msg.title === 'string' ? msg.title.slice(0, 500) : '',
           frameId: sender.frameId,
           documentId: sender.documentId,
@@ -894,6 +934,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
       return {};
     }
     if (!sender.url?.startsWith(chrome.runtime.getURL(''))) throw Error('Invalid sender');
+    if (readingMessages.has(msg.type)) return reading.message(msg, sender);
     if (msg.type === 'openConversationLink') {
       await loaded;
       const source = sessions.get(msg.conversationKey);
@@ -1163,6 +1204,7 @@ chrome.webNavigation.onCommitted.addListener(async (detail) => {
 });
 loaded.then(() => {
   connect();
+  void reading.flush().catch(console.warn);
   for (const session of sessions.values()) {
     if (
       (session.parent && !session.linkRecorded) ||
