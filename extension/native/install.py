@@ -11,7 +11,8 @@ mode.add_argument(
     help="Load the extension UI directly from this checkout",
 )
 mode.add_argument(
-    "--connector-only", action="store_true",
+    "--connector-only",
+    action="store_true",
     help="Install only the native connector; Chrome manages the store extension",
 )
 parser.add_argument("--extension-id", help="Chrome Web Store extension ID")
@@ -69,9 +70,7 @@ for directory in [
         Path.home() / "Library/Application Support" / directory / "NativeMessagingHosts"
     )
     dest.mkdir(parents=True, exist_ok=True)
-    (dest / "com.tabgent.codex.json").write_text(
-        json.dumps(data, indent=2) + "\n"
-    )
+    (dest / "com.tabgent.codex.json").write_text(json.dumps(data, indent=2) + "\n")
 print("Connector installed. Extension ID: " + ext_id)
 if args.connector_only:
     print("Return to Tabgent in Chrome and choose Check again.")

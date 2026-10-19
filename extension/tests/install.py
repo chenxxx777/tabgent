@@ -40,7 +40,10 @@ with tempfile.TemporaryDirectory(prefix="tabgent-install-") as directory:
     assert not (installed / "extension/native").exists()
     launcher = installed / "connector"
     assert os.access(launcher, os.X_OK)
-    assert "export CODEX_HOME=" + shlex.quote(str(codex_home.resolve())) in launcher.read_text()
+    assert (
+        "export CODEX_HOME=" + shlex.quote(str(codex_home.resolve()))
+        in launcher.read_text()
+    )
     registrations = list(
         (user_home / "Library/Application Support").glob(
             "**/NativeMessagingHosts/com.tabgent.codex.json"
@@ -62,9 +65,18 @@ with tempfile.TemporaryDirectory(prefix="tabgent-install-") as directory:
     output = user_home / "artifacts"
     store_id = "abcdefghijklmnopabcdefghijklmnop"
     subprocess.run(
-        [sys.executable, str(root.parent / "scripts/package-store.py"),
-         "--extension-id", store_id, "--connector-url", "https://example.com/download",
-         "--output", str(output)], check=True, capture_output=True,
+        [
+            sys.executable,
+            str(root.parent / "scripts/package-store.py"),
+            "--extension-id",
+            store_id,
+            "--connector-url",
+            "https://example.com/download",
+            "--output",
+            str(output),
+        ],
+        check=True,
+        capture_output=True,
     )
     with zipfile.ZipFile(output / "Tabgent-Chrome.zip") as archive:
         names = archive.namelist()
@@ -72,7 +84,10 @@ with tempfile.TemporaryDirectory(prefix="tabgent-install-") as directory:
         assert "manifest.json" in names
         assert "key" not in json.loads(archive.read("manifest.json"))
         assert not any(n.startswith(("native/", "tests/", "scripts/")) for n in names)
-        assert json.loads(archive.read("release.json"))["connectorUrl"] == "https://example.com/download"
+        assert (
+            json.loads(archive.read("release.json"))["connectorUrl"]
+            == "https://example.com/download"
+        )
     with zipfile.ZipFile(output / "Tabgent-Connector-macOS.zip") as archive:
         archive.extractall(output)
     package = output / "Tabgent Connector"
@@ -82,7 +97,9 @@ with tempfile.TemporaryDirectory(prefix="tabgent-install-") as directory:
     untouched.write_text("Chrome manages this directory")
     subprocess.run(
         ["zsh", str(package / "Install Connector.command")],
-        env=env, check=True, capture_output=True,
+        env=env,
+        check=True,
+        capture_output=True,
     )
     assert untouched.exists()
     for registration in registrations:
@@ -90,13 +107,21 @@ with tempfile.TemporaryDirectory(prefix="tabgent-install-") as directory:
             f"chrome-extension://{store_id}/"
         ]
     invalid = subprocess.run(
-        [sys.executable, str(root / "native/install.py"),
-         "--connector-only", "--extension-id", "invalid"],
-        env=env, capture_output=True,
+        [
+            sys.executable,
+            str(root / "native/install.py"),
+            "--connector-only",
+            "--extension-id",
+            "invalid",
+        ],
+        env=env,
+        capture_output=True,
     )
     assert invalid.returncode != 0
     assert json.loads(registrations[0].read_text())["allowed_origins"] == [
         f"chrome-extension://{store_id}/"
     ]
 
-print("PASS installer, store archives, connector-only install, ID validation and Codex preservation")
+print(
+    "PASS installer, store archives, connector-only install, ID validation and Codex preservation"
+)

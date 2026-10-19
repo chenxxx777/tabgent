@@ -34,7 +34,5 @@ for directory in ("extension", "docs", "scripts", ".github"):
     ]
 with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
     for file in sorted(files):
-        archive.write(
-            file, "Tabgent/" + file.relative_to(root).as_posix()
-        )
+        archive.write(file, "Tabgent/" + file.relative_to(root).as_posix())
 print(output)
