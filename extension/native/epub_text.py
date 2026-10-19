@@ -152,11 +152,13 @@ class _Book:
                 continue
             try:
                 tree = _parse(self.read(item["href"]).decode("utf-8", "replace"))
-            except EpubError as error:
-                # One damaged chapter does not hide the rest of the book.
-                skipped.append({"href": item["href"], "error": str(error)})
+                markdown, heading = _markdown(tree)
+            except Exception as error:
+                # One damaged chapter does not hide the rest of the book. html.parser
+                # itself can raise, e.g. on unknown <![...]> sections in Python 3.9.
+                reason = str(error) if isinstance(error, EpubError) else repr(error)
+                skipped.append({"href": item["href"], "error": reason[:300]})
                 continue
-            markdown, heading = _markdown(tree)
             if not markdown.strip():
                 continue
             if len(markdown) > CHAPTER_LIMIT:
@@ -180,13 +182,13 @@ class _Book:
             try:
                 tree = _parse(self.read(nav["href"]).decode("utf-8", "replace"))
                 entries = _nav_entries(tree, posixpath.dirname(nav["href"]))
-            except EpubError:
-                entries = []
+            except Exception:
+                entries = []  # Titles then come from the NCX or the chapters' headings.
         if not entries and toc_id in items:
             ncx = items[toc_id]["href"]
             try:
                 entries = _ncx_entries(self.xml(ncx), posixpath.dirname(ncx))
-            except EpubError:
+            except Exception:
                 entries = []
         titles = {}
         for href, label in entries:

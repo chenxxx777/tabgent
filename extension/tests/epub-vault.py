@@ -201,6 +201,31 @@ with tempfile.TemporaryDirectory(prefix="tabgent-epub-") as directory:
     ]
     assert [s["href"] for s in book["skipped"]] == ["OEBPS/ch2.xhtml"]
     assert "Cannot read OEBPS/ch2.xhtml" in book["skipped"][0]["error"]
+    # An unexpected parser exception in one chapter skips only that chapter. Python
+    # 3.9's html.parser raises on unknown <![...]> sections, for example.
+    path.write_bytes(
+        epub_fixture.build(
+            chapters=[
+                ("a.xhtml", "Word", "<p>Before<![if !supportLists]>after</p>"),
+                ("b.xhtml", "Fine", "<p>Readable chapter.</p>"),
+            ]
+        )
+    )
+    real_parse = epub_text._parse
+
+    def flaky_parse(text):
+        if "supportLists" in text:
+            raise AssertionError("unknown status keyword in marked section")
+        return real_parse(text)
+
+    with patch.object(epub_text, "_parse", flaky_parse):
+        book = epub_text.extract(path)
+    assert [c["href"] for c in book["chapters"]] == ["OEBPS/b.xhtml"]
+    assert [s["href"] for s in book["skipped"]] == ["OEBPS/a.xhtml"]
+    assert "AssertionError" in book["skipped"][0]["error"]
+    # Without the patch the marked section is read where html.parser accepts it.
+    hrefs = [c["href"] for c in epub_text.extract(path)["chapters"]]
+    assert "OEBPS/b.xhtml" in hrefs
     # Damaged package files fail as EpubError, never with zlib or EOF errors.
     path.write_bytes(corrupt(BOOK, "OEBPS/content.opf"))
     try:
@@ -535,13 +560,39 @@ with tempfile.TemporaryDirectory(prefix="tabgent-epub-vault-") as directory:
             b["id"] == result["document"]["id"]
             for b in call(settings, "vault/books/list", {})["books"]
         )
-        # A chapter folder that cannot be written is reported the same way.
+        # A chapter folder that cannot be written completes the import too, and the next
+        # check retries the write instead of keeping the failure.
         with patch.object(Path, "write_text", side_effect=OSError(28, "No space left")):
-            result, _ = import_book("No Space")
+            result, params = import_book("No Space")
         assert result["complete"] and result["source"]["chapters"] == []
-        assert "No space left" in result["source"]["chapterError"]
+        assert "No space left" in result["source"]["chapterWriteError"]
+        assert "chapterError" not in result["source"]
         folder = Path(result["document"]["folder"])
         assert not [p.name for p in folder.iterdir() if p.name.startswith(".chapters")]
+        retried = call(settings, "vault/source/save", {**params, "data": ""})
+        assert len(retried["source"]["chapters"]) == 3
+        assert "chapterWriteError" not in retried["source"]
+        assert len(list((folder / "chapters").iterdir())) == 3
+        # A failed swap puts the earlier chapter files back.
+        (folder / "chapters" / "01-chapter-one-beginnings.md").unlink()
+        real_rename = Path.rename
+
+        def failing_rename(path, target):
+            if path.name.endswith(".tmp"):
+                raise OSError(28, "No space left")
+            return real_rename(path, target)
+
+        with patch.object(Path, "rename", failing_rename):
+            failed = call(settings, "vault/source/save", {**params, "data": ""})
+        assert "chapterWriteError" in failed["source"]
+        assert sorted(p.name for p in (folder / "chapters").iterdir()) == [
+            "02-chapter-two-repetition.md",
+            "03-chapter-three-endings.md",
+        ]
+        assert not [p.name for p in folder.iterdir() if p.name.startswith(".chapters")]
+        restored = call(settings, "vault/source/save", {**params, "data": ""})
+        assert len(list((folder / "chapters").iterdir())) == 3
+        assert "chapterWriteError" not in restored["source"]
         # A damaged chapter is listed in the record; the readable ones are written.
         data = corrupt(epub_fixture.build(title="Damaged"), "OEBPS/ch2.xhtml")
         digest = hashlib.sha256(data).hexdigest()

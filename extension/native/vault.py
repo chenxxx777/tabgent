@@ -1085,7 +1085,11 @@ def _public_source(root, ident, record):
         "importedAt": record.get("importedAt"),
         "chaptersPath": str(folder / "chapters"),
         "chapters": record["chapters"],
-        **{k: record[k] for k in ("chapterError", "skippedChapters") if k in record},
+        **{
+            k: record[k]
+            for k in ("chapterError", "chapterWriteError", "skippedChapters")
+            if k in record
+        },
     }
 
 
@@ -1100,11 +1104,14 @@ def _source_result(root, data, record):
 
 
 def _ensure_chapters(root, data, record):
-    """Regenerates deleted chapter files from the stored EPUB."""
+    """Regenerates deleted chapter files, or ones that could not be written, from the
+    stored EPUB. A book whose text cannot be extracted (chapterError) is left alone."""
     folder = _folder(root, data["document"]["id"])
     if data["document"]["kind"] != "epub" or "chapterError" in record:
         return record
-    if all((folder / chapter["file"]).is_file() for chapter in record["chapters"]):
+    if "chapterWriteError" not in record and all(
+        (folder / chapter["file"]).is_file() for chapter in record["chapters"]
+    ):
         return record
     record = _write_chapters(folder, data["document"], record)
     _write(folder / "source.json", _json(record))
@@ -1116,7 +1123,9 @@ def _write_chapters(folder, document, record):
 
     The folder is generated: it is built beside the old one and swapped in."""
     record = {
-        k: v for k, v in record.items() if k not in ("chapterError", "skippedChapters")
+        k: v
+        for k, v in record.items()
+        if k not in ("chapterError", "chapterWriteError", "skippedChapters")
     }
     try:
         book = epub_text.extract(folder / record["file"])
@@ -1128,7 +1137,7 @@ def _write_chapters(folder, document, record):
     chapters = book["chapters"]
     width = max(2, len(str(len(chapters))))
     building = folder / f".chapters-{uuid.uuid4().hex[:12]}.tmp"
-    entries, previous = [], None
+    entries, previous, target = [], None, folder / "chapters"
     try:
         building.mkdir()
         for number, chapter in enumerate(chapters, 1):
@@ -1155,14 +1164,17 @@ def _write_chapters(folder, document, record):
                     "chars": len(chapter["markdown"]),
                 }
             )
-        target = folder / "chapters"
         if target.exists():
             previous = folder / f".chapters-{uuid.uuid4().hex[:12]}.old"
             target.rename(previous)
         building.rename(target)
     except OSError as error:
+        # Put earlier chapter files back; the next import check retries the write.
+        if previous is not None and not target.exists():
+            with contextlib.suppress(OSError):
+                previous.rename(target)
         reason = "Could not write chapter files: " + _describe(error)
-        return {**record, "chapters": [], "chapterError": reason}
+        return {**record, "chapters": [], "chapterWriteError": reason}
     finally:
         shutil.rmtree(building, ignore_errors=True)
     if previous:
