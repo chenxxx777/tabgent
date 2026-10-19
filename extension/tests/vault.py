@@ -508,7 +508,18 @@ with tempfile.TemporaryDirectory(prefix="tabgent-vault-") as directory:
         assert code(settings, "vault/highlight/create", blocked) == "io_error"
         assert code(settings, "vault/document/resolve", page) == "io_error"
         assert anchors.read_text() == "{not json"
+        # Without the URL index, the corrupt document is still reported, not forked.
+        folders = sorted(entry.name for entry in (default / "Articles").iterdir())
+        index.unlink()
+        assert code(settings, "vault/document/resolve", page) == "io_error"
+        assert code(settings, "vault/highlight/create", blocked) == "io_error"
+        assert (
+            sorted(entry.name for entry in (default / "Articles").iterdir()) == folders
+        )
+        assert not index.exists() and anchors.read_text() == "{not json"
         anchors.write_bytes(good)
+        restored = call(settings, "vault/document/resolve", page)
+        assert restored["document"]["id"] == document_id and restored["highlights"]
         path.write_bytes(b"\xff\xfe legacy encoding")
         assert code(settings, "vault/discussion/append", append) == "io_error"
         assert path.read_bytes() == b"\xff\xfe legacy encoding"

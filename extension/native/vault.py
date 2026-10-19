@@ -758,10 +758,9 @@ def _claim(root, urls, url, title, kind, preferred=None):
     for ident in candidates:
         if owners.get(ident, url) != url:
             continue
-        try:
-            data = _load(root, ident)
-        except VaultError:
-            continue
+        # Candidates derive from this URL, so an unreadable one is most likely this
+        # document: report it rather than fork it (for example, after losing the index).
+        data = _load(root, ident)
         if data is not None:
             if data["document"]["url"] == url:
                 return ident, data  # Saved but missing from the index.
