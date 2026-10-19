@@ -34,6 +34,7 @@ flowchart LR
 | `extension/native/attachments.py` | Bounded uploads and text/PDF/DOCX reading.                                  |
 | `extension/native/vault.py`       | ReadingVault highlights, discussions, and Markdown files.                   |
 | `extension/native/epub_text.py`   | EPUB chapter text for the vault, using the standard library only.           |
+| `extension/native/pdf_text.py`    | Imported PDF page text for the vault, read with macOS PDFKit.               |
 
 Each webpage tab owns a session. Agent tabs share that session through runtime
 ports and retain its original page context. The sidebar beside an Agent tab has
@@ -326,6 +327,22 @@ and checks as an EPUB, as `Books/paper-<title slug>-<hash>/original.pdf` with
 file always maps to the same document, so dropping it again opens its existing copy.
 After the import the tab opens the viewer for that identity.
 
+At import, `pdf_text.py` reads every page's text with macOS PDFKit in one `osascript`
+process (as the PDF fallback reader does for one page) and the vault writes
+`pages/NNN.md` for each page with text, with front matter naming the paper and page.
+Text is bounded per page and per document; pages without text (scanned pages) get no
+file, and a PDF without any text, an encrypted one, or one PDFKit cannot read is recorded
+in `source.json` (`pageError`) and still opens. Missing page files are regenerated when
+the file is imported again. `reading_vault` searches and reads them like EPUB chapters,
+and the reading context of a message about an imported PDF names its `pages` folder, so
+Codex can read the paper while its viewer tab is closed.
+
+A PDF opened from the web and an imported copy of the same file stay separate documents
+with separate notes. The web identity is the address, which can serve a revised file
+later (see [PDF highlights](#pdf-highlights)), while the imported identity is the bytes;
+Tabgent does not keep a hash of the online file, so it cannot tell that they are the
+same, and merging would rewrite notes the user may have edited. The library lists both.
+
 `pdfSource()` accepts `urn:sha256:<64 lowercase hex>` as a PDF source, so the viewer
 tab is a PDF tab everywhere: highlights, Ask AI, plain selections, page history, the
 per-message browser context, `pageDocument()` for page notes, and `browser read`. The
@@ -380,11 +397,12 @@ asks before every shell command, including `rg` and `cat`. The connector therefo
 adds a `reading_vault` dynamic tool next to `read_attachment`. The host answers it
 locally on the vault queue: `list` names the documents, `search` ranks lines of
 `highlights.md` and `source.md` by matching keywords, optionally within one `document`.
-A book's `chapters/*.md` are searched only when `document` names that book, and its
-notes still rank first, so book text never crowds out the user's notes and a search
-never scans the whole library. `read` returns numbered lines of the
-vault's `AGENTS.md`, a document's `highlights.md`, `source.md` or `anchors.json`, or an
-imported book's `chapters/NN-<title>.md`. The vault folder may be shared, for example
+A book's `chapters/*.md` and an imported PDF's `pages/*.md` are searched only when
+`document` names that book or paper, and its notes still rank first, so their text never
+crowds out the user's notes and a search never scans the whole library. `read` returns
+numbered lines of the vault's `AGENTS.md`, a document's `highlights.md`, `source.md` or
+`anchors.json`, an imported book's `chapters/NN-<title>.md`, or an imported PDF's
+`pages/NNN.md` (only under `Books/book-*` and `Books/paper-*` respectively). The vault folder may be shared, for example
 with Obsidian or the home folder, so no other file is readable. Each file must sit at
 its exact place under `Articles/` or `Books/` with Tabgent's file names and no symlink
 in between. The tool cannot write. Shell reads still work where the permission mode

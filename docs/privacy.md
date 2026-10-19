@@ -17,8 +17,8 @@ location, up to five earlier saved turns about that highlight, and the path of t
 ReadingVault folder. When a question refers to earlier reading, Codex can list,
 search and read the notes in that folder with the read-only `reading_vault` tool,
 without an approval prompt. It reads only the notes Tabgent writes (`AGENTS.md`,
-each document's `highlights.md`, `source.md` and `anchors.json`, and an imported book's
-`chapters/NN-<title>.md`), never other files
+each document's `highlights.md`, `source.md` and `anchors.json`, an imported book's
+`chapters/NN-<title>.md` and an imported PDF's `pages/NNN.md`), never other files
 in or outside the folder, and it cannot write. Notes it
 reads are sent to the model like any other tool result.
 
@@ -57,7 +57,7 @@ symlink so existing attachment paths remain valid.
 | `$CODEX_HOME/projects/tabgent/attachments/` | User-uploaded file copies, each in a generated subdirectory.            |
 | `~/ReadingVault/` or the configured folder  | Saved highlights, their page URLs and anchors, and saved discussions.   |
 | `Books/book-*/` in the vault                | Imported EPUB files, their SHA-256 record, and chapter text.            |
-| `Books/paper-*/` in the vault               | PDF highlights; PDFs imported from the computer and their SHA-256 file. |
+| `Books/paper-*/` in the vault               | PDF highlights; imported PDF files, their SHA-256 record and page text. |
 | Chrome extension local storage              | Reading-note saves waiting for a retry (at most 100), EPUB positions.   |
 | `$CODEX_HOME/projects/tabgent/vault.json`   | The configured ReadingVault folder.                                     |
 | Shared Codex session storage and index      | Conversation history and project association.                           |
@@ -110,9 +110,10 @@ only when you download the edited PDF.
 
 A PDF you choose or drop in the library is copied into the vault as
 `Books/paper-*/original.pdf`, with `source.json` recording its file name, size, SHA-256
-and import time, so it can be reopened later without the original file. Its notes name
-it `urn:sha256:<hash>` instead of a URL. The copy is read back only by the bundled PDF.js
-viewer, and opening it does not send it to Codex. Delete the folder to remove it.
+and import time, so it can be reopened later without the original file. The text of
+each page is saved beside it in `pages/NNN.md` (read locally with macOS PDFKit), so Codex
+can search and read the paper on request. Its notes name it `urn:sha256:<hash>` instead
+of a URL. Opening it does not send it to Codex. Delete the folder to remove it.
 The library lists the vault's documents locally; nothing is uploaded.
 
 The EPUB reader renders books locally in an extension page with book scripts and

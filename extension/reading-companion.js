@@ -157,6 +157,11 @@ export function createReadingCompanion({
         notes: existing?.highlightsPath,
         // An imported EPUB's text, one Markdown file per chapter (chapters/NN-<title>.md).
         chapters: document.kind === 'epub' && existing?.folder ? existing.folder + '/chapters' : '',
+        // An imported PDF's text, one Markdown file per page with text (pages/NNN.md).
+        pages:
+          document.kind === 'pdf' && document.url.startsWith('urn:sha256:') && existing?.folder
+            ? existing.folder + '/pages'
+            : '',
       },
       highlight: bound?.highlightId && {
         highlightId: bound.highlightId,

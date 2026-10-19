@@ -363,7 +363,17 @@ for method, params in json.loads(sys.argv[3]):
     assert.equal(await page.textContent('#title'), 'local-paper.pdf');
     assert(await page.isHidden('#native'), 'No Chrome viewer fallback for a vault copy');
     assert.deepEqual(fs.readdirSync(path.join(vault, '.tabgent/uploads')), []);
-    console.log('PASS a chosen PDF is imported as Books/paper-*/original.pdf and opens in PDF.js');
+    // Page text for Codex, read by the connector with PDFKit at import.
+    assert.deepEqual(fs.readdirSync(path.join(books, local, 'pages')), [
+      '001.md',
+      '002.md',
+      '003.md',
+    ]);
+    assert.match(
+      fs.readFileSync(path.join(books, local, 'pages/002.md'), 'utf8'),
+      /^---\ntitle: "Page 2"\npaper: "Local Reading Fixture"[\s\S]*Autonomy is the endorsement of one's own actions\./,
+    );
+    console.log('PASS a chosen PDF is imported with its page text and opens in PDF.js');
 
     // Highlight and Ask AI on the imported PDF.
     const first = "endorsement of one's own actions";

@@ -379,10 +379,12 @@ try {
       .text.slice(readingContextPrefix.length),
   );
   assert.equal(reading.saving, 'highlight');
-  assert.deepEqual((({ url, kind, id }) => ({ url, kind, id }))(reading.document), {
+  // The reading context names the imported PDF and its page files.
+  assert.deepEqual((({ url, kind, id, pages }) => ({ url, kind, id, pages }))(reading.document), {
     url: urn,
     kind: 'pdf',
     id: documentId,
+    pages: path.join(folder, 'pages'),
   });
   const emit = (method, params) =>
     native.onMessage.listeners[0]({ session: view.session, message: { method, params } });
