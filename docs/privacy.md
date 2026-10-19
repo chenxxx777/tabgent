@@ -99,7 +99,13 @@ or unredacted conversation logs in public issues.
 PDF.js renders documents locally in an extension page. PDF scripts and automatic
 alt-text model downloads are disabled. Opening a PDF alone does not send it to
 Codex; submitting a quote or asking Agent to read it supplies that context.
-Highlights and comments are saved only when you download the edited PDF.
+Highlights made with Tabgent's selection toolbar (**Highlight** or **Ask AI**) are
+saved to the local ReadingVault like webpage highlights, in `Books/paper-*/`
+(`highlights.md` and `anchors.json`): the PDF URL, its title and author from the PDF
+metadata, the host name, each highlighted passage with its page, and the saved
+discussion. The PDF file itself is not copied into the vault. Highlights, comments and
+edits made with the PDF.js annotation tools are not saved to the vault; they are saved
+only when you download the edited PDF.
 
 The EPUB reader renders books locally in an extension page with book scripts and
 remote resources blocked. Opening a book copies it into the reading vault, with its
