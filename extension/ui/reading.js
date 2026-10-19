@@ -129,7 +129,7 @@ export function createReading({ i18n, request, showError, selection, reload }) {
       };
       const note = document.createElement('button');
       note.type = 'button';
-      note.className = 'highlight-open highlight-note-button';
+      note.className = 'highlight-note-button';
       note.textContent = i18n(highlight.note ? 'highlightNoteEdit' : 'highlightNoteAdd');
       note.setAttribute('aria-expanded', String(editing?.id === highlight.id));
       note.onclick = () => {
