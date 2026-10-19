@@ -226,7 +226,10 @@ const existing = new Promise((resolve) =>
 );
 assert.equal(opened.length, 1);
 assert.equal((await existing).panelOpened, true);
-assert.equal(vaultCalls().at(-1).params.kind, 'pdf');
+assert.equal(
+  vaultCalls().findLast((m) => m.method === 'vault/document/resolve').params.kind,
+  'pdf',
+);
 const reopened = messages.filter((m) => m.name === 'codex-selection').at(-1).value;
 assert.deepEqual(reopened.highlight, { documentId: document.id, highlightId: 'h001' });
 assert.equal(reopened.locator.kind, 'pdf');
