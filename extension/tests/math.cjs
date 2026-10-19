@@ -163,10 +163,10 @@ const { chromium } = require('playwright');
     await structured('json', '{"unfinished":');
     assert(await page.locator('pre').isVisible());
     assert(await page.locator('.structured-toggle').isDisabled());
-    const diagram = async (source) =>
-      page.evaluate(async (source) => {
-        const { markdownFragment } = await import('/ui/markdown.js');
-        const { addMermaidView } = await import('/ui/mermaid-code.js');
+    await page.evaluate(async () => {
+      const { markdownFragment } = await import('/ui/markdown.js');
+      const { addMermaidView } = await import('/ui/mermaid-code.js');
+      window.mountDiagram = (source) => {
         const fragment = markdownFragment('```mermaid\n' + source + '\n```');
         const pre = fragment.querySelector('pre');
         const block = document.createElement('div');
@@ -176,7 +176,12 @@ const { chromium } = require('playwright');
         block.append(heading, pre);
         addMermaidView(block, heading, pre, pre.querySelector('code'), (k) => k);
         document.querySelector('#fixture').replaceChildren(block);
-      }, source);
+      };
+    });
+    // Mount synchronously: addMermaidView renders in a microtask, and a GC during that
+    // work can make Chromium drop an async evaluate's already-settled result
+    // ("Resulting promise was garbage collected").
+    const diagram = (source) => page.evaluate((source) => window.mountDiagram(source), source);
     const flow =
       'flowchart TB\n I["当前画面"] --> E1["视觉编码器 · ViT"]\n E1 --> Z1["第一层状态<br/>保留较多细节"]\n Z1 --> P1["第一层预测器 · Transformer<br/>预测 1 步后的状态"]\n P1 --> H1["底层规划器"]';
     await diagram(flow);
