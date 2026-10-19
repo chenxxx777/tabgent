@@ -242,6 +242,7 @@ function closeBook() {
     void library.send({ type: 'epubHighlightStatus', sha256: null }).catch(() => {});
   hideToolbar();
   $('#highlightMenu').hidePopover?.();
+  closeNote(); // A note belongs to the book being closed.
   state.view?.close();
   state.view?.remove();
   Object.assign(state, {

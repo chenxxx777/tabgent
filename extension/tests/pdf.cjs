@@ -18,6 +18,7 @@ const { chromium } = require('playwright');
     'agent-pointer.js',
     'i18n.js',
     'web-anchor.js',
+    'highlight-note.js',
     'highlight.css',
   ])
     fs.copyFileSync('extension/' + name, ext + '/' + name);
