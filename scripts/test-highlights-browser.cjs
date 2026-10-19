@@ -148,8 +148,26 @@ const article = () => `<!doctype html><title>Highlight fixture</title>
     assert(await until(() => saved() === 1));
     const [doc] = docs();
     assert.equal(doc.anchors.document.url, base + '/article?x=1');
-    assert.equal(doc.anchors.highlights[0].anchor.quote.exact, 'independence from others');
-    assert.match(doc.markdown, /independence from others/);
+    assert.equal(doc.anchors.document.title, 'Highlight fixture');
+    const [first] = doc.anchors.highlights;
+    assert.equal(first.id, 'h001');
+    assert.equal(first.text, 'independence from others');
+    assert.equal(first.location, 'Intrinsic motivation');
+    // The web anchor is stored exactly as the content script built it.
+    assert.deepEqual(first.anchor.quote, {
+      exact: 'independence from others',
+      prefix: 'tivation Autonomy does not mean ',
+      suffix: ", but endorsement of one's own a",
+    });
+    assert.equal(first.anchor.kind, 'web');
+    assert.equal(first.anchor.position.end - first.anchor.position.start, 24);
+    assert.match(first.anchor.dom.start.path, /p:nth-child\(\d+\) > text\(\)\[0\]$/);
+    assert.match(doc.markdown, /^---\ntitle: "Highlight fixture"\n/);
+    assert.match(doc.markdown, /<!-- tabgent:highlight h001 start -->/);
+    assert.match(doc.markdown, /## Highlight 001\n/);
+    assert.match(doc.markdown, /- 位置：Intrinsic motivation\n/);
+    assert.match(doc.markdown, /- Anchor ID: h001\n/);
+    assert.match(doc.markdown, /\n> independence from others\n/);
     assert.equal(fs.existsSync(path.join(temp, 'home/ReadingVault/AGENTS.md')), true);
     assert.equal(await until(async () => (await painted(page)) === 1), true);
     console.log('PASS isolated content script saves to the vault files and paints a highlight');
@@ -168,6 +186,9 @@ const article = () => `<!doctype html><title>Highlight fixture</title>
     await drag(page, '#b', 'more persistent');
     await press(page, 'ask');
     assert(await until(() => saved() === 2));
+    const asked = docs()[0];
+    assert.equal(asked.anchors.highlights[1].anchor.quote.exact, 'more persistent');
+    assert.match(asked.markdown, /## Highlight 002\n[\s\S]*\n> more persistent\n/);
     assert.equal(await until(async () => (await panels(worker)) === 1, 5000), true);
     const port = fs.readFileSync(path.join(profile, 'DevToolsActivePort'), 'utf8').split('\n')[0];
     const target = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find((t) =>
