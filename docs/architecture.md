@@ -212,10 +212,14 @@ viewer answers `tabgentHighlight` messages from the service worker in its top fr
 marks it briefly, and `refresh` reloads the saved highlights (for example after a
 saved turn) while keeping restored ones in place.
 
-**Ask AI** follows the same gesture rule as webpages. The quote carries `highlight`,
+**Ask AI** follows the same gesture rule as webpages. The quote carries
+`highlight: { documentId, highlightId, kind: "pdf" }`, the page label as `location`,
 `context` with up to 1500 characters before and after (including the previous and
 next page, whose text is loaded in advance so the click never waits), and
-`locator: { kind: "pdf", anchor, page }`. Codex reads PDFs one page at a time with
+`locator: { kind: "pdf", anchor, page }`. It binds the conversation like a webpage
+quote (see Reading conversations). A question without a highlight saves to the PDF's
+document, because the worker maps the viewer tab to the original PDF URL with
+`kind: "pdf"`. Codex reads PDFs one page at a time with
 `browser read` (`page` and `offset`; the result includes the page count), so a long
 PDF is never sent whole.
 

@@ -201,7 +201,11 @@ const asked = new Promise((resolve) =>
 assert.deepEqual(opened, [{ tabId: 1 }], 'sidePanel.open runs synchronously in the gesture');
 assert.equal((await asked).panelOpened, true);
 const selection = messages.filter((m) => m.name === 'codex-selection').at(-1).value;
-assert.deepEqual(selection.highlight, { documentId: document.id, highlightId: 'h002' });
+assert.deepEqual(selection.highlight, {
+  documentId: document.id,
+  highlightId: 'h002',
+  kind: 'pdf',
+});
 assert.deepEqual(selection.context, { before: 'Text before on page 3', after: 'and after.' });
 assert.equal(selection.text, 'quoted words');
 assert.equal(selection.url, source);
@@ -209,6 +213,7 @@ assert.equal(selection.title, 'A study');
 assert.equal(selection.locator.kind, 'pdf');
 assert.equal(selection.locator.page, 3);
 assert.deepEqual(selection.locator.anchor, anchor);
+assert.equal(selection.location, 'p. 3');
 console.log('PASS Ask AI opens the panel in-gesture and hands off highlight, context and locator');
 
 opened.length = 0;
@@ -231,10 +236,23 @@ assert.equal(
   'pdf',
 );
 const reopened = messages.filter((m) => m.name === 'codex-selection').at(-1).value;
-assert.deepEqual(reopened.highlight, { documentId: document.id, highlightId: 'h001' });
+assert.deepEqual(reopened.highlight, { documentId: document.id, highlightId: 'h001', kind: 'pdf' });
 assert.equal(reopened.locator.kind, 'pdf');
 assert.equal(reopened.locator.page, 3);
+assert.equal(reopened.location, 'p. 3');
 console.log('PASS asking about a saved PDF highlight reuses its vault record');
+
+host['vault/document/resolve'] = () => ({
+  document,
+  highlights: [saved, { id: 'h003', text: 'loose words', location: 'p. 2', turnCount: 0 }],
+});
+await call({ type: 'highlightAsk', documentId: document.id, highlightId: 'h003' }, viewer);
+const loose = messages.filter((m) => m.name === 'codex-selection').at(-1).value;
+assert.equal(loose.highlight.kind, 'pdf', 'A record without an anchor is still a PDF quote');
+assert.equal(loose.locator.kind, 'pdf');
+assert.equal(loose.locator.page, undefined);
+host['vault/document/resolve'] = () => ({ document, highlights: [saved] });
+console.log('PASS a saved PDF highlight without an anchor is still handed off as pdf');
 
 host['vault/highlight/delete'] = () => ({ ok: true });
 assert.equal(

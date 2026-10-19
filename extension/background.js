@@ -811,6 +811,7 @@ async function highlightMessage(msg, sender) {
         url: pageUrl,
         text,
         title,
+        kind,
         anchor,
         context,
         location,
@@ -842,6 +843,7 @@ async function highlightMessage(msg, sender) {
     url: pageUrl,
     text: pageText(highlight.text, 20000) || pageText(highlight.anchor?.quote?.exact, 20000),
     title,
+    kind,
     anchor: highlight.anchor || null,
     context,
     location: pageText(highlight.location, 200),
@@ -853,7 +855,7 @@ async function highlightMessage(msg, sender) {
 // A saved highlight opens its own conversation (reading-companion.js).
 async function handOffSelection(
   sender,
-  { url, text, title, anchor, context, location, highlight },
+  { url, text, title, kind, anchor, context, location, highlight },
 ) {
   const selection = {
     selectionId: crypto.randomUUID(),
@@ -866,13 +868,13 @@ async function handOffSelection(
     documentId: sender.documentId,
     tabId: sender.tab.id,
     locator: {
-      kind: anchor?.kind === 'pdf' ? 'pdf' : 'web',
+      kind,
       anchor,
-      ...(anchor?.kind === 'pdf' ? { page: anchor.page } : {}),
+      ...(kind === 'pdf' && anchor ? { page: anchor.page } : {}),
       capturedAt: new Date().toISOString(),
     },
     location: location || '',
-    highlight,
+    highlight: highlight && { ...highlight, kind },
     context,
   };
   if (highlight) return reading.focusHighlight(selection, { tabId: sender.tab.id });
