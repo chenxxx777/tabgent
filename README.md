@@ -4,7 +4,7 @@
 
 **Your agent in every tab.**
 
-Tabgent is a Chrome extension that puts Codex in your browser sidebar. It can read the current page, compare tabs, explain and annotate PDFs, and click, fill forms or search websites for you.
+Tabgent is a Chrome extension that puts Codex in your browser sidebar. It can read the current page, compare tabs, explain and annotate PDFs, keep highlights and reading notes for webpages, PDFs and EPUB books, and click, fill forms or search websites for you.
 
 [**Get started →**](#get-started) · [See it in action](#see-tabgent-in-action) · [Use cases](docs/use-cases.md)
 
@@ -64,6 +64,18 @@ Click any demo to view it full size.
 </table>
 
 [More examples and feature details →](docs/features.md)
+
+## Read with highlights and notes
+
+Highlight passages on webpages, in PDFs and in EPUB books, ask Codex about them, and keep each discussion as Markdown notes on your Mac.
+
+- **Highlight or ask:** Select text on a webpage, in Tabgent's PDF viewer or in its EPUB reader. **Highlight** saves the passage; **Ask AI** also opens the sidebar with the passage quoted. Highlights come back when you reopen the page, PDF or book, also after restarting Chrome, and saving them does not need Codex to be connected.
+- **Discuss a passage:** Codex receives the passage, the text around it, the document's title and your earlier notes on that highlight, so answers stay tied to what you are reading. Ask follow-ups in the same conversation. Later, click the highlight and choose **Open discussion** to continue it.
+- **Notes you can open anywhere:** Each document gets a folder in `~/ReadingVault`, or in a folder you choose. Its `highlights.md` lists every highlight with its location (section, page or chapter) and your questions and Codex's answers beneath it. Questions about a whole document are saved there too while **Save to reading notes** is on. Open the files in Obsidian, VS Code or any text editor.
+- **Connect what you read:** Ask how a passage relates to something you read before. Codex searches your notes with a read-only tool and names the document, highlight and file it used. It can also read a PDF page, or an EPUB chapter from the text saved with the book, when your question needs it.
+- **EPUB reader:** Right-click the Tabgent toolbar button and choose **Open EPUB reader**. Opened books are copied into your notes folder and listed for reopening, with contents, font size, and page or scroll layout.
+
+[How reading notes work →](docs/features.md#read-and-keep-notes)
 
 ## More features
 
@@ -143,12 +155,15 @@ that the sidebar shows “Codex connected”. Report what you verified.
 - **Choose which windows the assistant can use:** the current window or all windows. This setting only limits Tabgent’s browser actions; it does not restrict other Codex tools or connected services.
 - **Connects to your local Codex installation:** Tabgent connects to Codex on your Mac. There is no separate Tabgent cloud service processing your conversations.
 - **Conversation content is sent to Codex:** to answer questions or carry out tasks, your messages, supplied page content and relevant attachments are sent to your configured Codex service. They are not processed solely on your computer.
+- **Reading notes stay in a local folder:** highlights, saved discussions and opened EPUB books are stored in your ReadingVault folder, and Tabgent does not upload it. When a question needs earlier notes, Codex reads only the note files Tabgent writes there; what it reads is sent to your Codex service like other conversation content.
 
 Read [Privacy & permissions](docs/privacy.md) for data flow, storage locations, and Chrome permissions. Report security concerns using [SECURITY.md](SECURITY.md).
 
 ## Current limits
 
 Tabgent is an early preview. **macOS and Chrome are the primary supported setup.** Some older Codex versions may need an update. Tabgent conversations do not synchronize live with Codex Desktop, and after a browser restart, saved conversations may no longer open their original tabs automatically.
+
+Webpage highlights work on the top-level page, not inside frames. PDF highlights need Tabgent's PDF viewer and selectable text, and the PDF itself is not copied into your notes folder. Fixed-layout EPUB books save highlights without displaying them. If a highlighted passage can no longer be found, Tabgent keeps the note and marks it as not found rather than highlighting other text; it cannot be re-attached yet.
 
 ## Contribute
 
