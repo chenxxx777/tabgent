@@ -663,6 +663,54 @@
   window.addEventListener('resize', hideOnMove, { signal });
   window.addEventListener('popstate', checkUrl, { signal });
   globalThis.navigation?.addEventListener('currententrychange', checkUrl, { signal });
+  // Saved discussion turns change a highlight's popover action (Ask AI / Open discussion).
+  async function refresh() {
+    const url = page?.url;
+    if (!url) return;
+    try {
+      const response = await send({
+        type: 'highlightResolve',
+        title: document.title,
+        meta: pageMeta(),
+      });
+      if (page?.url !== url || response.url !== url) return;
+      page.documentId ||= response.document?.createdAt ? response.document.id : null;
+      for (const highlight of response.highlights || []) {
+        const record = records.get(highlight.id);
+        if (record?.highlight) record.highlight = highlight;
+      }
+    } catch {}
+  }
+  // Side panel actions arrive through the service worker, never from page scripts.
+  let flash;
+  function onExtensionMessage(message, sender, reply) {
+    if (sender.id !== chrome.runtime.id || sender.tab || message?.type !== 'tabgentHighlight')
+      return;
+    if (message.action === 'refresh') return void refresh();
+    const record = records.get(message.highlightId);
+    if (message.action === 'context') {
+      const textIndex = index();
+      const offsets = record?.range && textIndex.offsetsOfRange(record.range);
+      reply(offsets ? anchors.context(textIndex, offsets.start, offsets.end) : null);
+    }
+    if (message.action === 'jump') {
+      if (!record?.range) return void reply({ found: false });
+      const node = record.range.startContainer;
+      (node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement)?.scrollIntoView({
+        block: 'center',
+        behavior: 'smooth',
+      });
+      clearTimeout(flash);
+      focused.clear();
+      focused.add(record.range);
+      flash = setTimeout(repaint, 1600);
+      reply({ found: true });
+    }
+  }
+  chrome.runtime.onMessage.addListener(onExtensionMessage);
+  signal.addEventListener('abort', () =>
+    chrome.runtime.onMessage.removeListener(onExtensionMessage),
+  );
   // A prerendered document is not the primary frame yet, so the worker would reject it.
   if (document.prerendering)
     document.addEventListener('prerenderingchange', () => void load(), { once: true, signal });

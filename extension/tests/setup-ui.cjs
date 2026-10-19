@@ -8,7 +8,7 @@ const root = path.resolve(__dirname, '..');
 const bridge = `
 const listeners=new Map();
 const mode=new URL(location.href).searchParams.get('mode');
-if(!sessionStorage.started){sessionStorage.started='1';sessionStorage.installed=String(mode!=='install');sessionStorage.helper=String(mode!=='helper');sessionStorage.auth=String(['selection','transcript','tool-burst','annotations'].includes(mode)||mode.startsWith('setup-'));sessionStorage.draft='keep my draft';}
+if(!sessionStorage.started){sessionStorage.started='1';sessionStorage.installed=String(mode!=='install');sessionStorage.helper=String(mode!=='helper');sessionStorage.auth=String(['selection','transcript','tool-burst','annotations','reading'].includes(mode)||mode.startsWith('setup-'));sessionStorage.draft='keep my draft';}
 let queueEntries=[];
 let authenticated=sessionStorage.auth==='true';
 const emit=(method,params={})=>listeners.get('codex-message')?.({method,params});
@@ -54,7 +54,7 @@ export const bridge={threadId:mode.startsWith('setup-')&&mode!=='setup-new'?'tes
  },window.setupTest.delayMethod===m.method?100:0);
  }
 }};
-window.setupTest={emit,requests:[],actions:[],context(value){listeners.get('codex-context')?.(value);},select(value){listeners.get('codex-selection')?.(value);},install(){sessionStorage.installed='true';sessionStorage.helper='true';},externalLogin(){sessionStorage.auth='true';},complete(){authenticated=true;sessionStorage.auth='true';emit('account/login/completed',{success:true,loginId:'test-login'});},fail(){emit('account/login/completed',{success:false,loginId:'test-login'});}};
+window.setupTest={emit,requests:[],actions:[],reading:[],event(name,value){listeners.get(name)?.(value);},readingValue:{vault:{path:'/vault/ReadingVault',configured:false,writable:true},page:{url:'https://example.test/article',title:'Article',kind:'web'},document:{id:'article-x',highlightsPath:'/vault/ReadingVault/Articles/article-x/highlights.md'},highlights:[{id:'h001',text:'Autonomy is endorsement',location:'Chapter 3',turnCount:2,anchored:true},{id:'h002',text:'People persist',location:'',turnCount:0,anchored:false}],binding:null,save:{explicit:null,target:'off'},error:null},context(value){listeners.get('codex-context')?.(value);},select(value){listeners.get('codex-selection')?.(value);},install(){sessionStorage.installed='true';sessionStorage.helper='true';},externalLogin(){sessionStorage.auth='true';},complete(){authenticated=true;sessionStorage.auth='true';emit('account/login/completed',{success:true,loginId:'test-login'});},fail(){emit('account/login/completed',{success:false,loginId:'test-login'});}};
 export async function openConversationLink(url,active,newTab){window.setupTest.actions.push({name:'openConversationLink',url,active,newTab})}
 export async function openRelatedThread(threadId){window.setupTest.actions.push({name:'openRelatedThread',threadId})}
 export async function pageHistory(threadId){
@@ -64,6 +64,15 @@ export async function pageHistory(threadId){
 export async function newConversation(settings,annotations,fork){window.setupTest.actions.push({name:'newConversation',settings,annotations,fork});if(window.setupTest.failNew)throw Error('Test new chat failure');}
 export async function takeForkInput(){if(mode==='setup-edit-send'&&!sessionStorage.forkTaken){sessionStorage.forkTaken='1';return [{type:'text',text:'Edited input after switching'}]}return null}
 export async function openAgentTab(){window.setupTest.actions.push({name:'openAgent'})}
+export async function readingRequest(type,params={}){
+ window.setupTest.reading.push({type,...params});
+ const value=window.setupTest.readingValue;
+ if(type==='readingOpen')return {switched:params.highlightId==='h001',threadId:'thread-a'};
+ if(type==='readingJump')return {found:params.highlightId!=='h002'};
+ if(type==='readingSave')value.save={explicit:params.enabled,target:params.enabled?'document':'off'};
+ if(type==='vaultConfigure'){if(!/^[\/~]/.test(params.path))throw Error('path must be absolute');value.vault={...value.vault,path:params.path};}
+ return structuredClone(value);
+}
 export async function startBridge(){if(mode==='attach-failure')throw Error('Missing tab');}
 export function addWebUiListener(name,fn){listeners.set(name,fn);if(name==='codex-annotations')fn(JSON.parse(sessionStorage.annotations||'[]'));}
 export function bindThread(id){bridge.threadId=id}
@@ -121,6 +130,7 @@ export function saveScopePreference(){}
       'transcript',
       'attach-failure',
       'selection',
+      'reading',
       'native-failure',
       'helper',
       'install',
@@ -1282,6 +1292,114 @@ export function saveScopePreference(){}
         );
         await context.close();
         console.log('PASS attachment failure shows a localized reconnect action');
+        continue;
+      }
+      if (mode === 'reading') {
+        await page.waitForFunction(
+          () => document.querySelector('#connection').dataset.state === 'ready',
+        );
+        const button = page.locator('#readingButton');
+        await button.waitFor();
+        assert.equal(await page.locator('#readingLabel').textContent(), 'Not saved');
+        assert.equal(await button.getAttribute('data-state'), 'off');
+        // An attached Ask AI quote shows where the next answer will be saved.
+        await page.evaluate(() =>
+          setupTest.select({
+            id: 'q',
+            text: 'Autonomy is endorsement',
+            title: 'Article',
+            url: 'https://example.test/article',
+            highlight: { documentId: 'article-x', highlightId: 'h001' },
+          }),
+        );
+        assert.equal(await page.locator('#readingLabel').textContent(), 'Highlight 1');
+        await page.locator('#selectionRemove').click();
+        assert.equal(await page.locator('#readingLabel').textContent(), 'Not saved');
+        await button.click();
+        assert(await page.locator('#readingMenu').isVisible());
+        assert.equal(await page.locator('#readingPath').textContent(), '/vault/ReadingVault');
+        assert.equal(await page.locator('#readingSave').isChecked(), false);
+        await page.locator('#readingSave').click();
+        await page.waitForFunction(
+          () => document.querySelector('#readingLabel').textContent === 'Page notes',
+        );
+        assert.deepEqual(
+          await page.evaluate(() => setupTest.reading.findLast((r) => r.type === 'readingSave')),
+          { type: 'readingSave', enabled: true },
+        );
+        assert.match(await page.locator('#readingTarget').textContent(), /this page's notes/);
+        await page.locator('#readingChange').click();
+        assert.equal(await page.locator('#readingPathInput').inputValue(), '/vault/ReadingVault');
+        await page.locator('#readingPathInput').fill('relative/notes');
+        await page.locator('#readingFolderSave').click();
+        await page.locator('#readingError').waitFor();
+        assert.match(await page.locator('#readingError').textContent(), /absolute/);
+        await page.locator('#readingPathInput').fill('~/Notes');
+        await page.locator('#readingFolderSave').click();
+        await page.waitForFunction(
+          () => document.querySelector('#readingPath').textContent === '~/Notes',
+        );
+        assert.equal(await page.locator('#readingFolderForm').isVisible(), false);
+        await page.keyboard.press('Escape');
+        await page.setViewportSize({ width: 390, height: 720 });
+        const centers = await Promise.all(
+          ['#attach', '#modelButton', '#scopeButton', '#readingButton'].map(async (selector) => {
+            const box = await page.locator(selector).boundingBox();
+            return box.y + box.height / 2;
+          }),
+        );
+        assert(Math.max(...centers) - Math.min(...centers) < 1, 'Toolbar stays on one line');
+        await page.setViewportSize({ width: 1280, height: 720 });
+        console.log('PASS reading notes toggle, target label and vault folder settings');
+
+        await page.locator('#historyToggle').click();
+        const entries = page.locator('.highlight-entry');
+        await entries.first().waitFor();
+        assert.equal(await entries.count(), 2);
+        assert.equal(await entries.nth(1).getAttribute('data-unanchored'), 'true');
+        assert.match(await entries.nth(1).locator('small').textContent(), /Not found on page/);
+        assert.equal(await entries.nth(1).locator('.highlight-quote').isDisabled(), true);
+        assert.match(await entries.nth(0).locator('small').textContent(), /Chapter 3 · 2 saved/);
+        assert.equal(
+          await entries.nth(0).locator('.highlight-open').textContent(),
+          'Open discussion',
+        );
+        assert.equal(await entries.nth(1).locator('.highlight-open').textContent(), 'Ask AI');
+        await entries.nth(0).locator('.highlight-quote').click();
+        await page.waitForFunction(() =>
+          setupTest.reading.some((r) => r.type === 'readingJump' && r.highlightId === 'h001'),
+        );
+        await page.evaluate(() => (window.beforeReload = true));
+        await entries.nth(0).locator('.highlight-open').click();
+        await page.waitForFunction(() => !window.beforeReload);
+        await page.waitForFunction(
+          () => document.querySelector('#connection').dataset.state === 'ready',
+        );
+        console.log('PASS highlight list marks unanchored notes, jumps, and reopens discussions');
+
+        await page.evaluate(() => {
+          window.beforeReload = true;
+          setupTest.event('codex-view-changed');
+        });
+        await page.waitForFunction(() => !window.beforeReload);
+        await page.waitForFunction(
+          () => document.querySelector('#connection').dataset.state === 'ready',
+        );
+        await page.evaluate(() =>
+          setupTest.event('codex-reading-saved', {
+            ok: false,
+            queued: true,
+            message: 'Disk is busy',
+          }),
+        );
+        await page.locator('.message.error').waitFor();
+        assert.equal(
+          await page.locator('.message.error').textContent(),
+          'Not saved to reading notes yet (Disk is busy). Tabgent will retry.',
+        );
+        assert.deepEqual(errors, []);
+        console.log('PASS sidebar follows a highlight thread switch and reports failed saves');
+        await context.close();
         continue;
       }
       if (mode === 'selection') {

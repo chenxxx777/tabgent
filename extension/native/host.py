@@ -212,6 +212,13 @@ class Session:
 
                     POOL.submit(reply, message)
                     continue
+                if (
+                    message.get("method") == "item/tool/call"
+                    and message.get("params", {}).get("tool") == vault.TOOL["name"]
+                ):
+                    # Read-only notes lookup, confined to the vault: no shell approval.
+                    VAULT_POOL.submit(self.reply_vault_tool, message)
+                    continue
                 self.emit(message)
         except (OSError, ValueError):
             pass
@@ -229,6 +236,30 @@ class Session:
                     "params": {"messageKey": "disconnectedDraft"},
                 }
             )
+
+    def reply_vault_tool(self, message):
+        try:
+            args = message["params"]["arguments"]
+            if isinstance(args, str):
+                args = json.loads(args)
+            value = vault.tool(HOME / "projects/tabgent/vault.json", args)
+            result = {"success": True, "text": json.dumps(value, ensure_ascii=False)}
+        except vault.VaultError as error:
+            result = {"success": False, "text": str(error)}
+        except Exception:
+            result = {"success": False, "text": "The reading vault could not be read."}
+        try:
+            self.write(
+                {
+                    "id": message["id"],
+                    "result": {
+                        "success": result["success"],
+                        "contentItems": [{"type": "inputText", "text": result["text"]}],
+                    },
+                }
+            )
+        except Exception:
+            pass  # Codex exited; the turn ends with it.
 
     def start(self):
         with self.start_lock:
@@ -349,6 +380,7 @@ class Session:
             "dynamicTools": [
                 *(params.get("dynamicTools") or self.config.get("dynamicTools", [])),
                 attachments.TOOL,
+                vault.TOOL,
             ],
             "sandbox": (
                 "danger-full-access" if self.permission_mode == "full" else "read-only"

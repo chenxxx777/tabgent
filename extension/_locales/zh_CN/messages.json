@@ -106,5 +106,80 @@
   },
   "pdfPagesLabel": {
     "message": "第 $1–$2 页"
+  },
+  "readingNotes": {
+    "message": "阅读笔记"
+  },
+  "readingHint": {
+    "message": "将此对话保存到阅读笔记"
+  },
+  "readingSave": {
+    "message": "保存到阅读笔记"
+  },
+  "readingLabelHighlight": {
+    "message": "高亮 $1"
+  },
+  "readingLabelPage": {
+    "message": "页面笔记"
+  },
+  "readingLabelOff": {
+    "message": "不保存"
+  },
+  "readingTargetHighlight": {
+    "message": "问答会保存在本页的高亮 $1 下。"
+  },
+  "readingTargetDocument": {
+    "message": "问答会保存到本页的笔记中。"
+  },
+  "readingTargetOff": {
+    "message": "此对话不会被保存。打开后会保留关于本页的提问。"
+  },
+  "readingUnavailable": {
+    "message": "此页面无法保存到阅读笔记。"
+  },
+  "readingFolder": {
+    "message": "文件夹"
+  },
+  "readingFolderUnavailable": {
+    "message": "连接器不可用"
+  },
+  "readingChange": {
+    "message": "更改"
+  },
+  "readingFolderPlaceholder": {
+    "message": "绝对路径，例如 ~/ReadingVault"
+  },
+  "readingFolderHint": {
+    "message": "已有笔记不会被移动。"
+  },
+  "readingFolderSave": {
+    "message": "使用此文件夹"
+  },
+  "readingSaveFailed": {
+    "message": "未能保存到阅读笔记：$1"
+  },
+  "readingSaveQueued": {
+    "message": "尚未保存到阅读笔记（$1），Tabgent 会重试。"
+  },
+  "readingError": {
+    "message": "阅读笔记不可用：$1"
+  },
+  "highlightsHeading": {
+    "message": "高亮"
+  },
+  "highlightsEmpty": {
+    "message": "本页还没有高亮。"
+  },
+  "highlightJump": {
+    "message": "在页面中显示"
+  },
+  "highlightUnanchored": {
+    "message": "未在页面中找到"
+  },
+  "highlightUnanchoredHint": {
+    "message": "当前页面中找不到这段高亮文字，笔记仍然保留。"
+  },
+  "highlightTurns": {
+    "message": "已保存 $1 条"
   }
 }
