@@ -12,6 +12,7 @@ import re
 from urllib.parse import unquote
 import xml.etree.ElementTree as ElementTree
 import zipfile
+import zlib
 
 ENTRY_LIMIT = (
     32 * 1024 * 1024
@@ -19,6 +20,14 @@ ENTRY_LIMIT = (
 TOTAL_LIMIT = 256 * 1024 * 1024  # Uncompressed bytes read from one book.
 ENTRIES_LIMIT = 20_000
 CHAPTER_LIMIT = 8 * 1024 * 1024  # Characters of Markdown per chapter.
+# Deeper elements are attached flat, so recursive walks stay far below Python's limit.
+DEPTH_LIMIT = 200
+# Starting one of these closes an open one, as HTML parsing does (<p>a<p>b, <li>a<li>b).
+IMPLIED = {"p": set(), "li": {"ul", "ol"}, "dt": {"dl"}, "dd": {"dl"}, "tr": {"table"}}
+IMPLIED |= {"td": {"tr"}, "th": {"tr"}, "option": {"select"}}
+BLOCK_STARTS_CLOSE_P = {"address", "article", "aside", "blockquote", "div", "dl", "h1"}
+BLOCK_STARTS_CLOSE_P |= {"h2", "h3", "h4", "h5", "h6", "header", "footer", "hr", "ol"}
+BLOCK_STARTS_CLOSE_P |= {"p", "pre", "section", "table", "ul", "figure", "nav"}
 SKIP = {"head", "script", "style", "template", "noscript", "iframe", "object", "embed"}
 SKIP |= {"svg:script", "math:annotation-xml"}
 VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta"}
@@ -29,6 +38,21 @@ BLOCK |= {"footer", "header", "hgroup", "hr", "li", "main", "nav", "ol", "p", "p
 BLOCK |= {"section", "summary", "table", "tbody", "td", "tfoot", "th", "thead", "tr"}
 BLOCK |= {"ul", "h1", "h2", "h3", "h4", "h5", "h6"}
 HEADING = re.compile(r"h([1-6])")
+INLINE = {"a", "abbr", "b", "bdi", "bdo", "cite", "code", "data", "dfn", "em", "font"}
+INLINE |= {
+    "i",
+    "kbd",
+    "mark",
+    "q",
+    "s",
+    "samp",
+    "small",
+    "span",
+    "strong",
+    "sub",
+    "sup",
+}
+INLINE |= {"time", "u", "var", "big", "tt", "ruby", "rt", "rp"}
 DOCUMENT_TYPES = {"application/xhtml+xml", "text/html"}
 
 
@@ -37,15 +61,18 @@ class EpubError(Exception):
 
 
 def extract(path):
-    """{"metadata": {...}, "chapters": [{"index", "href", "title", "markdown"}]} for
-    every spine document with text, in reading order. index is the spine position."""
+    """{"metadata": {...}, "chapters": [{"index", "href", "title", "markdown"}],
+    "skipped": [{"href", "error"}]} for every spine document with text, in reading
+    order. index is the spine position. Unreadable chapters are skipped and named."""
     try:
         archive = zipfile.ZipFile(path)
     except (OSError, zipfile.BadZipFile) as error:
         raise EpubError(f"Not a readable EPUB archive: {error}")
-    with archive:
-        book = _Book(archive)
-        return book.extract()
+    try:
+        with archive:
+            return _Book(archive).extract()
+    except RecursionError:
+        raise EpubError("The EPUB markup is nested too deeply")
 
 
 class _Book:
@@ -68,7 +95,15 @@ class _Book:
         try:
             with self.archive.open(info) as file:
                 data = file.read(ENTRY_LIMIT + 1)  # Sizes in headers can lie.
-        except (OSError, RuntimeError, zipfile.BadZipFile) as error:
+        except (
+            OSError,
+            RuntimeError,
+            EOFError,
+            ValueError,
+            NotImplementedError,
+            zipfile.BadZipFile,
+            zlib.error,
+        ) as error:
             raise EpubError(f"Cannot read {name} from the EPUB: {error}")
         if len(data) > ENTRY_LIMIT:
             raise EpubError(f"File too large in EPUB: {name}")
@@ -111,11 +146,16 @@ class _Book:
             elif name == "itemref" and element.get("idref") in items:
                 spine.append(items[element.get("idref")])
         titles = self.toc_titles(items, toc_id)
-        chapters = []
+        chapters, skipped = [], []
         for index, item in enumerate(spine):
             if item["type"] not in DOCUMENT_TYPES:
                 continue
-            tree = _parse(self.read(item["href"]).decode("utf-8", "replace"))
+            try:
+                tree = _parse(self.read(item["href"]).decode("utf-8", "replace"))
+            except EpubError as error:
+                # One damaged chapter does not hide the rest of the book.
+                skipped.append({"href": item["href"], "error": str(error)})
+                continue
             markdown, heading = _markdown(tree)
             if not markdown.strip():
                 continue
@@ -130,7 +170,7 @@ class _Book:
                     "markdown": markdown,
                 }
             )
-        return {"metadata": _metadata(opf), "chapters": chapters}
+        return {"metadata": _metadata(opf), "chapters": chapters, "skipped": skipped}
 
     def toc_titles(self, items, toc_id):
         """Spine document path -> label of the first table-of-contents entry for it."""
@@ -233,10 +273,25 @@ class _Builder(HTMLParser):
         self.stack = [self.root]
 
     def handle_starttag(self, tag, attrs):
+        self.close_implied(tag)
         node = _Node(tag, {k: v or "" for k, v in attrs})
         self.stack[-1].children.append(node)
-        if tag not in VOID:
+        if tag not in VOID and len(self.stack) < DEPTH_LIMIT:
             self.stack.append(node)
+
+    def close_implied(self, tag):
+        """Closes an open element that this start tag implicitly ends."""
+        targets = {"p"} if tag in BLOCK_STARTS_CLOSE_P else set()
+        if tag in IMPLIED:
+            targets.add(tag)
+        for depth in range(len(self.stack) - 1, 0, -1):
+            name = self.stack[depth].tag
+            if name in targets:
+                del self.stack[depth:]
+                return
+            # A list, table or other container bounds the search for an open item.
+            if name in IMPLIED.get(tag, ()) or (name not in INLINE and name != "p"):
+                return
 
     def handle_startendtag(self, tag, attrs):
         self.stack[-1].children.append(_Node(tag, {k: v or "" for k, v in attrs}))

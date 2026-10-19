@@ -160,6 +160,57 @@ with tempfile.TemporaryDirectory(prefix="tabgent-epub-") as directory:
 print("PASS EPUB chapter extraction: titles, Markdown blocks, scripts skipped, limits")
 
 
+def corrupt(data, name):
+    """The archive with the compressed bytes of one entry damaged."""
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        info = archive.getinfo(name)
+    damaged = bytearray(data)
+    start = info.header_offset + 30 + len(info.filename.encode()) + len(info.extra)
+    for at in range(start + 2, start + min(info.compress_size, 40)):
+        damaged[at] ^= 0x5A
+    return bytes(damaged)
+
+
+with tempfile.TemporaryDirectory(prefix="tabgent-epub-") as directory:
+    path = Path(directory) / "book.epub"
+    # Unclosed and deeply nested markup: browsers display it, so extraction must too.
+    unclosed = "".join(f"<p>Paragraph {n}" for n in range(3000))
+    nested = "<div>" * 3000 + "Deep text" + "</div>" * 3000
+    items = "<ul>" + "".join(f"<li>Item {n}" for n in range(1500)) + "</ul>"
+    path.write_bytes(
+        epub_fixture.build(
+            chapters=[
+                ("a.xhtml", "Unclosed", unclosed),
+                ("b.xhtml", "Nested", nested),
+                ("c.xhtml", "Items", items),
+            ]
+        )
+    )
+    first, second, third = epub_text.extract(path)["chapters"]
+    assert first["markdown"].startswith("Paragraph 0\n\nParagraph 1\n\n")
+    assert "Paragraph 2999" in first["markdown"]
+    assert second["markdown"] == "Deep text\n"
+    assert third["markdown"].startswith("- Item 0\n- Item 1\n")
+    assert "- Item 1499" in third["markdown"]
+    # A damaged chapter is skipped and named; the other chapters are kept.
+    path.write_bytes(corrupt(BOOK, "OEBPS/ch2.xhtml"))
+    book = epub_text.extract(path)
+    assert [c["href"] for c in book["chapters"]] == [
+        "OEBPS/ch1.xhtml",
+        "OEBPS/ch3.xhtml",
+    ]
+    assert [s["href"] for s in book["skipped"]] == ["OEBPS/ch2.xhtml"]
+    assert "Cannot read OEBPS/ch2.xhtml" in book["skipped"][0]["error"]
+    # Damaged package files fail as EpubError, never with zlib or EOF errors.
+    path.write_bytes(corrupt(BOOK, "OEBPS/content.opf"))
+    try:
+        epub_text.extract(path)
+        raise AssertionError("expected EpubError")
+    except epub_text.EpubError:
+        pass
+print("PASS unclosed and deeply nested markup, damaged chapters and damaged packages")
+
+
 with tempfile.TemporaryDirectory(prefix="tabgent-epub-vault-") as directory:
     base = Path(directory)
     settings = base / "codex/projects/tabgent/vault.json"
@@ -449,6 +500,69 @@ with tempfile.TemporaryDirectory(prefix="tabgent-epub-vault-") as directory:
         )
         assert result["complete"] and result["source"]["chapters"] == []
         assert "chapterError" in result["source"]
+
+        # Any extraction failure, even an unexpected one, still completes the import
+        # with the original stored, so the book is listed and can be reopened.
+        def import_book(title, **patches):
+            data = epub_fixture.build(title=title)
+            digest = hashlib.sha256(data).hexdigest()
+            params = {
+                "url": "urn:sha256:" + digest,
+                "title": title,
+                "kind": "epub",
+                "sha256": digest,
+                "size": len(data),
+                "offset": 0,
+                "data": b64(data),
+            }
+            return call(settings, "vault/source/save", params), params
+
+        with patch.object(epub_text, "extract", side_effect=RecursionError("deep")):
+            result, params = import_book("Unexpected Failure")
+        assert result["complete"] and result["source"]["chapters"] == []
+        assert "RecursionError" in result["source"]["chapterError"]
+        folder = Path(result["document"]["folder"])
+        assert (folder / "original.epub").is_file() and (
+            folder / "source.json"
+        ).is_file()
+        again = call(settings, "vault/source/save", {**params, "data": ""})
+        assert again["complete"] and again["source"]["sha256"] == params["sha256"]
+        read = call(
+            settings, "vault/source/read", {"documentId": result["document"]["id"]}
+        )
+        assert read["eof"] and base64.b64decode(read["data"])[:2] == b"PK"
+        assert any(
+            b["id"] == result["document"]["id"]
+            for b in call(settings, "vault/books/list", {})["books"]
+        )
+        # A chapter folder that cannot be written is reported the same way.
+        with patch.object(Path, "write_text", side_effect=OSError(28, "No space left")):
+            result, _ = import_book("No Space")
+        assert result["complete"] and result["source"]["chapters"] == []
+        assert "No space left" in result["source"]["chapterError"]
+        folder = Path(result["document"]["folder"])
+        assert not [p.name for p in folder.iterdir() if p.name.startswith(".chapters")]
+        # A damaged chapter is listed in the record; the readable ones are written.
+        data = corrupt(epub_fixture.build(title="Damaged"), "OEBPS/ch2.xhtml")
+        digest = hashlib.sha256(data).hexdigest()
+        result = call(
+            settings,
+            "vault/source/save",
+            {
+                "url": "urn:sha256:" + digest,
+                "title": "Damaged",
+                "kind": "epub",
+                "sha256": digest,
+                "size": len(data),
+                "offset": 0,
+                "data": b64(data),
+            },
+        )
+        assert [c["href"] for c in result["source"]["chapters"]] == [
+            "OEBPS/ch1.xhtml",
+            "OEBPS/ch3.xhtml",
+        ]
+        assert result["source"]["skippedChapters"][0]["href"] == "OEBPS/ch2.xhtml"
 print("PASS vault/source/save, vault/source/read and vault/books/list for EPUB books")
 
 

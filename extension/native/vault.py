@@ -1085,9 +1085,7 @@ def _public_source(root, ident, record):
         "importedAt": record.get("importedAt"),
         "chaptersPath": str(folder / "chapters"),
         "chapters": record["chapters"],
-        **(
-            {"chapterError": record["chapterError"]} if "chapterError" in record else {}
-        ),
+        **{k: record[k] for k in ("chapterError", "skippedChapters") if k in record},
     }
 
 
@@ -1117,15 +1115,20 @@ def _write_chapters(folder, document, record):
     """Writes chapters/NN-<title>.md from original.epub and returns the new record.
 
     The folder is generated: it is built beside the old one and swapped in."""
-    record = {k: v for k, v in record.items() if k != "chapterError"}
+    record = {
+        k: v for k, v in record.items() if k not in ("chapterError", "skippedChapters")
+    }
     try:
         book = epub_text.extract(folder / record["file"])
-    except epub_text.EpubError as error:
-        return {**record, "chapters": [], "chapterError": str(error)}
+    except Exception as error:
+        # The original is already stored: any extraction failure leaves it readable,
+        # without chapter files, instead of failing the import.
+        reason = str(error) if isinstance(error, epub_text.EpubError) else repr(error)
+        return {**record, "chapters": [], "chapterError": reason[:500]}
     chapters = book["chapters"]
     width = max(2, len(str(len(chapters))))
     building = folder / f".chapters-{uuid.uuid4().hex[:12]}.tmp"
-    entries = []
+    entries, previous = [], None
     try:
         building.mkdir()
         for number, chapter in enumerate(chapters, 1):
@@ -1152,16 +1155,22 @@ def _write_chapters(folder, document, record):
                     "chars": len(chapter["markdown"]),
                 }
             )
-        target, previous = folder / "chapters", None
+        target = folder / "chapters"
         if target.exists():
             previous = folder / f".chapters-{uuid.uuid4().hex[:12]}.old"
             target.rename(previous)
         building.rename(target)
+    except OSError as error:
+        reason = "Could not write chapter files: " + _describe(error)
+        return {**record, "chapters": [], "chapterError": reason}
     finally:
         shutil.rmtree(building, ignore_errors=True)
     if previous:
         shutil.rmtree(previous, ignore_errors=True)
-    return {**record, "chapters": entries, "metadata": book["metadata"]}
+    record = {**record, "chapters": entries, "metadata": book["metadata"]}
+    if book["skipped"]:
+        record["skippedChapters"] = book["skipped"][:100]
+    return record
 
 
 def _prune_uploads(folder):
