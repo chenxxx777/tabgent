@@ -31,12 +31,19 @@ const viewerUrl = 'chrome-extension://test/pdf/viewer.html?url=' + source;
 let tabUrl = viewerUrl;
 const opened = [];
 globalThis.chrome = {
+  alarms: {
+    onAlarm: event(),
+    get: async () => null,
+    create: async () => {},
+    clear: async () => true,
+  },
   runtime: {
     id: 'test',
     getURL: (p) => 'chrome-extension://test/' + p,
     onConnect: event(),
     onMessage: event(),
     onInstalled: event(),
+    onStartup: event(),
     connectNative: () => native,
   },
   contextMenus: { onClicked: event() },

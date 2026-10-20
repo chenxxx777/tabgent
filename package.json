@@ -22,6 +22,7 @@
     "test:local-files": "node scripts/test-local-files-browser.cjs",
     "test:clip": "node scripts/test-clip-browser.cjs",
     "test:agent-tab": "node scripts/test-agent-tab-browser.cjs",
+    "test:feeds": "node scripts/test-feeds-browser.cjs",
     "package:store": "python3 scripts/package-store.py"
   },
   "devDependencies": {

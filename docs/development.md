@@ -80,6 +80,7 @@ These are deliberately excluded from `npm test`:
 | `npm run test:clip`                          | Same isolation, fixture app-server for Codex; clipping pages into the vault.                 |
 | `npm run test:local-files`                   | Same isolation, fixture app-server for Codex; files opened from the computer (`file://`).    |
 | `npm run test:agent-tab`                     | Same isolation, fixture app-server for Codex; an Agent tab after its source page closes.     |
+| `npm run test:feeds`                         | Same isolation; subscriptions with generated feeds served from `127.0.0.1`.                  |
 
 `npm run test:epub` imports a generated book into a temporary vault, checks highlights,
 Ask AI, reopening, a browser restart and blocked book scripts. Codex discovery is
@@ -129,6 +130,18 @@ reloading, steering and stopping without disconnecting, save its turns to the sa
 and thread, read the PDF's page files through `reading_vault`, report a browser read of the
 closed page as a tool error, keep page history, and close the session with its last tab. The
 fixture app-server follows `[hold]`, `[browser-read]` and `[vault-read:NNN]` in the message.
+
+`npm run test:feeds` serves generated feeds from a local HTTP server: an RSS feed with an
+ETag, an Atom feed declared by a website's `<link rel="alternate">`, a JSON Feed, a gzip
+feed, a feed that fails once, a billion-laughs feed and a 4.5 MB feed. It subscribes by
+feed address, by website address and from OPML; checks the index rows and that no vault
+folder is added, that feed requests carry no cookie or referrer, that a refresh sends the
+ETag and a `304` adds nothing, that a failing feed recovers and a hostile one is refused
+with its reason shown, that the vault keeps answering library requests while the large
+feed is stored, and that an overdue subscription is checked after a browser restart. The
+unit tests `feeds-parse.py` (run them with `/usr/bin/python3` too: its expat 2.2.8 has no
+entity amplification limits), `feeds-vault.py` and `feeds-routing.mjs` cover parsing,
+storage, scheduling and requests in detail.
 
 Start a debug browser with:
 

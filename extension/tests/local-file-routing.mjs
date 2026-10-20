@@ -105,12 +105,19 @@ frames.get(5).push({
   url: 'file:///Users/reader/.ssh/config',
 });
 globalThis.chrome = {
+  alarms: {
+    onAlarm: event(),
+    get: async () => null,
+    create: async () => {},
+    clear: async () => true,
+  },
   runtime: {
     id: 'test',
     getURL: (p) => base + p,
     onConnect: event(),
     onMessage: event(),
     onInstalled: event(),
+    onStartup: event(),
     onStartup: event(),
     connectNative: () => native,
   },
