@@ -93,6 +93,7 @@ const respond = (data, headers = {}, status = 200, url) => {
   const bytes = typeof data === 'string' ? encoder.encode(data) : data;
   return {
     status,
+    ok: status >= 200 && status < 300,
     url: url || '',
     headers: new Headers(headers),
     body: status === 304 ? null : body(bytes),
@@ -434,11 +435,11 @@ try {
     }),
   );
   requests.length = 0;
-  const page = await feeds.reader(
+  const fullPage = await feeds.reader(
     { type: 'feedFullText', url: 'https://evil.test/' },
     readerSender,
   );
-  assert.match(page.html, /Whole text/);
+  assert.match(fullPage.html, /Whole text/);
   assert.equal(requests.length, 1);
   assert.equal(requests[0].url, 'https://read.test/short?utm_source=rss');
   assert.equal(requests[0].options.credentials, 'include');
