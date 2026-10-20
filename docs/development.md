@@ -75,6 +75,7 @@ These are deliberately excluded from `npm test`:
 | `npm run test:pdf-highlights`                | Same isolation, fixture app-server for Codex; PDF.js highlights, saved turns, and restore.   |
 | `npm run test:epub`                          | Playwright Chromium and Python; the real connector with temporary `HOME` and `CODEX_HOME`.   |
 | `npm run test:library`                       | Same isolation, fixture app-server for Codex; library, local PDF import, reopen and restore. |
+| `npm run test:local-files`                   | Same isolation, fixture app-server for Codex; files opened from the computer (`file://`).    |
 
 `npm run test:epub` imports a generated book into a temporary vault, checks highlights,
 Ask AI, reopening, a browser restart and blocked book scripts. Codex discovery is
@@ -84,6 +85,19 @@ disabled, so no app-server or account is used.
 generated PDF and EPUB from the library, highlights and asks about the PDF (saving a turn
 from the fixture app-server), opens the library from the side panel, opens every kind of
 document from it, restarts the browser and checks drag and drop.
+
+`npm run test:local-files` generates a PDF, Markdown, text and HTML files in the temporary
+folder and opens them by `file://` URL. It checks that a PDF goes straight to the PDF.js
+viewer, its highlight, Ask AI, note and vault copy under `urn:sha256`, a restart, a moved
+copy and a library import of the same file, highlights and Ask AI on Markdown and text
+files, the library entry of a text file, links from a local page and refused links from a
+website, and the explanation page, side panel reminder and pick-up of open files when file
+access is turned off and on. Codex is `fixtures/app-server-tools.py`, which wraps the
+fixture app-server: a message line `TOOL {json}` makes it call the browser tool with those
+arguments and record the result, which checks that Agent reads local tabs, cannot click or
+type there and cannot open `file://` URLs. The file access part uses a copy of the
+extension without its manifest key in its own profile: Chromium keeps file access for a
+keyed extension loaded with `--load-extension` after the setting is turned off.
 
 Start a debug browser with:
 

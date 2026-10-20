@@ -24,6 +24,10 @@ flowchart LR
 | `extension/pdf/viewer.js`         | PDF.js wrapper: loading, fallback, live quotes, and Agent PDF commands.     |
 | `extension/pdf/pdf-highlights.js` | Selection toolbar, saved PDF highlights, and highlight actions in PDF.js.   |
 | `extension/pdf/pdf-anchor.js`     | PDF page text, PDF anchors, and verified anchor restoration.                |
+| `extension/pdf/file.html`         | The PDF.js viewer's entry page for PDFs opened from the computer.           |
+| `extension/local-files.js`        | `file://` URL checks, the file access prompt, files open before access.     |
+| `extension/local-pdf.js`          | Hands a local PDF in Chrome's own viewer to the PDF.js viewer.              |
+| `extension/file-access.html`      | Explains Chrome's "Allow access to file URLs" setting, opened once.         |
 | `extension/epub/`                 | Library and EPUB reader page: vault documents, imports, books, highlights.  |
 | `extension/epub-routing.js`       | EPUB reader port registry and sender checks.                                |
 | `extension/reading-companion.js`  | Highlight and page conversations: reading context and saved turns.          |
@@ -72,8 +76,9 @@ are in `extension/vendor/pdfjs`, with packaging details in its README.
 
 A load failure or **Open in Chrome viewer** installs a tab/URL-specific session
 allow rule before navigating back, preventing redirect loops. Other tabs continue
-to use PDF.js. Embedded PDFs, POST responses, explicit attachment downloads, and
-local files are not automatically redirected. Existing open PDFs use the new
+to use PDF.js. Embedded PDFs, POST responses and explicit attachment downloads are not
+automatically redirected. PDFs opened from the computer have their own rule and entry page
+(see [Files from the computer](#files-from-the-computer)). Existing open PDFs use the new
 viewer after reload unless that tab/URL has opted into native fallback.
 
 The native fallback is retained: **Quote in Agent** sends a right-click quote
@@ -131,7 +136,9 @@ connector process cannot interleave. Error codes are `invalid_params`, `not_foun
 
 ## Webpage highlights
 
-Top-level HTTP(S) pages load `web-anchor.js` and `highlight-content.js`. A non-empty
+Top-level HTTP(S) pages, and text files opened from the computer (see
+[Files from the computer](#files-from-the-computer)), load `web-anchor.js` and
+`highlight-content.js`. A non-empty
 selection shows a small toolbar with **Highlight** and **Ask AI**. The toolbar and the
 highlight popover live in one closed shadow root on a top-layer `popover` host. Inline
 `!important` host styles and constructed stylesheets keep page CSS out and do not
@@ -341,6 +348,7 @@ PDF or EPUB), author or host, highlight count and the last update. Each entry is
 | Document     | Opens                                                        |
 | ------------ | ------------------------------------------------------------ |
 | Webpage      | Its HTTP(S) URL; the page restores its highlights.           |
+| Local file   | Its `file://` URL, opened with the tabs API.                 |
 | PDF (web)    | `pdf/viewer.html?url=<PDF URL>`, the bundled PDF.js viewer.  |
 | Imported PDF | `pdf/viewer.html?url=urn:sha256:<hex>`, from the vault copy. |
 | EPUB         | `reader.html?book=<document ID>`, from the vault copy.       |
@@ -386,6 +394,92 @@ in its address and opens them with `PDFViewerApplication.open({ data })`. There 
 web address, so **Open in Chrome viewer** is hidden and `pdfFallback` is refused. An
 imported PDF is not in the vault any more when the vault folder is changed; the viewer
 then reports that it cannot be opened.
+
+## Files from the computer
+
+Tabgent works on files the user opens in Chrome from the computer, typically by
+double-clicking a PDF, Markdown, text or HTML file whose default application is Chrome.
+Nothing is imported first. A `file://` URL is a document only when it names a file: a
+directory listing (its URL ends in `/`) and a URL with a host are never documents, readable
+tabs, or senders.
+
+**File access.** The manifest requests `file:///*`, and Chrome grants it only after the user
+turns on **Allow access to file URLs** on Tabgent's page in `chrome://extensions`; the
+extension cannot turn it on. `chrome.extension.isAllowedFileSchemeAccess()` reports it.
+Without it, Chrome injects no content scripts into `file://` pages, applies no
+declarative rules to them and refuses scripting, but webNavigation events still report the
+URLs. The first committed top-level navigation to a readable type (`.pdf`, `.md`,
+`.markdown`, `.txt`, `.html` and similar) while access is off opens `file-access.html`
+once, next to the file (`fileAccessPrompted` in `chrome.storage.local`). It explains the
+setting and opens `chrome://extensions/?id=<extension ID>`. The side panel's context
+reports `fileAccess: false` for a local companion tab, which shows a reminder with the
+same button. Changing the setting reloads the extension. The worker stores the last known
+state (`fileAccess`); when it changes from off to on, local tabs get `local-pdf.js`, the
+selection script, the reading layer and its stylesheet, so open files work without a reload.
+
+**Markdown, text and HTML files.** The manifest declares the selection script (top frame
+only) and the reading layer for `file:///*`, excluding URLs that end in `/`. The reading
+layer runs only when Chrome shows a text document (`text/*`, XHTML, XML or JSON), so a PDF,
+image or media file gets none. Highlights, Ask AI, notes and page conversations work as on
+webpages: the worker accepts `file://` senders from the top frame of the current document,
+checked against Chrome's frame record like HTTP(S) senders, and accepts no `file://`
+subframe, because a local page can load other local files into frames. The vault document
+is the `file://` URL without its fragment, kind `web`, in `Articles/`. A text file is
+edited in place, so a content hash would orphan its notes after every edit; the path keeps
+them, and the web anchors re-find passages after edits. Moving or renaming the file leaves
+its notes at the old path. Markdown is shown as Chrome shows it, as plain text.
+
+**PDFs.** A second dynamic redirect rule (`900002`) matches main-frame `file://` URLs whose
+path ends in `.pdf` (case-insensitive) and sends them to `pdf/file.html?url=<file URL>`.
+Chrome applies it before its own viewer loads and records a server redirect, so the tab
+shows no flash of Chrome's viewer and history has no `file://` entry. Chrome applies
+extension rules only after the extension has loaded: a PDF that opens Chrome at launch
+loads in Chrome's viewer first. `local-pdf.js`, declared for `file:///*` at
+`document_start`, runs in Chrome's PDF document (`document.contentType` is
+`application/pdf`) and asks the worker with `localPdfOpen`, which also covers PDFs whose
+name does not end in `.pdf`. The worker answers with the viewer URL unless a session rule
+records that the user chose Chrome's viewer for that tab and URL, and the script replaces
+the location, without a history entry. `chrome.runtime.onStartup` injects the script into
+local tabs that loaded before the extension.
+
+`file.html` is `viewer.html` under another name. It is web accessible only to `file://`
+pages, so a link in a local HTML file can open a local PDF in it, while a website cannot
+navigate to it; `viewer.html` (web accessible to HTTP(S) pages) never accepts a `file://`
+source. The viewer refuses a `file://` source in a frame. It reads the file with `fetch()`,
+which Chrome allows extension pages while file access is on, through the same browser
+process that loaded the `file://` URL. It then computes the SHA-256 of the bytes, opens a
+copy of them in PDF.js, and sends `{ type: "document", sha256 }` on its `pdf` port, again
+after every reconnect. The worker keeps the hash only for a `file.html` port in a tab's top
+frame. **Open in Chrome viewer** adds the same tab-scoped session allow rule as for online
+PDFs and navigates back to the `file://` URL.
+
+The vault document of a local PDF is `urn:sha256:<hex>`, kind `pdf`, as for a PDF imported
+in the library: the same file opened from anywhere, renamed, moved or imported shares one
+document, and a changed file is a new one. Highlight and page-conversation messages from
+the viewer resolve that URN from the hash its port announced (waiting briefly for it),
+never from the page or its path. The quote of an Ask AI hand-off carries the URN, while the
+per-message browser context names the `file://` URL, so Codex sees where the file is.
+
+The viewer copies the PDF into the vault once the document exists (its first highlight, or
+when a saved page conversation or a reopened PDF finds the document), through
+`pdfFileSave` messages relaying `vault/source/save` in the import's 2 MiB chunks. The worker
+accepts them only from the tab's current `file.html` viewer and fills in `url` and
+`sha256` from the announced hash; the vault checks the bytes. The copy is `original.pdf`
+with `source.json` and the page text in `pages/`, exactly as an import, so the library
+reopens it and Codex can read its pages after the file moves or the tab closes. Copying at
+the first note, rather than on open, means opening PDFs to read them writes nothing, while
+any PDF with notes keeps its source. A PDF larger than the 100 MiB vault limit keeps its
+notes without a copy.
+
+**Agent.** Local tabs are in the browser tool's scope like HTTP(S) tabs, listed by their
+`file://` URL (a local PDF by its file, not the viewer). They are read-only: `read`,
+`frames`, `screenshot`, `scroll`, `focus`, history navigation and the PDF.js commands work;
+`click`, `hover`, `drag`, `type`, `press`, `select`, `check`, `resources` and
+`saveResource` are refused, so Agent cannot follow a link in a local page to open another
+file. `read` covers the top frame of a local page and never its `file://` frames.
+`navigate`, `open` and conversation links accept only HTTP(S) URLs, so Agent never opens a
+local file. Reading a local PDF left in Chrome's viewer fetches the file in the worker and
+uses the PDFKit path of online PDFs.
 
 ## Reading conversations
 

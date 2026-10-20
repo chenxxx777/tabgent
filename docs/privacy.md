@@ -29,20 +29,31 @@ limit which tabs tools can access; they do not validate the intentions of a page
 
 ## Permissions
 
-| Permission                            | Why it is needed                                                                      |
-| ------------------------------------- | ------------------------------------------------------------------------------------- |
-| HTTP(S) host access and `scripting`   | Read the selected page and observe text selection.                                    |
-| `tabs` and `webNavigation`            | Associate conversations with tabs and preserve them across navigation.                |
-| `sidePanel`                           | Display the conversation alongside the page.                                          |
-| `storage`                             | Keep preferences, draft references, and tab/session state.                            |
-| `nativeMessaging`                     | Connect to the installed local Python host.                                           |
-| `debugger`                            | Perform trusted browser input and screenshots. Chrome may show an attachment notice.  |
-| `declarativeNetRequestWithHostAccess` | Open online PDF documents in the bundled local viewer; allow native fallback per tab. |
-| `contextMenus`                        | Quote selected text, including in Chrome's PDF viewer; open the library.              |
+| Permission                            | Why it is needed                                                                       |
+| ------------------------------------- | -------------------------------------------------------------------------------------- |
+| HTTP(S) host access and `scripting`   | Read the selected page and observe text selection.                                     |
+| `file:///*` host access               | Work on files you open in Chrome, once you allow access to file URLs.                  |
+| `tabs` and `webNavigation`            | Associate conversations with tabs and preserve them across navigation.                 |
+| `sidePanel`                           | Display the conversation alongside the page.                                           |
+| `storage`                             | Keep preferences, draft references, and tab/session state.                             |
+| `nativeMessaging`                     | Connect to the installed local Python host.                                            |
+| `debugger`                            | Perform trusted browser input and screenshots. Chrome may show an attachment notice.   |
+| `declarativeNetRequestWithHostAccess` | Open online and local PDFs in the bundled local viewer; allow native fallback per tab. |
+| `contextMenus`                        | Quote selected text, including in Chrome's PDF viewer; open the library.               |
 
 Browser tools enforce current-window or all-windows scope on each operation.
 Incognito and internal browser pages are excluded from ordinary page automation.
 A native new tab may be navigated to an HTTP(S) page without inspecting its UI.
+
+**Files from your computer.** Chrome lets Tabgent read `file://` pages only after you turn
+on **Allow access to file URLs** for it in `chrome://extensions`; Tabgent cannot turn it on
+itself. With it on, Tabgent works only on files you open in Chrome: it never lists folders
+(a directory listing is not treated as a document) and does not read other files. In the
+selected window scope, Agent can read such a tab (text, a PDF page, a screenshot) but cannot
+click or type in it, and it cannot open `file://` addresses, so it cannot reach another file
+through a local page. Frames inside a local page are never read. Content read from a file is
+sent to Codex like webpage content, and the file's path is the page address in each
+message's browser context.
 
 ## Storage
 
@@ -58,8 +69,8 @@ symlink so existing attachment paths remain valid.
 | `$CODEX_HOME/projects/tabgent/attachments/` | User-uploaded file copies, each in a generated subdirectory.            |
 | `~/ReadingVault/` or the configured folder  | Saved highlights, your notes on them, page URLs, anchors, discussions.  |
 | `Books/book-*/` in the vault                | Imported EPUB files, their SHA-256 record, and chapter text.            |
-| `Books/paper-*/` in the vault               | PDF highlights; imported PDF files, their SHA-256 record and page text. |
-| Chrome extension local storage              | Reading-note saves waiting for a retry (at most 100), EPUB positions.   |
+| `Books/paper-*/` in the vault               | PDF highlights; imported or highlighted local PDFs, SHA-256, page text. |
+| Chrome extension local storage              | Note saves awaiting retry (at most 100), EPUB positions, file prompt.   |
 | `$CODEX_HOME/projects/tabgent/vault.json`   | The configured ReadingVault folder.                                     |
 | Shared Codex session storage and index      | Conversation history and project association.                           |
 | Chrome extension session storage            | Tab bindings, selection drafts, text drafts, and attachment references. |
@@ -104,6 +115,16 @@ metadata, the host name, each highlighted passage with its page, and the saved
 discussion. A PDF opened from the web is not copied into the vault. Highlights, comments and
 edits made with the PDF.js annotation tools are not saved to the vault; they are saved
 only when you download the edited PDF.
+
+A PDF you open from your computer in Chrome opens in the same viewer, which reads the file
+in Chrome and computes its SHA-256. Opening it writes nothing. Its notes are named
+`urn:sha256:<hash>`, and its first highlight or saved discussion copies the PDF into the
+vault as `Books/paper-*/original.pdf` with `source.json` (file name, size, SHA-256) and the
+page text in `pages/NNN.md`, as for an import from the library. The copy keeps the notes
+usable after the file is moved or deleted, lets the library reopen it, and lets Codex read
+its pages on request; a PDF over 100 MB keeps its notes without a copy. Highlights on a
+Markdown, text or HTML file from your computer are saved under `Articles/` like webpage
+highlights, with the file's `file://` path as its address; the file itself is not copied.
 
 A PDF you choose or drop in the library is copied into the vault as
 `Books/paper-*/original.pdf`, with `source.json` recording its file name, size, SHA-256

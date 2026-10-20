@@ -13,7 +13,9 @@ title, selected text, and page content or screenshots requested for a task. Page
 associations let you find conversations about a URL. Browser tools also obtain
 information about tabs and controls when needed to carry out instructions.
 Selecting text creates a local draft; submitting it provides that text to Codex.
-Opening a PDF alone does not send the PDF to Codex.
+Opening a PDF alone does not send the PDF to Codex. Files you open in Chrome from your
+computer are handled like webpages once you allow Tabgent access to file URLs; their path
+is the page address.
 
 ## Processing and sharing
 
