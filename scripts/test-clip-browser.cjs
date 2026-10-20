@@ -34,11 +34,24 @@ const article = `<!doctype html><html lang="en"><head><meta charset="utf-8"><tit
   <p id="a">Autonomy does not mean independence from others, but endorsement of one's own actions.</p>
   ${paragraphs(8, 'Body')}
   <p><img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" data-src="/img/lazy.jpg" alt="Lazy figure" width="640" height="360"></p>
+  <p><img src="/img/forbidden.png" alt="Forbidden" width="320" height="200">
+    <img src="/img/vector.svg" alt="Vector" width="320" height="200"></p>
   <p>Read the <a href="/notes">notes</a> or <a href="javascript:alert(1)">this</a>.</p>
   <script>window.pageScript = 1</script>
   </article></main><footer>Copyright Fixture Essays</footer></body></html>`;
 // The same text on a page that enforces Trusted Types, which the clipping script must survive.
 const trusted = article.replace('<title>On Autonomy</title>', '<title>Trusted Types</title>');
+// Large images (about 4.5 MB each) whose upload takes several vault requests.
+const heavy = `<!doctype html><html><head><meta charset="utf-8"><title>Heavy figures</title></head>
+  <body><main><article><h1>Heavy figures</h1>${paragraphs(6, 'Figure')}
+  ${[1, 2, 3, 4].map((n) => `<p><img src="/img/big-${n}.png" alt="Big ${n}" width="800" height="600"></p>`).join('')}
+  </article></main></body></html>`;
+const bigImage = (n) => {
+  const bytes = crypto.randomBytes(4.5 * 1024 * 1024);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, n]).copy(bytes);
+  return bytes;
+};
+const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(3000, 7)]);
 const short = `<!doctype html><html><head><meta charset="utf-8"><title>Short note</title></head><body>
   <main><p>Only a few words on this page.</p></main><aside>${paragraphs(1, 'Aside')}</aside></body></html>`;
 
@@ -54,17 +67,38 @@ const short = `<!doctype html><html><head><meta charset="utf-8"><title>Short not
   const personalBefore = personalState();
   fs.mkdirSync(codexHome, { recursive: true });
   const requested = [];
+  const big = new Map([1, 2, 3, 4].map((n) => [`/img/big-${n}.png`, bigImage(n)]));
   const server = http.createServer((request, response) => {
     requested.push(request.url);
     const pathname = new URL(request.url, 'http://127.0.0.1').pathname;
+    if (pathname === '/img/lazy.jpg') {
+      response.setHeader('content-type', 'image/jpeg');
+      return void response.end(JPEG);
+    }
+    if (pathname === '/img/vector.svg') {
+      response.setHeader('content-type', 'image/svg+xml');
+      return void response.end('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>');
+    }
+    if (big.has(pathname)) {
+      response.setHeader('content-type', 'image/png');
+      return void response.end(big.get(pathname));
+    }
     if (pathname.startsWith('/img/')) {
-      response.statusCode = 404;
+      response.statusCode = pathname === '/img/forbidden.png' ? 403 : 404;
       return void response.end();
     }
     response.setHeader('content-type', 'text/html; charset=utf-8');
     if (pathname === '/trusted')
       response.setHeader('content-security-policy', "require-trusted-types-for 'script'");
-    response.end(pathname === '/trusted' ? trusted : pathname === '/short' ? short : article);
+    response.end(
+      pathname === '/trusted'
+        ? trusted
+        : pathname === '/short'
+          ? short
+          : pathname === '/heavy'
+            ? heavy
+            : article,
+    );
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const origin = `http://127.0.0.1:${server.address().port}`;
@@ -263,7 +297,12 @@ const short = `<!doctype html><html><head><meta charset="utf-8"><title>Short not
     );
     assert.match(markdown, /Autonomy does not mean independence from others, but endorsement/);
     assert.match(markdown, /Body paragraph 8: careful readers/);
-    assert.match(markdown, new RegExp(`!\\[Lazy figure\\]\\(${origin}/img/lazy\\.jpg\\)`));
+    // The lazy image is saved in assets/; the forbidden and SVG images stay linked online.
+    const jpeg = `${crypto.createHash('sha256').update(JPEG).digest('hex').slice(0, 16)}.jpg`;
+    assert.match(markdown, new RegExp(`!\\[Lazy figure\\]\\(assets/${jpeg}\\)`));
+    assert.deepEqual(fs.readFileSync(path.join(articles, folder, 'assets', jpeg)), JPEG);
+    assert.match(markdown, new RegExp(`!\\[Forbidden\\]\\(${origin}/img/forbidden\\.png\\)`));
+    assert.match(markdown, new RegExp(`!\\[Vector\\]\\(${origin}/img/vector\\.svg\\)`));
     assert.match(markdown, new RegExp(`\\[notes\\]\\(${origin}/notes\\)`));
     assert.doesNotMatch(markdown, /javascript:|Copyright|Archive|pageScript/);
     const html = read(folder, 'article.html');
@@ -272,15 +311,40 @@ const short = `<!doctype html><html><head><meta charset="utf-8"><title>Short not
     const first = record(folder);
     assert.equal(first.origin.pageUrl, origin + '/essays/autonomy?id=3#intro');
     assert.equal(first.origin.method, 'article');
-    assert.deepEqual(first.images, { found: 1, saved: 0, remote: 1 });
+    assert.deepEqual(first.images, {
+      found: 3,
+      saved: 1,
+      remote: 2,
+      failed: [
+        { source: `${origin}/img/forbidden.png`, reason: 'http_403' },
+        { source: `${origin}/img/vector.svg`, reason: 'not_image' },
+      ].sort(
+        (a, b) =>
+          first.images.failed.findIndex((f) => f.source === a.source) -
+          first.images.failed.findIndex((f) => f.source === b.source),
+      ),
+    });
+    assert.deepEqual(
+      first.assets.map((asset) => [asset.file, asset.mime]),
+      [[`assets/${jpeg}`, 'image/jpeg']],
+    );
     const anchors = JSON.parse(read(folder, 'anchors.json'));
     assert.equal(anchors.highlights.length, 1, 'The highlight is kept');
-    const savedText = await message('clipSaved', 'On Autonomy', String(first.words));
+    const savedText = [
+      await message('clipSaved', 'On Autonomy', String(first.words)),
+      await message('clipImagesSaved', '1'),
+      await message('clipImagesFailed', '2'),
+    ].join(' ');
     assert(
       await until(async () => (await promptText(page)).includes(savedText)),
-      'The page says the clip was saved',
+      'The page says the clip was saved, with its images',
     );
-    assert.deepEqual(requested.slice(before), [], 'Clipping fetches nothing from the page site');
+    // Only the images are fetched, by the worker; the page itself is not loaded again.
+    assert.deepEqual([...new Set(requested.slice(before))].sort(), [
+      '/img/forbidden.png',
+      '/img/lazy.jpg',
+      '/img/vector.svg',
+    ]);
     assert.match(
       await page.evaluate(() => document.querySelector('img').getAttribute('src')),
       /^data:/,
@@ -293,7 +357,9 @@ const short = `<!doctype html><html><head><meta charset="utf-8"><title>Short not
           (await message('clipAgain')),
       ),
     );
-    console.log('PASS the side panel clips the page into its vault folder; the page is unchanged');
+    console.log(
+      'PASS the side panel clips the page and its images into its vault folder; the page is unchanged',
+    );
 
     // Codex can find and read the clipped text with reading_vault.
     const tool = spawnSync(
@@ -417,6 +483,52 @@ print(json.dumps([m["path"] for m in found["matches"]][:3] + [read["text"][:2000
     assert.equal(record(shortFolder).origin.method, 'page');
     assert.match(read(shortFolder, 'article.md'), /Only a few words on this page\./);
     console.log('PASS a page with little text can be saved whole');
+
+    // Large images download and upload while the clip runs, one vault request at a time: a
+    // highlight made meanwhile in another tab saves within two seconds.
+    const other = await context.newPage();
+    await other.goto(origin + '/essays/second');
+    await wait(1200);
+    // The side panel follows the active tab.
+    await page.bringToFront();
+    await page.goto(origin + '/heavy');
+    await wait(1500);
+    await panel(`(() => {
+      document.getElementById('readingButton').click();
+      document.getElementById('readingClip').click();
+    })()`);
+    // The page shows the image progress while the clip runs.
+    const progress = await message('clipSavingImages', '\u0001', '\u0002');
+    const running = progress.slice(0, progress.indexOf('\u0001'));
+    assert(
+      await until(async () => (await promptText(page)).startsWith(running), 20000),
+      'The images are being saved',
+    );
+    const secondFolder = () =>
+      folders().find((name) => name.startsWith('article-on-autonomy-') && name !== folder);
+    const started = Date.now();
+    await other.bringToFront();
+    await drag(other, '#a', 'endorsement');
+    await clickIn(other, 'tabgent-reader', (node) => {
+      const at = (node.attributes || []).indexOf('data-action');
+      return at >= 0 && node.attributes[at + 1] === 'highlight';
+    });
+    assert(await until(() => secondFolder(), 5000), 'The highlight is saved');
+    const latency = Date.now() - started;
+    assert(latency < 2000, `A highlight waited ${latency} ms during the clip`);
+    const heavyFolder = await until(
+      () =>
+        folders().find(
+          (name) =>
+            name.startsWith('article-heavy-figures-') &&
+            fs.existsSync(path.join(articles, name, 'article.json')),
+        ),
+      60000,
+    );
+    assert(heavyFolder, 'The heavy page is clipped');
+    assert.equal(record(heavyFolder).assets.length, 4);
+    assert.equal(fs.readdirSync(path.join(articles, heavyFolder, 'assets')).length, 4);
+    console.log(`PASS a highlight saves in ${latency} ms while a clip saves large images`);
 
     panel.close();
     assert.deepEqual(outside, [], 'No request left the machine');

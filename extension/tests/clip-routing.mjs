@@ -5,6 +5,7 @@
 // and names the clipped text in the reading context. No Codex process or model is used.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -57,6 +58,17 @@ const native = {
   },
 };
 
+// The worker downloads a clip's images; this network answers only the fixture addresses.
+Uint8Array.prototype.toBase64 ??= function () {
+  return Buffer.from(this).toString('base64');
+};
+const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, ...Array(200).fill(7)]);
+const fetched = [];
+globalThis.fetch = async (url, options) => {
+  fetched.push({ url, credentials: options?.credentials, referrerPolicy: options?.referrerPolicy });
+  if (url === 'https://example.test/figure.png') return new Response(PNG);
+  return new Response('Not found', { status: 404 });
+};
 const base = 'chrome-extension://test/';
 const article = 'https://example.test/essays/autonomy';
 const tabs = new Map([
@@ -157,6 +169,7 @@ async function attach(tabId) {
   return { port, messages, state, events, ui };
 }
 const panel = { id: 'test', url: base + 'ui/chat.html' };
+const TOKEN = 'c'.repeat(32);
 const result = (fields = {}) => ({
   ok: true,
   mode: 'article',
@@ -169,8 +182,13 @@ const result = (fields = {}) => ({
   direction: 'ltr',
   excerpt: 'About autonomy.',
   html: '<p>Autonomy is the endorsement of one&#39;s own actions.</p>',
-  markdown: "Autonomy is the endorsement of one's own actions.",
-  images: [{ url: 'https://example.test/figure.jpg', alt: 'Figure' }, { url: 'javascript:x' }],
+  markdown: `Autonomy is the endorsement of one's own actions.\n\n![Figure](tabgent-image-${TOKEN}-0)\n\n![Gone](tabgent-image-${TOKEN}-2)`,
+  images: [
+    { url: 'https://example.test/figure.png', alt: 'Figure' },
+    { url: 'javascript:x' },
+    { url: 'https://cdn.example.test/gone.png' },
+  ],
+  imageToken: TOKEN,
   words: 8,
   chars: 45,
   truncated: false,
@@ -241,13 +259,44 @@ try {
     siteName: 'Fixture Essays',
     publishedAt: '2026-10-01',
   });
-  assert.deepEqual(save.images, { found: 1, saved: 0, remote: 1 });
+  // The page's image is downloaded and saved; one that fails stays linked online.
+  const png = crypto.createHash('sha256').update(PNG).digest('hex');
+  assert.deepEqual(save.assets, [
+    { sha256: png, ext: 'png', size: PNG.length, source: 'https://example.test/figure.png' },
+  ]);
+  assert.deepEqual(save.images, {
+    found: 2,
+    saved: 1,
+    remote: 1,
+    failed: [{ source: 'https://cdn.example.test/gone.png', reason: 'http_404' }],
+  });
+  assert.deepEqual(
+    fetched.map(({ url, credentials, referrerPolicy }) => [url, credentials, referrerPolicy]),
+    [
+      ['https://example.test/figure.png', 'include', 'no-referrer'],
+      ['https://cdn.example.test/gone.png', 'include', 'no-referrer'],
+    ],
+  );
+  assert(vaultCalls('vault/clip/asset').length >= 2, 'The image is uploaded before the save');
   assert.equal(save.replace, undefined);
   const folder = first.document.folder;
-  assert.match(fs.readFileSync(path.join(folder, 'article.md'), 'utf8'), /endorsement of one's/);
+  const markdown = fs.readFileSync(path.join(folder, 'article.md'), 'utf8');
+  assert.match(markdown, /endorsement of one's/);
+  assert.match(markdown, new RegExp(`!\\[Figure\\]\\(assets/${png.slice(0, 16)}\\.png\\)`));
+  assert.match(markdown, /!\[Gone\]\(https:\/\/cdn\.example\.test\/gone\.png\)/);
+  assert.doesNotMatch(markdown, /tabgent-image-/);
+  assert.deepEqual(
+    fs.readFileSync(path.join(folder, 'assets', `${png.slice(0, 16)}.png`)),
+    Buffer.from(PNG),
+  );
   assert.deepEqual(
     notes.map((note) => note.text),
-    ['clipSaving', 'clipSaved(On Autonomy|8)'],
+    [
+      'clipSaving',
+      'clipSavingImages(1|2)',
+      'clipSavingImages(2|2)',
+      'clipSaved(On Autonomy|8) clipImagesSaved(1) clipImagesFailed(1)',
+    ],
   );
   await wait();
   assert(view.events('codex-reading-changed').length, 'The side panel refreshes');
@@ -345,7 +394,12 @@ try {
   assert.equal(clean.words, 0);
   assert.equal(clean.direction, 'ltr');
   assert.equal(clean.title.length, 500);
-  assert.equal(clean.images, 1);
+  assert.deepEqual(clean.images, [
+    { url: 'https://example.test/figure.png' },
+    { url: '' },
+    { url: 'https://cdn.example.test/gone.png' },
+  ]);
+  assert.equal(cleanClip(result({ imageToken: 'page-chosen' })).imageToken, '');
   console.log('PASS page results are bounded and reshaped');
 
   // The keyboard shortcut clips the active tab.

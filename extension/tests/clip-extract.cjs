@@ -158,8 +158,11 @@ function xThread() {
     assert.match(md, /Merged heading\n\nLeft · Right/);
     assert.match(md, /```python\nprint\("endorse"\)\n```/);
     assert.match(md, /~~removed~~/);
-    assert.match(md, /!\[Lazy figure\]\(https:\/\/clip\.test\/img\/lazy\.jpg\)/);
-    assert.match(md, /!\[Responsive\]\(https:\/\/clip\.test\/img\/large\.jpg\)/);
+    // Images are placeholders named by a per-clip token; the worker fills them in.
+    assert.match(article.imageToken, /^[0-9a-f]{32}$/);
+    const image = (n) => `\\(tabgent-image-${article.imageToken}-${n}\\)`;
+    assert.match(md, new RegExp(`!\\[Lazy figure\\]${image(0)}`));
+    assert.match(md, new RegExp(`!\\[Responsive\\]${image(1)}`));
     assert.match(
       md,
       /\[clipEmbedded\(video\.example\.test\)\]\(https:\/\/video\.example\.test\/embed\/1\)/,
@@ -234,7 +237,15 @@ function xThread() {
     assert.match(thread.markdown, /Second post in the thread/);
     assert.match(thread.markdown, /Third post in the thread/);
     assert.doesNotMatch(thread.markdown, /should not be clipped/);
-    assert.match(thread.markdown, /pbs\.twimg\.com\/media\/FIXTURE\?format=jpg&name=large/);
+    assert.deepEqual(
+      thread.images.map((image) => image.url),
+      ['https://pbs.twimg.com/media/FIXTURE?format=jpg&name=large'],
+    );
+    assert.match(
+      thread.markdown,
+      new RegExp(`!\\[Chart\\]\\(tabgent-image-${thread.imageToken}-0\\)`),
+    );
+    assert.notEqual(thread.imageToken, article.imageToken);
     assert.equal(thread.posts, 3);
     assert.deepEqual(requests, []);
     // Timelines and profiles are not clipped as articles.
