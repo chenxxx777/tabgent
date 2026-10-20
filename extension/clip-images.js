@@ -182,9 +182,17 @@ export const destination = (url) => (/[\s()<>]/.test(url) ? `<${url.replace(/>/g
 // make the Markdown too long).
 export function localizeMarkdown(markdown, token, images, files, { remote = true } = {}) {
   if (!/^[0-9a-f]{32}$/.test(token || '')) return markdown;
-  return markdown.replace(new RegExp(`tabgent-image-${token}-(\\d+)`, 'g'), (_, index) => {
+  // ![alt](placeholder), as the clipping script writes it; alt is already escaped.
+  const pattern = new RegExp(
+    `!\\[((?:\\\\.|[^\\]\\\\])*)\\]\\(tabgent-image-${token}-(\\d+)\\)`,
+    'g',
+  );
+  return markdown.replace(pattern, (_, alt, index) => {
     const file = files.get(Number(index));
     const url = images[Number(index)]?.url;
-    return file ? `assets/${file}` : url && remote ? destination(url) : '';
+    if (file) return `![${alt}](assets/${file})`;
+    if (url && remote) return `![${alt}](${destination(url)})`;
+    // Not saved and no address: only its description stays.
+    return alt;
   });
 }

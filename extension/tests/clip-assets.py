@@ -265,7 +265,8 @@ with tempfile.TemporaryDirectory(prefix="tabgent-clip-assets-") as directory:
 
         # When the user edited article.md, its kept copy still links the earlier images:
         # they stay in assets/.
-        (folder / "article.md").write_text("Edited, with ![photo](assets/x.jpg).\n")
+        photo = f"{digest(JPEG)[:16]}.jpg"
+        (folder / "article.md").write_text(f"Edited, with ![photo](assets/{photo}).\n")
         upload(settings, PNG)
         edited = clip(settings, [chart], replace=True)
         assert edited["backup"].startswith("article-edited-")
@@ -281,7 +282,13 @@ with tempfile.TemporaryDirectory(prefix="tabgent-clip-assets-") as directory:
         )
         assert again["backup"] is None
         names = sorted(path.name for path in (folder / "assets").iterdir())
-        assert names == sorted([f"{digest(JPEG)[:16]}.jpg", "my-sketch.png"]), names
+        assert names == sorted([photo, "my-sketch.png"]), names
+        # A later clip that drops the photo keeps it too: the edited copy still links it.
+        upload(settings, PNG)
+        later = clip(settings, [chart], replace=True)
+        assert later["backup"] is None
+        names = sorted(path.name for path in (folder / "assets").iterdir())
+        assert names == sorted([name, photo, "my-sketch.png"]), names
         print("PASS the images of an edited article.md are kept with it")
 
         # An assets/ that is a symbolic link is refused before anything is written.

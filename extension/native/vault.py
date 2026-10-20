@@ -844,9 +844,8 @@ def save_clip(settings, params):
         }
         # The record comes last: a clip is complete when the files it names are there.
         _write(folder / CLIP_RECORD, _json(record))
-        # The kept copy of an edited article.md still links the earlier images.
-        if not backup:
-            _clip_prune_assets(folder, current, record)
+        # Images no clip or kept edited copy uses any more are removed.
+        _clip_prune_assets(folder, current, record)
         document["updatedAt"] = now
         if not document["title"] and title:
             document["title"] = title
@@ -1875,9 +1874,18 @@ def _clip_asset_moves(root, data, assets):
 
 
 def _clip_prune_assets(folder, current, record):
-    """Removes images the previous clip saved that the new one does not use. Only names
-    Tabgent recorded are removed; other files in assets/ are the user's."""
+    """Removes images the previous clip saved that the new one does not use, unless a kept
+    edited copy (article-edited-*.md) still links them. Only names Tabgent recorded are
+    removed; other files in assets/ are the user's."""
     keep = {Path(asset["file"]).name for asset in record["assets"]}
+    for path in folder.glob("article-edited-*.md"):
+        try:
+            text = path.read_text("utf-8", errors="replace")
+        except OSError:
+            continue
+        keep.update(
+            re.findall(r"assets/([0-9a-f]{16}\.(?:jpg|png|gif|webp|avif))", text)
+        )
     for asset in (current or {}).get("assets") or []:
         name = Path(str(asset.get("file", ""))).name if isinstance(asset, dict) else ""
         if CLIP_ASSET_NAME.fullmatch(name) and name not in keep:
