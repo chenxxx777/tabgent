@@ -75,7 +75,7 @@ async function body(response, limit, signal) {
 }
 
 // images: [{ url }] in page order. Returns { assets, files, failed, skipped }: the images to
-// upload (one per distinct file), the saved file name for each image index, and why others
+// upload (one per distinct file, with every address that returned it), the saved file name for each image index, and why others
 // were not saved.
 export async function fetchImages(
   images,
@@ -143,10 +143,14 @@ export async function fetchImages(
           ext: result.ext,
           size: result.bytes.length,
           source: url,
+          sources: [],
           bytes: result.bytes,
         });
       }
-      byUrl.set(url, `${result.sha256.slice(0, 16)}.${assets.get(result.sha256).ext}`);
+      // Every address that returned these bytes: the reader shows the file at each of them.
+      const saved = assets.get(result.sha256);
+      saved.sources.push(url);
+      byUrl.set(url, `${result.sha256.slice(0, 16)}.${saved.ext}`);
     }
   }
   await Promise.all(Array.from({ length: limit.parallel }, work));
@@ -182,9 +186,17 @@ export const destination = (url) => (/[\s()<>]/.test(url) ? `<${url.replace(/>/g
 // make the Markdown too long).
 export function localizeMarkdown(markdown, token, images, files, { remote = true } = {}) {
   if (!/^[0-9a-f]{32}$/.test(token || '')) return markdown;
-  return markdown.replace(new RegExp(`tabgent-image-${token}-(\\d+)`, 'g'), (_, index) => {
+  // ![alt](placeholder), as the clipping script writes it; alt is already escaped.
+  const pattern = new RegExp(
+    `!\\[((?:\\\\.|[^\\]\\\\])*)\\]\\(tabgent-image-${token}-(\\d+)\\)`,
+    'g',
+  );
+  return markdown.replace(pattern, (_, alt, index) => {
     const file = files.get(Number(index));
     const url = images[Number(index)]?.url;
-    return file ? `assets/${file}` : url && remote ? destination(url) : '';
+    if (file) return `![${alt}](assets/${file})`;
+    if (url && remote) return `![${alt}](${destination(url)})`;
+    // Not saved and no address: only its description stays.
+    return alt;
   });
 }

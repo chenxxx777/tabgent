@@ -138,6 +138,7 @@ globalThis.chrome = {
       return tabs.get(id);
     },
     create: async (options) => (created.push(options), { id: 9 }),
+    query: async () => [...tabs.values()],
     update: async () => {},
     sendMessage: async () => null,
     onRemoved: event(),
@@ -270,7 +271,13 @@ try {
   // The page's image is downloaded and saved; one that fails stays linked online.
   const png = crypto.createHash('sha256').update(PNG).digest('hex');
   assert.deepEqual(save.assets, [
-    { sha256: png, ext: 'png', size: PNG.length, source: 'https://example.test/figure.png' },
+    {
+      sha256: png,
+      ext: 'png',
+      size: PNG.length,
+      source: 'https://example.test/figure.png',
+      sources: ['https://example.test/figure.png'],
+    },
   ]);
   assert.deepEqual(save.images, {
     found: 2,
@@ -589,8 +596,11 @@ try {
     (await call({ type: 'clipOpen' }, { ...reader })).error,
     /Invalid clip sender|Stale page/,
   );
-  // Deleting from the reader keeps the page's highlights.
+  // Deleting from the reader keeps the page's highlights; the side panel beside the live
+  // page refreshes too.
+  const refreshes = view.events('codex-reading-changed').length;
   assert.deepEqual(await call({ type: 'clipDelete' }, reader), { ok: true, backup: null });
+  assert(view.events('codex-reading-changed').length > refreshes, 'The live page panel refreshes');
   assert(!fs.existsSync(path.join(folder, 'article.json')));
   assert(JSON.parse(fs.readFileSync(path.join(folder, 'anchors.json'), 'utf8')).highlights.length);
   assert.equal((await call({ type: 'clipRead' }, reader)).code, 'not_found');

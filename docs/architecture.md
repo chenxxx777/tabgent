@@ -482,12 +482,12 @@ address for images that were not saved. `vault/clip/save` refuses (`missing_asse
 whose images are neither staged nor already in the folder before it writes anything, copies
 staged images into `assets/` (refusing a linked `assets` folder; the staged copy stays for
 other clips that share the image and is pruned after a day), records each image's file,
-hash, type and source in `article.json`, and removes images the previous clip recorded that
-the new one does not use, unless an edited `article.md` was kept, which still links them;
+hash, type and every address that returned it (`sources`) in `article.json`, and removes images the previous clip recorded that
+the new one does not use, unless a kept `article-edited-*.md` still links them;
 other files in `assets/` are kept. Images the size limits cut away are not downloaded, and if
 web addresses would make the Markdown too long, unsaved images keep only their description. Failed images are listed with
 the reason. `article.html` keeps every image's address in `data-remote-src`; the reader maps
-addresses to saved files through `article.json`.
+each of an image's addresses to its saved file through `article.json`.
 
 Clipping covers the top frame's light DOM, not frames or shadow DOM.
 

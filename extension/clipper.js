@@ -99,11 +99,12 @@ export async function storeClip(
       words: clip.words,
       chars: clip.chars,
       truncated: clip.truncated,
-      assets: downloaded.assets.map(({ sha256, ext, size, source }) => ({
+      assets: downloaded.assets.map(({ sha256, ext, size, source, sources }) => ({
         sha256,
         ext,
         size,
         source,
+        sources,
       })),
       images: {
         found,

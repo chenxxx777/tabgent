@@ -108,14 +108,16 @@ const result = await fetchImages(images, page, {
 });
 // One file per distinct image: the same bytes at two addresses are one asset. Downloads
 // finish in any order, so the lists are compared sorted.
-assert.deepEqual(
-  result.assets.map(({ ext, size, sha256 }) => [ext, size, sha256]).sort(),
-  [
-    ['jpg', JPEG.length, sha(JPEG)],
-    ['png', PNG.length, sha(PNG)],
-  ],
-);
+assert.deepEqual(result.assets.map(({ ext, size, sha256 }) => [ext, size, sha256]).sort(), [
+  ['jpg', JPEG.length, sha(JPEG)],
+  ['png', PNG.length, sha(PNG)],
+]);
 const pngFile = `${sha(PNG).slice(0, 16)}.png`;
+// The file keeps every address that returned it, so the reader finds it at each one.
+assert.deepEqual(result.assets.find((asset) => asset.ext === 'png').sources.sort(), [
+  'https://cdn.other.test/same-as-a.png',
+  'https://www.example.test/a.png',
+]);
 assert.deepEqual(
   [...result.files].sort(([a], [b]) => a - b),
   [
@@ -254,12 +256,13 @@ assert.equal(
   [
     '![A](assets/abc.png)',
     '![B](<https://x.test/a b (1).png>)',
-    '![C]()',
+    'C',
     `Text that mentions tabgent-image-${'b'.repeat(32)}-0.`,
   ].join('\n'),
 );
 assert.equal(localizeMarkdown(markdown, 'not-a-token', [], new Map()), markdown);
-// When web addresses would make the Markdown too long, unsaved images keep no link.
+// When web addresses would make the Markdown too long, unsaved images keep only their
+// description.
 assert.equal(
   localizeMarkdown(
     `![A](tabgent-image-${token}-0) ![B](tabgent-image-${token}-1)`,
@@ -268,7 +271,7 @@ assert.equal(
     new Map([[0, 'abc.png']]),
     { remote: false },
   ),
-  '![A](assets/abc.png) ![B]()',
+  '![A](assets/abc.png) B',
 );
 assert.equal(destination('https://x.test/a>b c'), '<https://x.test/a%3Eb c>');
 console.log('PASS Markdown placeholders become saved files or web addresses');

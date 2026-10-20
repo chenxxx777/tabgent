@@ -35,6 +35,7 @@ const article = `<!doctype html><html lang="en"><head><meta charset="utf-8"><tit
   <p id="a">Autonomy does not mean independence from others, but endorsement of one's own actions.</p>
   ${paragraphs(8, 'Body')}
   <p><img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" data-src="/img/lazy.png" alt="Lazy figure" width="640" height="360"></p>
+  <p><img src="/img/lazy.png?v=2" alt="Same figure" width="640" height="360"></p>
   <p><img src="/img/forbidden.png" alt="Forbidden" width="320" height="200">
     <img src="/img/vector.svg" alt="Vector" width="320" height="200"></p>
   <p>Read the <a href="/notes">notes</a> or <a href="javascript:alert(1)">this</a>.</p>
@@ -341,8 +342,8 @@ const short = `<!doctype html><html><head><meta charset="utf-8"><title>Short not
     assert.equal(first.origin.pageUrl, origin + '/essays/autonomy?id=3#intro');
     assert.equal(first.origin.method, 'article');
     assert.deepEqual(first.images, {
-      found: 3,
-      saved: 1,
+      found: 4,
+      saved: 2,
       remote: 2,
       failed: [
         { source: `${origin}/img/forbidden.png`, reason: 'http_403' },
@@ -357,11 +358,17 @@ const short = `<!doctype html><html><head><meta charset="utf-8"><title>Short not
       first.assets.map((asset) => [asset.file, asset.mime]),
       [[`assets/${picture}`, 'image/png']],
     );
+    // One file, saved from two addresses: both are recorded.
+    assert.deepEqual(first.assets[0].sources.sort(), [
+      `${origin}/img/lazy.png`,
+      `${origin}/img/lazy.png?v=2`,
+    ]);
+    assert.match(markdown, new RegExp(`!\\[Same figure\\]\\(assets/${picture}\\)`));
     const anchors = JSON.parse(read(folder, 'anchors.json'));
     assert.equal(anchors.highlights.length, 1, 'The highlight is kept');
     const savedText = [
       await message('clipSaved', 'On Autonomy', String(first.words)),
-      await message('clipImagesSaved', '1'),
+      await message('clipImagesSaved', '2'),
       await message('clipImagesFailed', '2'),
     ].join(' ');
     assert(
@@ -372,6 +379,7 @@ const short = `<!doctype html><html><head><meta charset="utf-8"><title>Short not
     assert.deepEqual([...new Set(requested.slice(before))].sort(), [
       '/img/forbidden.png',
       '/img/lazy.png',
+      '/img/lazy.png?v=2',
       '/img/vector.svg',
     ]);
     assert.match(
@@ -487,8 +495,12 @@ print(json.dumps([m["path"] for m in found["matches"]][:3] + [read["text"][:2000
     assert(
       await until(() =>
         reader.evaluate(() => {
-          const img = document.querySelector('#content img');
-          return img?.src.startsWith('blob:') && img.naturalWidth === 32;
+          // Both addresses of the saved image show the vault copy.
+          const images = [...document.querySelectorAll('#content img')];
+          return (
+            images.length === 2 &&
+            images.every((img) => img.src.startsWith('blob:') && img.naturalWidth === 32)
+          );
         }),
       ),
       'The saved image is shown from the vault',
