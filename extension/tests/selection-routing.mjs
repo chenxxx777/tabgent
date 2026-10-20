@@ -7,6 +7,12 @@ const event = () => ({
 });
 const native = { onMessage: event(), onDisconnect: event(), postMessage() {} };
 globalThis.chrome = {
+  alarms: {
+    onAlarm: event(),
+    get: async () => null,
+    create: async () => {},
+    clear: async () => true,
+  },
   runtime: {
     id: 'test',
     getURL: (p) => 'chrome-extension://test/' + p,
@@ -33,6 +39,7 @@ globalThis.chrome = {
   webNavigation: { onCommitted: event(), getFrame: async () => ({ documentId: 'current' }) },
 };
 chrome.runtime.onInstalled = event();
+chrome.runtime.onStartup = event();
 chrome.contextMenus = { onClicked: event() };
 await import('../background.js');
 await new Promise((r) => setTimeout(r, 0));

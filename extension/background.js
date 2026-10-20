@@ -38,6 +38,7 @@ import {
   clipViewerUrl,
   isCurrentClipSender,
 } from './clip-routing.js';
+import { createFeeds, feedMessages } from './feeds.js';
 startPdfRouting();
 // The page a tab shows: a PDF viewer's PDF, a clipped-page reader's page, or its own URL.
 const pageAddress = (url) => pdfSource(url) || clipSource(url) || url;
@@ -57,6 +58,12 @@ let native,
 const vault = createVaultClient(connect);
 // Vault methods follow the shared contract; they never claim or wait for a Codex session.
 const vaultRequest = (method, params) => vault.request(method, params);
+// Subscriptions are checked on a schedule; the listener is registered at startup, as MV3 needs.
+const feeds = createFeeds({
+  request: (method, params, options) => vault.request(method, params, options),
+});
+chrome.alarms.onAlarm.addListener((alarm) => void feeds.onAlarm(alarm));
+chrome.runtime.onStartup.addListener(() => void feeds.start().catch(console.warn));
 const highlightStatus = new Map();
 const loaded = chrome.storage.session
   .get(['conversations', 'agentViews', 'closedViews', 'sidebarViews', 'agentCompanions'])
@@ -1294,6 +1301,14 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     );
     return true;
   }
+  if (feedMessages.has(msg.type)) {
+    // Only the library page manages subscriptions; web pages and other senders cannot.
+    (isCurrentEpubSender(sender)
+      ? feeds.message(msg)
+      : Promise.reject(Error('Invalid EPUB reader sender'))
+    ).then(reply, (e) => reply({ error: e.message, code: e.code || 'error' }));
+    return true;
+  }
   (async () => {
     if (msg.type === 'pageSelection' || msg.type === 'pageSelectionCleared') {
       const epub = isEpubReaderUrl(sender.url);
@@ -1708,6 +1723,7 @@ loaded.then(() => {
 
 // Native PDF selections are exposed by Chrome's selection context menu.
 chrome.runtime.onInstalled.addListener(() => {
+  void feeds.start().catch(console.warn);
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({
       id: 'quote-selection',

@@ -86,12 +86,19 @@ const created = [],
   updates = [],
   contentMessages = [];
 globalThis.chrome = {
+  alarms: {
+    onAlarm: event(),
+    get: async () => null,
+    create: async () => {},
+    clear: async () => true,
+  },
   runtime: {
     id: 'test',
     getURL: (p) => base + p,
     onConnect: event(),
     onMessage: event(),
     onInstalled: event(),
+    onStartup: event(),
     connectNative: () => native,
   },
   i18n: { getMessage: (key) => key },
@@ -258,6 +265,24 @@ try {
   const stranger = { ...library, documentId: 'another-reader' };
   assert.match((await call({ type: 'libraryDocuments' }, stranger)).error, /Invalid EPUB reader/);
   console.log('PASS the library imports a PDF as urn:sha256 and lists vault documents');
+
+  // Only the library page manages subscriptions: other readers and web pages cannot.
+  assert.deepEqual(await call({ type: 'feedsSources' }, library), { sources: [], paused: false });
+  assert.match((await call({ type: 'feedsSources' }, stranger)).error, /Invalid EPUB reader/);
+  const webPage = {
+    id: 'test',
+    tab: { id: 3, title: 'Article' },
+    frameId: 0,
+    documentId: 'web',
+    url: 'https://example.test/article',
+  };
+  for (const type of ['feedsSubscribe', 'feedsProbe', 'feedsOpmlExport', 'feedsUnsubscribe'])
+    assert.match(
+      (await call({ type, url: 'https://attacker.example/feed' }, webPage)).error,
+      /Invalid EPUB reader/,
+    );
+  assert.equal(vaultCalls('vault/feeds/subscribe').length, 0);
+  console.log('PASS only the library page manages subscriptions');
 
   // The viewer reads its own copy back, only through its registered port.
   const viewer = {

@@ -42,17 +42,18 @@ limit which tabs tools can access; they do not validate the intentions of a page
 
 ## Permissions
 
-| Permission                            | Why it is needed                                                                       |
-| ------------------------------------- | -------------------------------------------------------------------------------------- |
-| HTTP(S) host access and `scripting`   | Read the selected page, observe text selection, and clip a page's text and images.     |
-| `file:///*` host access               | Work on files you open in Chrome, once you allow access to file URLs.                  |
-| `tabs` and `webNavigation`            | Associate conversations with tabs and preserve them across navigation.                 |
-| `sidePanel`                           | Display the conversation alongside the page.                                           |
-| `storage`                             | Keep preferences, draft references, and tab/session state.                             |
-| `nativeMessaging`                     | Connect to the installed local Python host.                                            |
-| `debugger`                            | Perform trusted browser input and screenshots. Chrome may show an attachment notice.   |
-| `declarativeNetRequestWithHostAccess` | Open online and local PDFs in the bundled local viewer; allow native fallback per tab. |
-| `contextMenus`                        | Quote selected text, including in Chrome's PDF viewer; open the library; clip a page.  |
+| Permission                            | Why it is needed                                                                                                     |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| HTTP(S) host access and `scripting`   | Read the selected page, observe text selection, and clip a page's text and images; fetch the feeds you subscribe to. |
+| `file:///*` host access               | Work on files you open in Chrome, once you allow access to file URLs.                                                |
+| `tabs` and `webNavigation`            | Associate conversations with tabs and preserve them across navigation.                                               |
+| `sidePanel`                           | Display the conversation alongside the page.                                                                         |
+| `storage`                             | Keep preferences, draft references, and tab/session state.                                                           |
+| `nativeMessaging`                     | Connect to the installed local Python host.                                                                          |
+| `debugger`                            | Perform trusted browser input and screenshots. Chrome may show an attachment notice.                                 |
+| `declarativeNetRequestWithHostAccess` | Open online and local PDFs in the bundled local viewer; allow native fallback per tab.                               |
+| `contextMenus`                        | Quote selected text, including in Chrome's PDF viewer; open the library; clip a page.                                |
+| `alarms`                              | Check your subscriptions on a schedule.                                                                              |
 
 Browser tools enforce current-window or all-windows scope on each operation.
 Incognito and internal browser pages are excluded from ordinary page automation.
@@ -85,6 +86,7 @@ symlink so existing attachment paths remain valid.
 | `Books/book-*/` in the vault                | Imported EPUB files, their SHA-256 record, and chapter text.            |
 | `Books/paper-*/` in the vault               | PDF highlights; imported or highlighted local PDFs, SHA-256, page text. |
 | `Articles/article-*/` in the vault          | Webpage highlights; a clipped page's text, HTML, images and record.     |
+| `.tabgent/feeds.db` in the vault            | Subscriptions, their items' titles, summaries and content, read state.  |
 | Chrome extension local storage              | Note saves awaiting retry (at most 100), EPUB positions, file prompt.   |
 | `$CODEX_HOME/projects/tabgent/vault.json`   | The configured ReadingVault folder.                                     |
 | Shared Codex session storage and index      | Conversation history and project association.                           |
@@ -159,6 +161,20 @@ systems no page text is saved), so Codex can search and read the paper on reques
 notes name it `urn:sha256:<hash>` instead of a URL. Opening it does not send it to
 Codex. Delete the folder to remove it. The library lists the vault's documents locally;
 nothing is uploaded.
+
+**Subscriptions.** Feeds you subscribe to in the library's **Subscriptions** tab are
+fetched directly from your computer by Chrome (the extension's service worker), with no
+feed service or Tabgent server in between. Chrome checks each subscription about every 30
+minutes to 24 hours while it is running, also when no Tabgent page is open (on macOS Chrome
+may keep running after its last window closes); **Pause all subscriptions** stops the
+schedule. Feed requests carry no cookies and no referrer; the feed's server sees your IP
+address, Chrome's user agent and when it was checked. Adding a website address fetches that
+page once, without cookies, to find its feeds. The connector parses feeds but never
+accesses the network. Subscriptions and their items (title, link, author, date, summary
+and the feed's own content) are kept in `.tabgent/feeds.db` in the vault, which Obsidian
+does not show and `reading_vault` does not read; subscribing adds no folders to the vault.
+Unsubscribing deletes that subscription's items; deleting `feeds.db` removes every
+subscription (export OPML first to keep the list). Nothing is uploaded or sent to Codex.
 
 The EPUB reader renders books locally in an extension page with book scripts and
 remote resources blocked. Opening a book copies it into the reading vault, with its
