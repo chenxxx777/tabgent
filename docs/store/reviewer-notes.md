@@ -43,10 +43,11 @@ browser actions are available from this same user-directed workflow.
 | `tabs`                                | Identify the page attached to each message and switch related tabs.                      |
 | `webNavigation`                       | Track navigation and linked-tab origins for conversation context.                        |
 | HTTP(S) hosts and `scripting`         | Read pages and selections across user-chosen sites, including frames.                    |
+| `file:///*` host                      | Highlight and read files the user opens in Chrome, only once they allow file URLs.       |
 | `debugger`                            | Send browser input and capture screenshots for requested browser tasks.                  |
 | `nativeMessaging`                     | Communicate with the separately installed local Codex connector.                         |
 | `contextMenus`                        | Quote selected text, including from Chrome's native PDF viewer.                          |
-| `declarativeNetRequestWithHostAccess` | Route online PDFs into the bundled viewer, with native-viewer fallback.                  |
+| `declarativeNetRequestWithHostAccess` | Route online and local PDFs into the bundled viewer, with native-viewer fallback.        |
 
 ## Data and code
 

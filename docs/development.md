@@ -78,6 +78,7 @@ These are deliberately excluded from `npm test`:
 | `npm run test:epub`                          | Playwright Chromium and Python; the real connector with temporary `HOME` and `CODEX_HOME`.   |
 | `npm run test:library`                       | Same isolation, fixture app-server for Codex; library, local PDF import, reopen and restore. |
 | `npm run test:clip`                          | Same isolation, fixture app-server for Codex; clipping pages into the vault.                 |
+| `npm run test:local-files`                   | Same isolation, fixture app-server for Codex; files opened from the computer (`file://`).    |
 | `npm run test:agent-tab`                     | Same isolation, fixture app-server for Codex; an Agent tab after its source page closes.     |
 
 `npm run test:epub` imports a generated book into a temporary vault, checks highlights,
@@ -102,6 +103,20 @@ Clipping real sites cannot be tested offline. After updating Defuddle, clip by h
 signed-in browser: a single X post, a thread, a long post and an X article; a post with images
 and a video; a WeChat article; a Substack post; and a technical blog post with code. Check the
 text, the image addresses and the thread's posts in `article.md`.
+
+`npm run test:local-files` generates a PDF, Markdown, text and HTML files in the temporary
+folder and opens them by `file://` URL. It checks that a PDF goes straight to the PDF.js
+viewer, its highlight, Ask AI, note and vault copy under `urn:sha256`, a restart, a moved
+copy and a library import of the same file, highlights and Ask AI on Markdown and text
+files, the library entry of a text file, links from a local page and refused links from a
+website, Agent tabs that keep asking and saving after a local file or reloaded PDF closes, and
+the explanation page, side panel reminder and pick-up of open files when file
+access is turned off and on. Codex is `fixtures/app-server-tools.py`, which wraps the
+fixture app-server: a message line `TOOL {json}` makes it call the browser tool with those
+arguments and record the result, which checks that Agent reads local tabs, cannot click or
+type there and cannot open `file://` URLs. The file access part uses a copy of the
+extension without its manifest key in its own profile: Chromium keeps file access for a
+keyed extension loaded with `--load-extension` after the setting is turned off.
 
 `npm run test:agent-tab` opens a highlight discussion on a local webpage and on an imported
 PDF, expands each into an Agent tab and closes the page. The Agent tab must keep asking,
