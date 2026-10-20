@@ -404,16 +404,17 @@ A quote that carries `highlight: { documentId, highlightId }` binds its conversa
 to that highlight. Any reader can send it (web, PDF or EPUB, named by the highlight or
 locator `kind`). Follow-ups keep the binding while the companion page shows the same
 document. The worker remembers the document each companion tab last showed
-(`pageDocuments`, forgotten when the tab navigates elsewhere), so after the page
-closes its Agent tab still binds to it and saves there. **Ask AI** on a highlight with
-saved turns reopens its latest thread through the page-history resume path, with the
-quote attached again. A new highlight reuses an empty conversation and otherwise
-starts its own, so each highlight's thread holds its discussion. The highlight list in
-the Page conversations drawer does the same, and jumps to anchored highlights;
-unanchored ones are marked and keep their notes. Each entry shows the user's note and
-edits it inline (`readingNote`); the worker checks the highlight against the companion
-tab's document, saves it, and asks the page or reader to refresh its highlight
-records. A draft survives list refreshes.
+(`pageDocuments`, forgotten when the tab navigates elsewhere; the EPUB reader keeps
+its book while the tab stays in the reader, as on a reload), so after the page closes
+its Agent tab still binds to it and saves there. **Ask AI** on a highlight with saved
+turns reopens its latest thread through the page-history resume path, with the quote
+attached again. A new highlight reuses an empty conversation and otherwise starts its
+own, so each highlight's thread holds its discussion. The highlight list in the Page
+conversations drawer does the same, and jumps to anchored highlights; unanchored ones
+are marked and keep their notes. Each entry shows the user's note and edits it inline
+(`readingNote`); the worker checks the highlight against the companion tab's document,
+saves it, and asks the page or reader to refresh its highlight records. A draft
+survives list refreshes.
 
 The worker adds a hidden reading-context part after the browser context of each
 message. It names the document (title, URL, kind and notes file), the bound

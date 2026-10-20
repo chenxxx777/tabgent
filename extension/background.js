@@ -96,6 +96,7 @@ const reading = createReadingCompanion({
   vault,
   pdfSource,
   epubDocument,
+  isEpubReaderUrl,
   // Highlight commands reach webpage content scripts or the EPUB reader page.
   tabMessage: async (tabId, message) => {
     const tab = await chrome.tabs.get(tabId).catch(() => null);

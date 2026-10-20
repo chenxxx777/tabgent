@@ -37,6 +37,7 @@ export function createReadingCompanion({
   vault,
   pdfSource,
   epubDocument = () => undefined,
+  isEpubReaderUrl = () => false,
   tabMessage = (tabId, message) => chrome.tabs.sendMessage(tabId, message, { frameId: 0 }),
 }) {
   const turns = new Map();
@@ -87,9 +88,14 @@ export function createReadingCompanion({
     return document;
   }
   // A companion tab that navigates away no longer shows the document remembered for it.
+  // The EPUB reader's address names the reader, not the book (a book's URL is its hash):
+  // while the tab stays in the reader, such as on a reload, the book is kept, and the next
+  // pageDocument call records the book the reader reports.
   function navigated(s, tabId, url) {
     const known = s.pageDocuments?.[tabId];
-    if (known && known.url !== documentUrl(url)) delete s.pageDocuments[tabId];
+    if (!known) return;
+    const same = known.kind === 'epub' ? isEpubReaderUrl(url) : known.url === documentUrl(url);
+    if (!same) delete s.pageDocuments[tabId];
   }
   // A session opened in a view starts with what its source knows of the view's page, the
   // only record of that page once it has closed.
