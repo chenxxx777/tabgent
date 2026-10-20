@@ -491,8 +491,11 @@ with tempfile.TemporaryDirectory(prefix="tabgent-library-vault-") as directory:
             "updatedAt",
             "author",
             "highlightCount",
+            "clip",
             "source",
         }
+        # Only a clipped webpage has a clip.
+        assert all(entry["clip"] is None for entry in listed)
         print(
             "PASS the library lists web pages, online and imported PDFs, and EPUB books"
         )
