@@ -41,6 +41,16 @@ for (const file of walk('extension').filter((f) => /\.(html|js)$/.test(f))) {
   for (const match of keys)
     assert(messages[match[1] || match[2]], `Missing English string in ${file}: ${match[0]}`);
 }
+// Stored quotes start with this marker and are recognized by it later, so a
+// translation would hide quotes saved under another browser language.
+for (const locale of fs.readdirSync('extension/_locales')) {
+  const quote = JSON.parse(fs.readFileSync(`extension/_locales/${locale}/messages.json`, 'utf8'))
+    .selectionQuote?.message;
+  assert(
+    !quote || quote === messages.selectionQuote.message,
+    `Translated selectionQuote in ${locale}`,
+  );
+}
 assert.equal(
   JSON.parse(fs.readFileSync('package.json')).version,
   JSON.parse(fs.readFileSync('extension/manifest.json')).version,
