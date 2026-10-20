@@ -533,6 +533,97 @@ try {
   assert.match(sentences[importedRule + 1], /^Its text is also in the vault/);
   assert.doesNotMatch(sentences[importedRule + 2], /^These\b/);
   console.log('PASS imported-PDF instructions do not split the online-PDF link guidance');
+
+  // The Agent tab of the PDF's highlight discussion outlives the viewer (B2): follow-ups
+  // name the PDF's page files and still save to its highlight and thread.
+  const opened = await call(
+    { type: 'openAgent', conversationKey: view.state.conversationKey, companionTabId: 1 },
+    panel,
+  );
+  tabs.set(opened.tabId, { id: opened.tabId, windowId: 1, url: base + 'ui/chat.html' });
+  const agentSender = { ...panel, tab: tabs.get(opened.tabId), frameId: 0 };
+  const agentMessages = [],
+    agentPort = {
+      name: 'chat',
+      sender: agentSender,
+      onMessage: event(),
+      onDisconnect: event(),
+      postMessage: (m) => agentMessages.push(m),
+    };
+  connect(agentPort);
+  await agentPort.onMessage.listeners[0]({ type: 'attach', tabId: opened.tabId });
+  tabs.delete(1);
+  for (const listen of chrome.tabs.onRemoved.listeners) await listen(1);
+  const closedBefore = sent.length;
+  await agentPort.onMessage.listeners[0]({
+    type: 'ui',
+    name: 'codexRpc',
+    args: [
+      {
+        id: 2,
+        method: 'turn/start',
+        params: {
+          threadId: 'thread-local',
+          input: [{ type: 'text', text: 'Read page 2 from the vault.', text_elements: [] }],
+        },
+      },
+    ],
+  });
+  assert(
+    !agentMessages.some((m) => m.value?.method === 'bridge/error'),
+    JSON.stringify(agentMessages),
+  );
+  const closedInput = sent.slice(closedBefore).find((m) => m.op === 'rpc').message.params.input;
+  const closedPage = JSON.parse(closedInput[0].text.slice(closedInput[0].text.indexOf('{')));
+  assert.deepEqual(
+    [closedPage.tabId, closedPage.url, closedPage.closed],
+    [1, urn + '#page=2', true],
+  );
+  const closedReading = JSON.parse(
+    closedInput
+      .find((p) => p.text?.startsWith(readingContextPrefix))
+      .text.slice(readingContextPrefix.length),
+  );
+  assert.equal(closedReading.saving, 'highlight');
+  assert.equal(closedReading.highlight.id, 'h001');
+  assert.deepEqual(
+    (({ url, kind, id, pages }) => ({ url, kind, id, pages }))(closedReading.document),
+    { url: urn, kind: 'pdf', id: documentId, pages: path.join(folder, 'pages') },
+  );
+  const closedItem = (id, value) => ({
+    threadId: 'thread-local',
+    turnId: 'turn-closed',
+    item: { id, ...value },
+  });
+  await emit('item/completed', closedItem('u2', { type: 'userMessage', content: closedInput }));
+  await emit(
+    'item/completed',
+    closedItem('a2', { type: 'agentMessage', text: 'Page 2 says so.', phase: 'final_answer' }),
+  );
+  await emit('turn/completed', {
+    threadId: 'thread-local',
+    turn: { id: 'turn-closed', status: 'completed', items: [], completedAt: 1760000100 },
+  });
+  const saved = await until(() => {
+    const data = JSON.parse(fs.readFileSync(path.join(folder, 'anchors.json'), 'utf8'));
+    return data.turns.find((turn) => turn.turnId === 'turn-closed');
+  });
+  assert.deepEqual(
+    [saved.highlightId, saved.threadId, saved.user],
+    ['h001', 'thread-local', 'Read page 2 from the vault.'],
+  );
+  const closedState = await call(
+    { type: 'readingState', conversationKey: view.state.conversationKey, companionTabId: 1 },
+    agentSender,
+  );
+  assert.deepEqual(closedState.page, {
+    url: urn,
+    title: 'companion.pdf',
+    kind: 'pdf',
+    closed: true,
+  });
+  assert.equal(closedState.save.target, 'highlight');
+  console.log('PASS an imported PDF discussion continues in its Agent tab after the viewer closes');
 } finally {
   python.stdin.end();
   fs.rmSync(temp, { recursive: true, force: true });
