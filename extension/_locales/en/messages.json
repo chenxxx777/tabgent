@@ -1129,6 +1129,75 @@
   "epubPageTitle": {
     "message": "EPUB"
   },
+  "clipPage": {
+    "message": "Clip this page"
+  },
+  "clipAgain": {
+    "message": "Clip this page again"
+  },
+  "clipSelection": {
+    "message": "Clip selected text"
+  },
+  "clipCommand": {
+    "message": "Clip the current page"
+  },
+  "clipSaving": {
+    "message": "Clipping…"
+  },
+  "clipSaved": {
+    "message": "Clipped “$1” · $2 words, saved to your reading notes."
+  },
+  "clipXPartial": {
+    "message": "Saved $1 posts, the ones loaded on the page."
+  },
+  "clipTruncated": {
+    "message": "The text was too long and was shortened."
+  },
+  "clipReplaceAsk": {
+    "message": "You clipped this page on $1. Replace it with the page as it is now?"
+  },
+  "clipReplaceIncomplete": {
+    "message": "This page has an incomplete clip. Replace it?"
+  },
+  "clipReplace": {
+    "message": "Replace"
+  },
+  "clipCancel": {
+    "message": "Cancel"
+  },
+  "clipTooLittle": {
+    "message": "Little text was found on this page."
+  },
+  "clipWholePage": {
+    "message": "Save whole page"
+  },
+  "clipUnsupported": {
+    "message": "This page can't be clipped."
+  },
+  "clipXOpenPost": {
+    "message": "Open a single post to clip it, or select text to clip just that."
+  },
+  "clipNoSelection": {
+    "message": "Select the text on the page first, then clip it."
+  },
+  "clipFailed": {
+    "message": "The page could not be clipped. $1"
+  },
+  "clipSaveFailed": {
+    "message": "The clip could not be saved: $1"
+  },
+  "clipConflict": {
+    "message": "This page was just clipped in another tab. Try again."
+  },
+  "clipEmbedded": {
+    "message": "Embedded content ($1)"
+  },
+  "readingClipped": {
+    "message": "Clipped $1"
+  },
+  "clipNavigated": {
+    "message": "The page changed while it was being clipped. Clip it again."
+  },
   "fileAccessTitle": {
     "message": "Let Tabgent read files you open in Chrome"
   },

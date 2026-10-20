@@ -72,6 +72,7 @@ export async function readingRequest(type,params={}){
  if(type==='readingSave')value.save={explicit:params.enabled,target:params.enabled?'document':'off'};
  if(type==='vaultConfigure'){if(!/^[\/~]/.test(params.path))throw Error('path must be absolute');value.vault={...value.vault,path:params.path};}
  if(type==='readingNote'){if(params.note==='fail')throw Error('Disk is busy');value.highlights.find(h=>h.id===params.highlightId).note=params.note;}
+ if(type==='clipPage'){value.clip={clippedAt:'2026-10-20T10:00:00+08:00',complete:true};return {ok:true};}
  return structuredClone(value);
 }
 export async function startBridge(){if(mode==='attach-failure')throw Error('Missing tab');}
@@ -1345,6 +1346,34 @@ export function saveScopePreference(){}
           () => document.querySelector('#readingPath').textContent === '~/Notes',
         );
         assert.equal(await page.locator('#readingFolderForm').isVisible(), false);
+        // A web page can be clipped from the menu; once clipped, it offers to clip again.
+        assert.equal(await page.locator('#readingClip').textContent(), 'Clip this page');
+        assert.equal(await page.locator('#readingClipSelection').isVisible(), false);
+        await page.locator('#readingClip').click();
+        await page.waitForFunction(() =>
+          setupTest.reading.some((r) => r.type === 'clipPage' && r.mode === 'article'),
+        );
+        assert.equal(await page.locator('#readingMenu').isVisible(), false);
+        await page.waitForFunction(
+          () => document.querySelector('#readingClip').textContent === 'Clip this page again',
+        );
+        // With a quote from the page, the selected text alone can be clipped.
+        await page.evaluate(() =>
+          setupTest.select({
+            id: 'plain',
+            text: 'People persist',
+            title: 'Article',
+            url: 'https://example.test/article',
+          }),
+        );
+        await button.click();
+        assert(await page.locator('#readingClipSelection').isVisible());
+        await page.locator('#readingClipSelection').click();
+        await page.waitForFunction(() =>
+          setupTest.reading.some((r) => r.type === 'clipPage' && r.mode === 'selection'),
+        );
+        await page.locator('#selectionRemove').click();
+        await button.click();
         // The library opens in a tab beside the page; the menu closes.
         assert.equal(await page.locator('#readingLibrary').textContent(), 'Open library');
         await page.locator('#readingLibrary').click();
@@ -1362,7 +1391,9 @@ export function saveScopePreference(){}
         );
         assert(Math.max(...centers) - Math.min(...centers) < 1, 'Toolbar stays on one line');
         await page.setViewportSize({ width: 1280, height: 720 });
-        console.log('PASS reading notes toggle, target label, vault folder settings and library');
+        console.log(
+          'PASS reading notes toggle, target label, vault folder settings, clipping and library',
+        );
 
         await page.locator('#historyToggle').click();
         const entries = page.locator('.highlight-entry');

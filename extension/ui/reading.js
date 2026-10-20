@@ -62,6 +62,15 @@ export function createReading({ i18n, request, showError, selection, reload }) {
     $('readingPath').textContent = state.vault?.path || i18n('readingFolderUnavailable');
     $('readingPath').title = state.vault?.path || '';
     $('readingChange').disabled = !state.vault;
+    // Clipping saves a webpage's text in its vault folder; it needs a live web page.
+    const clippable = state.page?.kind === 'web' && /^https?:/i.test(state.page.url || '');
+    const clipped = Date.parse(state.clip?.clippedAt);
+    $('readingClip').hidden = !clippable;
+    $('readingClip').textContent = i18n(state.clip ? 'clipAgain' : 'clipPage');
+    $('readingClip').title = Number.isNaN(clipped)
+      ? ''
+      : i18n('readingClipped', new Date(clipped).toLocaleString());
+    $('readingClipSelection').hidden = !clippable || !selection()?.text;
     renderHighlights();
   }
 
@@ -271,6 +280,19 @@ export function createReading({ i18n, request, showError, selection, reload }) {
     $('readingFolderForm').hidden = true;
     $('readingError').hidden = true;
   };
+  // Clipping runs in the page; it asks there before replacing an earlier clip.
+  async function clipPage(mode) {
+    $('readingMenu').hidePopover();
+    try {
+      const result = await request('clipPage', { mode });
+      if (result?.reason === 'unsupported') showError(i18n('clipUnsupported'));
+    } catch (error) {
+      showError(error.message);
+    }
+    void refresh();
+  }
+  $('readingClip').onclick = () => void clipPage('article');
+  $('readingClipSelection').onclick = () => void clipPage('selection');
   // The library lists every document in the vault and opens it, or imports a file.
   $('readingLibrary').onclick = async () => {
     $('readingMenu').hidePopover();

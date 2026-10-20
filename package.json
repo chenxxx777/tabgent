@@ -20,18 +20,21 @@
     "test:epub": "node scripts/test-epub-browser.cjs",
     "test:library": "node scripts/test-library-browser.cjs",
     "test:local-files": "node scripts/test-local-files-browser.cjs",
+    "test:clip": "node scripts/test-clip-browser.cjs",
     "test:agent-tab": "node scripts/test-agent-tab-browser.cjs",
     "test:feeds": "node scripts/test-feeds-browser.cjs",
     "package:store": "python3 scripts/package-store.py"
   },
   "devDependencies": {
     "@highlightjs/cdn-assets": "11.12.0",
+    "defuddle": "0.19.5",
     "dompurify": "3.4.16",
     "katex": "0.19.0",
     "marked": "18.0.14",
     "mermaid": "12.1.0",
     "playwright": "1.62.1",
     "prettier": "3.9.9",
+    "turndown": "7.2.4",
     "yaml": "2.9.1"
   },
   "type": "module"

@@ -18,10 +18,19 @@ to five earlier saved turns about that highlight, and the path of the ReadingVau
 folder. When a question refers to earlier reading, Codex can list, search and read
 the notes in that folder with the read-only `reading_vault` tool,
 without an approval prompt. It reads only the notes Tabgent writes (`AGENTS.md`,
-each document's `highlights.md`, `source.md` and `anchors.json`, an imported book's
-`chapters/NN-<title>.md` and an imported PDF's `pages/NNN.md`), never other files
+each document's `highlights.md`, `source.md` and `anchors.json`, a clipped page's
+`article.md`, an imported book's `chapters/NN-<title>.md` and an imported PDF's
+`pages/NNN.md`), never other files
 in or outside the folder, and it cannot write. Notes it
 reads are sent to the model like any other tool result.
+
+Clipping a page (**Clip this page**) reads its main text from the page as it is shown in
+your browser, including text you see only when signed in and personal information on the
+page (for example names and replies on X), and saves it in the ReadingVault. The text is
+extracted in the page by scripts bundled with Tabgent; nothing is fetched and no other
+service is involved. Images are not downloaded: `article.md` keeps their web addresses.
+Clipping does not send anything to Codex. A message about the page names the clipped text
+(its `article.md` path) in the reading context, and Codex reads it only on request.
 
 Browser content and selection metadata are marked as untrusted context. Do not
 assume prompt-injection defenses can make an arbitrary page safe. Scope checks
@@ -29,18 +38,18 @@ limit which tabs tools can access; they do not validate the intentions of a page
 
 ## Permissions
 
-| Permission                            | Why it is needed                                                                       |
-| ------------------------------------- | -------------------------------------------------------------------------------------- |
-| HTTP(S) host access and `scripting`   | Read the selected page and observe text selection; fetch the feeds you subscribe to.   |
-| `file:///*` host access               | Work on files you open in Chrome, once you allow access to file URLs.                  |
-| `tabs` and `webNavigation`            | Associate conversations with tabs and preserve them across navigation.                 |
-| `sidePanel`                           | Display the conversation alongside the page.                                           |
-| `storage`                             | Keep preferences, draft references, and tab/session state.                             |
-| `nativeMessaging`                     | Connect to the installed local Python host.                                            |
-| `debugger`                            | Perform trusted browser input and screenshots. Chrome may show an attachment notice.   |
-| `declarativeNetRequestWithHostAccess` | Open online and local PDFs in the bundled local viewer; allow native fallback per tab. |
-| `contextMenus`                        | Quote selected text, including in Chrome's PDF viewer; open the library.               |
-| `alarms`                              | Check your subscriptions on a schedule.                                                |
+| Permission                            | Why it is needed                                                                                                        |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| HTTP(S) host access and `scripting`   | Read the selected page, observe text selection, and extract a page's text to clip it; fetch the feeds you subscribe to. |
+| `file:///*` host access               | Work on files you open in Chrome, once you allow access to file URLs.                                                   |
+| `tabs` and `webNavigation`            | Associate conversations with tabs and preserve them across navigation.                                                  |
+| `sidePanel`                           | Display the conversation alongside the page.                                                                            |
+| `storage`                             | Keep preferences, draft references, and tab/session state.                                                              |
+| `nativeMessaging`                     | Connect to the installed local Python host.                                                                             |
+| `debugger`                            | Perform trusted browser input and screenshots. Chrome may show an attachment notice.                                    |
+| `declarativeNetRequestWithHostAccess` | Open online and local PDFs in the bundled local viewer; allow native fallback per tab.                                  |
+| `contextMenus`                        | Quote selected text, including in Chrome's PDF viewer; open the library; clip a page.                                   |
+| `alarms`                              | Check your subscriptions on a schedule.                                                                                 |
 
 Browser tools enforce current-window or all-windows scope on each operation.
 Incognito and internal browser pages are excluded from ordinary page automation.
@@ -72,6 +81,7 @@ symlink so existing attachment paths remain valid.
 | `~/ReadingVault/` or the configured folder  | Saved highlights, your notes on them, page URLs, anchors, discussions.  |
 | `Books/book-*/` in the vault                | Imported EPUB files, their SHA-256 record, and chapter text.            |
 | `Books/paper-*/` in the vault               | PDF highlights; imported or highlighted local PDFs, SHA-256, page text. |
+| `Articles/article-*/` in the vault          | Webpage highlights; a clipped page's text, cleaned HTML and record.     |
 | `.tabgent/feeds.db` in the vault            | Subscriptions, their items' titles, summaries and content, read state.  |
 | Chrome extension local storage              | Note saves awaiting retry (at most 100), EPUB positions, file prompt.   |
 | `$CODEX_HOME/projects/tabgent/vault.json`   | The configured ReadingVault folder.                                     |
@@ -90,6 +100,12 @@ when the page already has notes. Turning it off stops saving for that conversati
 it does not delete notes. Delete a highlight in the page (its note goes with it),
 save an empty note to remove only the note, or edit or delete the files yourself, to
 remove saved notes. Nothing in the vault is uploaded by Tabgent.
+
+A clipped page is saved in its page's folder as `article.md` (the text as Markdown, with
+the page address and clip time), `article.html` (the cleaned page, without scripts, styles,
+forms or frames) and `article.json` (when and how it was clipped). Clipping the page again
+replaces them after asking; an `article.md` you edited is kept as
+`article-edited-<time>.md`. Delete the files to remove a clip; the page's highlights stay.
 
 Removing an attachment from the composer removes its draft reference. It does not
 delete the saved file. Sent attachments remain available for conversation history.
