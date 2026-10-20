@@ -1177,6 +1177,9 @@
   "clipXOpenPost": {
     "message": "Open a single post to clip it, or select text to clip just that."
   },
+  "clipXLayout": {
+    "message": "Tabgent could not find the post on this X page. Select the post's text, then choose Clip selected text."
+  },
   "clipNoSelection": {
     "message": "Select the text on the page first, then clip it."
   },

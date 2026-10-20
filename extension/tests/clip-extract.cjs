@@ -3,6 +3,7 @@
 // code, links, embeds, unsafe markup, a synthetic X thread, X timelines, selections, the
 // whole-page fallback and short pages. Nothing is fetched by the clipping script.
 const assert = require('node:assert/strict'),
+  fs = require('node:fs'),
   path = require('node:path'),
   { chromium } = require('playwright');
 const extension = path.resolve(__dirname, '..');
@@ -69,6 +70,16 @@ ${Array.from({ length: 900 }, (_, i) => `<p>Figure ${i}</p><img src="${longImage
 const xPages = {
   'https://x.com/author/status/100': xThread(),
   'https://x.com/home': xThread(),
+  // The layout X shows visitors who are not logged in: a real page's structure (captured
+  // 2026-10-21 from a public post), with generated people, ids and text (see the fixture).
+  'https://x.com/fixtureauthor/status/1900000000000000001': fs.readFileSync(
+    path.join(__dirname, 'fixtures/x-logged-out.html'),
+    'utf8',
+  ),
+  // A post page in a layout Tabgent does not know.
+  'https://x.com/someone/status/5': `<!doctype html><html><head><title>X</title></head><body><main>
+    <h1>A post</h1><ul><li><p>Post text that cannot be told apart from replies.</p></li>
+    <li><p>Somebody else's reply.</p></li></ul></main></body></html>`,
 };
 // A synthetic X conversation page: the structure X renders, with generated text.
 function xThread() {
@@ -262,7 +273,49 @@ function xThread() {
     );
     assert.notEqual(thread.imageToken, article.imageToken);
     assert.equal(thread.posts, 3);
+    // A short title: the author and how the post starts, not the page title.
+    assert.equal(
+      thread.title,
+      'Fixture Author on X: "Autonomy is endorsement, not independence. A long thread about motivation…"',
+    );
     assert.deepEqual(requests, []);
+
+    // The logged-out layout (no data-testid): the post once, its image, the author's own
+    // reply right after it; not other people's replies, the author's later post after them,
+    // counts, buttons or the screen-reader heading that repeats the whole post.
+    const visitorUrl = 'https://x.com/fixtureauthor/status/1900000000000000001';
+    await open(visitorUrl);
+    const visitor = await run({ mode: 'article', url: visitorUrl });
+    assert.equal(visitor.ok, true, JSON.stringify(visitor).slice(0, 300));
+    assert.equal(visitor.extractor, 'x');
+    assert.equal(
+      visitor.title,
+      'Fixture Author on X: "Fixture post: a new way of writing software where you describe what you want…"',
+    );
+    assert.equal(visitor.byline, 'Fixture Author (@fixtureauthor)');
+    assert.equal(visitor.markdown.match(/Fixture post: a new way/g).length, 1);
+    assert.match(visitor.markdown, /weekend projects 😀\n\nSecond paragraph of the fixture post/);
+    assert.match(visitor.markdown, /Second post by the author, continuing the thread/);
+    assert.doesNotMatch(visitor.markdown, /should not be clipped|not part of the thread/);
+    assert.doesNotMatch(
+      visitor.markdown,
+      /^#|发帖|显示翻译|X 上的|1474|3633|3\.4万|737\.1万|浏览量/m,
+    );
+    assert.equal(visitor.posts, 2);
+    assert.equal(visitor.tooLittle, false);
+    assert.deepEqual(
+      visitor.images.map((image) => image.url),
+      ['https://pbs.twimg.com/media/FIXTUREMEDIA?format=webp&name=large'],
+    );
+    assert.deepEqual(requests, []);
+    // Another post layout is refused: generic extraction would mix in replies.
+    await open('https://x.com/someone/status/5');
+    assert.deepEqual(await run({ mode: 'article', url: 'https://x.com/someone/status/5' }), {
+      ok: false,
+      reason: 'x-layout',
+    });
+    // Saving the whole page stays possible, as the user's explicit choice.
+    assert.equal((await run({ mode: 'page', url: 'https://x.com/someone/status/5' })).ok, true);
     // Timelines and profiles are not clipped as articles.
     await open('https://x.com/home');
     assert.deepEqual(await run({ mode: 'article', url: 'https://x.com/home' }), {

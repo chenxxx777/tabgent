@@ -2,3 +2,5 @@ node_modules/
 dist/
 package-lock.json
 extension/vendor/
+# Pages captured from real sites stay as captured (their whitespace is part of the test).
+extension/tests/fixtures/*.html

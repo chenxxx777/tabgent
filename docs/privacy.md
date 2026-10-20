@@ -28,9 +28,13 @@ Clipping a page (**Clip this page**) reads its main text from the page as it is 
 your browser, including text you see only when signed in and personal information on the
 page (for example names and replies on X), and saves it in the ReadingVault. The text is
 extracted in the page by scripts bundled with Tabgent; no other service is involved. Then
-the extension downloads the page's images directly from their servers: without a referrer,
-and with cookies only for images on the page's own site (a redirect to another site is
-followed without them). Up to 50 JPEG, PNG, GIF, WebP or
+the extension downloads the page's images directly from their servers, with the Referer
+Chrome sends when the page shows them (the page's address for images on the page's own
+origin, only the page's origin for others, none from an HTTPS page to an HTTP image), and
+with cookies only for images on the page's own site (a redirect to another site is followed
+without them). The Referer is sent because some image hosts refuse requests without one
+(for example sspai.com answers 403); it tells the image server only what it learns anyway
+when you view the page, and each clip sends its own page's Referer only for its own images. Up to 50 JPEG, PNG, GIF, WebP or
 AVIF images per page are saved, each up to 5 MB and 30 MB together; others (SVG, larger
 images, failed downloads) stay linked at their web addresses.
 Clipping does not send anything to Codex. A message about the page names the clipped text
@@ -178,8 +182,10 @@ subscription (export OPML first to keep the list). Nothing is uploaded or sent t
 
 **Reading items.** An item opens in Tabgent's reader, which shows the feed's content cleaned
 like a clip, with no scripts, forms or remote loads. Its images are fetched by the service
-worker without cookies or a referrer (known tracking pixels and counters are skipped), and
-can be turned off per subscription. When a subscription sends only a summary (or always, if
+worker without cookies, with the Referer Chrome would send from the item's page (its
+address without tracking parameters, or only its origin for images elsewhere), since some
+image hosts refuse requests without one; known tracking pixels and counters are skipped,
+and images can be turned off per subscription. When a subscription sends only a summary (or always, if
 you choose), Tabgent fetches the item's page for its full text, at its address without
 tracking parameters. When the item is on the subscription's own site (the feed's or its
 website's), the request carries **that site's cookies**, as if you opened the page, so

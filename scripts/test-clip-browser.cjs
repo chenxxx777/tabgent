@@ -36,6 +36,7 @@ const article = `<!doctype html><html lang="en"><head><meta charset="utf-8"><tit
   ${paragraphs(8, 'Body')}
   <p><img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" data-src="/img/lazy.png" alt="Lazy figure" width="640" height="360"></p>
   <p><img src="/img/lazy.png?v=2" alt="Same figure" width="640" height="360"></p>
+  <p><img src="/img/hotlinked.png" alt="Protected figure" width="640" height="360"></p>
   <p><img src="/img/forbidden.png" alt="Forbidden" width="320" height="200">
     <img src="/img/vector.svg" alt="Vector" width="320" height="200"></p>
   <p>Read the <a href="/notes">notes</a> or <a href="javascript:alert(1)">this</a>.</p>
@@ -78,6 +79,8 @@ function png(width, height) {
   ]);
 }
 const PICTURE = png(32, 18);
+// Served only with a Referer, as some image hosts do (anti-hotlinking).
+const PROTECTED = png(32, 20);
 const short = `<!doctype html><html><head><meta charset="utf-8"><title>Short note</title></head><body>
   <main><p>Only a few words on this page.</p></main><aside>${paragraphs(1, 'Aside')}</aside></body></html>`;
 
@@ -92,11 +95,21 @@ const short = `<!doctype html><html><head><meta charset="utf-8"><title>Short not
   const personalState = () => (fs.existsSync(personal) ? fs.statSync(personal).mtimeMs : null);
   const personalBefore = personalState();
   fs.mkdirSync(codexHome, { recursive: true });
-  const requested = [];
+  const requested = [],
+    referers = [];
   const big = new Map([1, 2, 3, 4].map((n) => [`/img/big-${n}.png`, bigImage(n)]));
   const server = http.createServer((request, response) => {
     requested.push(request.url);
+    referers.push([request.url, request.headers.referer || '', request.headers.cookie || '']);
     const pathname = new URL(request.url, 'http://127.0.0.1').pathname;
+    if (pathname === '/img/hotlinked.png') {
+      if (!request.headers.referer) {
+        response.statusCode = 403;
+        return void response.end();
+      }
+      response.setHeader('content-type', 'image/png');
+      return void response.end(PROTECTED);
+    }
     if (pathname === '/img/lazy.png') {
       response.setHeader('content-type', 'image/png');
       return void response.end(PICTURE);
@@ -342,8 +355,8 @@ const short = `<!doctype html><html><head><meta charset="utf-8"><title>Short not
     assert.equal(first.origin.pageUrl, origin + '/essays/autonomy?id=3#intro');
     assert.equal(first.origin.method, 'article');
     assert.deepEqual(first.images, {
-      found: 4,
-      saved: 2,
+      found: 5,
+      saved: 3,
       remote: 2,
       failed: [
         { source: `${origin}/img/forbidden.png`, reason: 'http_403' },
@@ -354,21 +367,33 @@ const short = `<!doctype html><html><head><meta charset="utf-8"><title>Short not
           first.images.failed.findIndex((f) => f.source === b.source),
       ),
     });
+    // An image its host serves only with a Referer is saved: the worker sends the page's.
+    const protectedFile = `${crypto.createHash('sha256').update(PROTECTED).digest('hex').slice(0, 16)}.png`;
     assert.deepEqual(
-      first.assets.map((asset) => [asset.file, asset.mime]),
-      [[`assets/${picture}`, 'image/png']],
+      first.assets.map((asset) => [asset.file, asset.mime]).sort(),
+      [
+        [`assets/${picture}`, 'image/png'],
+        [`assets/${protectedFile}`, 'image/png'],
+      ].sort(),
     );
+    assert.match(markdown, new RegExp(`!\\[Protected figure\\]\\(assets/${protectedFile}\\)`));
+    const workerReferers = referers
+      .slice(before)
+      .filter(([url]) => url === '/img/hotlinked.png')
+      .map(([, referer]) => referer);
+    // Same origin as the page: the page's address without its fragment, as Chrome sends it.
+    assert.deepEqual([...new Set(workerReferers)], [origin + '/essays/autonomy?id=3']);
     // One file, saved from two addresses: both are recorded.
-    assert.deepEqual(first.assets[0].sources.sort(), [
-      `${origin}/img/lazy.png`,
-      `${origin}/img/lazy.png?v=2`,
-    ]);
+    assert.deepEqual(
+      first.assets.find((asset) => asset.file === `assets/${picture}`).sources.sort(),
+      [`${origin}/img/lazy.png`, `${origin}/img/lazy.png?v=2`],
+    );
     assert.match(markdown, new RegExp(`!\\[Same figure\\]\\(assets/${picture}\\)`));
     const anchors = JSON.parse(read(folder, 'anchors.json'));
     assert.equal(anchors.highlights.length, 1, 'The highlight is kept');
     const savedText = [
       await message('clipSaved', 'On Autonomy', String(first.words)),
-      await message('clipImagesSaved', '2'),
+      await message('clipImagesSaved', '3'),
       await message('clipImagesFailed', '2'),
     ].join(' ');
     assert(
@@ -378,6 +403,7 @@ const short = `<!doctype html><html><head><meta charset="utf-8"><title>Short not
     // Only the images are fetched, by the worker; the page itself is not loaded again.
     assert.deepEqual([...new Set(requested.slice(before))].sort(), [
       '/img/forbidden.png',
+      '/img/hotlinked.png',
       '/img/lazy.png',
       '/img/lazy.png?v=2',
       '/img/vector.svg',
@@ -495,10 +521,10 @@ print(json.dumps([m["path"] for m in found["matches"]][:3] + [read["text"][:2000
     assert(
       await until(() =>
         reader.evaluate(() => {
-          // Both addresses of the saved image show the vault copy.
+          // Both addresses of the saved image show the vault copy, and the protected image.
           const images = [...document.querySelectorAll('#content img')];
           return (
-            images.length === 2 &&
+            images.length === 3 &&
             images.every((img) => img.src.startsWith('blob:') && img.naturalWidth === 32)
           );
         }),

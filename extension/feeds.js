@@ -1,6 +1,7 @@
 import { cleanClip, storeClip } from './clipper.js';
 import { clipCommand, clipNotify, clipSource } from './clip-routing.js';
 import { sameSite, sniff } from './clip-images.js';
+import { withReferer } from './referer.js';
 
 // Subscriptions: the service worker fetches feeds on a schedule (chrome.alarms) and hands
 // the raw bytes to the connector, which parses them outside the vault queue and keeps
@@ -509,6 +510,8 @@ export function createFeeds({
         title: clip.title || entry.title,
         clip,
         imagesFrom: '',
+        // The item's page, as the browser's Referer for its images (never cookies).
+        referer: /^https?:/i.test(entry.url || '') ? entry.url : '',
         origin: {
           type: 'feed',
           method: method === 'fulltext' ? 'fulltext' : 'feed',
@@ -621,19 +624,23 @@ export function createFeeds({
     if (msg.type === 'feedContent')
       return request('vault/feeds/content', { url, html: text(msg.html, 4 * 1024 * 1024) });
     if (msg.type === 'feedImage') {
-      // Item images: without cookies or a referrer, never trackers, off when the user
-      // turned images off for this subscription.
+      // Item images: without cookies, with the Referer the item's page sends, never
+      // trackers, off when the user turned images off for this subscription.
       const address = text(msg.url, 4096);
       if (source.settings.images === false) throw Error('Images are off for this subscription');
       if (!/^https?:/i.test(address) || trackingImage(address)) throw Error('Not loaded');
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), FEED_LIMIT.timeout);
       try {
-        const response = await fetchImpl(address, {
-          credentials: 'omit',
-          referrerPolicy: 'no-referrer',
-          signal: controller.signal,
-        });
+        // With the Referer the item's page would send (some image hosts refuse none).
+        const page = /^https?:/i.test(entry.url || '') ? entry.url : '';
+        const response = await withReferer(address, page, () =>
+          fetchImpl(address, {
+            credentials: 'omit',
+            referrerPolicy: 'no-referrer',
+            signal: controller.signal,
+          }),
+        );
         if (!response.ok) throw Error(`HTTP ${response.status}`);
         const { bytes } = await readBody(response, IMAGE_SIZE, false);
         const kind = sniff(bytes);

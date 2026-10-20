@@ -455,7 +455,7 @@ const big = rss('Big', [...Array(200).keys()], { content: '<p>' + 'x'.repeat(220
     assert.equal(await page.textContent('#pageTitle'), 'Full item');
     assert.match(await page.textContent('#content'), /Full item paragraph 19/);
     assert.match(await page.textContent('#byline'), /Reading/);
-    // Its image comes through the worker, without cookies or a referrer.
+    // Its image comes through the worker, without cookies.
     await page.evaluate(() => document.querySelector('#content img')?.scrollIntoView());
     assert(
       await until(() =>
@@ -466,9 +466,10 @@ const big = rss('Big', [...Array(200).keys()], { content: '<p>' + 'x'.repeat(220
       ),
       'The item image is shown',
     );
+    // Without cookies, with the Referer the item's page sends (same origin: its address).
     const imageHit = hits.find((hit) => hit.url === '/img/pic.png');
     assert.equal(imageHit.headers.cookie, undefined);
-    assert.equal(imageHit.headers.referer, undefined);
+    assert.equal(imageHit.headers.referer, origin + '/article/full');
     assert.equal(
       hits.some((hit) => hit.url === '/article/full'),
       false,
