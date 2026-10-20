@@ -401,6 +401,11 @@ with tempfile.TemporaryDirectory(prefix="tabgent-feeds-host-") as directory:
             host.VAULT_POOL.submit(lambda: None).result()
         replies = {reply["id"]: reply for reply in sent}
         assert parsed == ["vault/feeds/subscribe"], parsed
+        # A method that is not a string is refused, and the connector keeps reading.
+        host.handle({"op": "vault", "id": "odd", "method": ["vault/feeds/preview"]})
+        host.VAULT_POOL.submit(lambda: None).result(timeout=10)
+        odd = next(reply for reply in sent if reply["id"] == "odd")
+        assert odd["error"]["code"] == "unknown_method", odd
 
         # Parsing a feed never holds the vault queue: a request sent while a feed is being
         # parsed is answered first.

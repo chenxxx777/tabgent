@@ -209,7 +209,18 @@ export function initFeeds({ send, toast }) {
       if (file.size > 2 * 1024 * 1024) throw Error(t('feedsOpmlTooLarge'));
       const { outlines } = await send({ type: 'feedsOpmlParse', text: await file.text() });
       if (!outlines.length) return status(t('feedsOpmlEmpty'));
-      const known = new Set(state.sources.map((source) => source.url));
+      // Compared as the worker normalizes addresses before it subscribes.
+      const address = (value) => {
+        try {
+          const url = new URL(value);
+          url.hash = '';
+          return url.href;
+        } catch {
+          return value;
+        }
+      };
+      const known = new Set(state.sources.map((source) => address(source.url)));
+      for (const outline of outlines) outline.url = address(outline.url);
       const boxes = outlines.map((outline) => {
         const box = element('input', { type: 'checkbox', checked: !known.has(outline.url) });
         box.disabled = known.has(outline.url);

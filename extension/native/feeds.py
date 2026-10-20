@@ -21,7 +21,7 @@ import re
 import sqlite3
 import time
 import uuid
-from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
+from urllib.parse import unquote_plus, urljoin, urlsplit, urlunsplit
 import xml.parsers.expat as expat
 
 import epub_text
@@ -65,7 +65,7 @@ class FeedError(Exception):
 
 
 class _Element:
-    __slots__ = ("tag", "attrs", "children", "text")
+    __slots__ = ("tag", "attrs", "children", "text", "size")
 
     def __init__(self, tag, attrs):
         self.tag = (
@@ -74,6 +74,7 @@ class _Element:
         self.attrs = attrs
         self.children = []
         self.text = []  # text, with each child element at its place (for xhtml content)
+        self.size = 0  # characters of text kept, counted as they are added
 
     def find(self, *tags):
         return next((c for c in self.children if c.tag in tags), None)
@@ -165,7 +166,7 @@ def _expat(data):
 
     def skipped(name, parameter):
         if not parameter:
-            stack[-1].text.append(chr(html.entities.name2codepoint.get(name, 0xFFFD)))
+            text(chr(html.entities.name2codepoint.get(name, 0xFFFD)))
 
     def start(tag, attrs):
         count[0] += 1
@@ -185,9 +186,11 @@ def _expat(data):
         size[0] += len(value)
         if size[0] > FEED_LIMIT * 2:
             raise _Refused("The feed text is too long")
-        parts = stack[-1].text
-        if sum(len(part) for part in parts if isinstance(part, str)) < TEXT_LIMIT:
-            parts.append(value)
+        # A running count per element keeps this linear in the feed's size.
+        element = stack[-1]
+        if element.size < TEXT_LIMIT:
+            element.text.append(value)
+            element.size += len(value)
 
     parser.StartDoctypeDeclHandler = doctype
     parser.EntityDeclHandler = entity
@@ -294,15 +297,16 @@ def _date(value):
 
 def identity(url):
     """The vault identity of an item's link: no fragment and no tracking parameters (feed
-    links often carry utm_source=rss), so the item and the page are one document."""
+    links often carry utm_source=rss), so the item and the page are one document. Other
+    parameters stay exactly as written: servers may treat ?a and ?a= differently."""
     parts = urlsplit(url)
     query = [
-        (k, v)
-        for k, v in parse_qsl(parts.query, keep_blank_values=True)
-        if not TRACKING.fullmatch(k)
+        pair
+        for pair in parts.query.split("&")
+        if pair and not TRACKING.fullmatch(unquote_plus(pair.split("=", 1)[0]))
     ]
     return urlunsplit(
-        (parts.scheme, parts.netloc, parts.path or "/", urlencode(query), "")
+        (parts.scheme, parts.netloc, parts.path or "/", "&".join(query), "")
     )
 
 
@@ -786,12 +790,15 @@ def _settings(row):
     return value if isinstance(value, dict) else {}
 
 
-def _public_source(db, row):
-    counts = db.execute(
-        "SELECT COUNT(*), SUM(state = 'inbox' AND read_at IS NULL) FROM items "
-        "WHERE source_id = ?",
-        (row["id"],),
-    ).fetchone()
+def _public_source(db, row, counts=None):
+    """A subscription for the library; counts: (items, unread), read here when not given
+    (the list reads them for every subscription in one query)."""
+    if counts is None:
+        counts = db.execute(
+            "SELECT COUNT(*), SUM(state = 'inbox' AND read_at IS NULL) FROM items "
+            "WHERE source_id = ?",
+            (row["id"],),
+        ).fetchone()
     return {
         "id": row["id"],
         "type": row["type"],
@@ -1180,7 +1187,18 @@ def sources(settings, params):
             "SELECT * FROM sources ORDER BY COALESCE(category, ''), "
             "LOWER(COALESCE(NULLIF(title, ''), url))"
         ).fetchall()
-        return {"sources": [_public_source(db, row) for row in rows]}
+        counts = {
+            source: (total, unread)
+            for source, total, unread in db.execute(
+                "SELECT source_id, COUNT(*), SUM(state = 'inbox' AND read_at IS NULL) "
+                "FROM items GROUP BY source_id"
+            )
+        }
+        return {
+            "sources": [
+                _public_source(db, row, counts.get(row["id"], (0, 0))) for row in rows
+            ]
+        }
 
 
 def due(settings, params):
