@@ -14,8 +14,10 @@ and packaging details. PDF rendering and annotation code runs locally.
 
 Marked 18.0.14 is bundled in `extension/vendor/marked/` under the MIT license.
 DOMPurify 3.4.16 is bundled in `extension/vendor/dompurify/` under its Apache-2.0
-or MPL-2.0 dual license. Their original license files accompany the sources.
-They render and sanitize conversation Markdown locally; no CDN is used.
+or MPL-2.0 dual license, as its ES module (`purify.js`) and its UMD build
+(`purify.umd.js`, for the clipping script). Their original license files accompany the
+sources. They render and sanitize conversation Markdown and clipped pages locally; no CDN
+is used.
 
 KaTeX 0.19.0 is bundled in `extension/vendor/katex/` under the MIT license.
 Its fonts and stylesheet are included for offline mathematical typesetting.
@@ -35,3 +37,12 @@ foliate-js by John Factotum (commit `78914ae`) is bundled in
 (by Gildas Lormeau, BSD-3-Clause). Both license files and a `README.md` with the
 source and update steps accompany it. EPUB rendering runs locally, with book
 scripts disabled.
+
+Defuddle 0.19.5 by Steph Ango is bundled in `extension/vendor/defuddle/` under MIT (its
+core browser bundle, unmodified; see its `LICENSE` and `README.md`). It extracts a page's
+main text locally when you clip the page; its fallbacks that fetch from third-party
+services are not used.
+
+Turndown 7.2.4 by Dom Christie is bundled in `extension/vendor/turndown/` under MIT (its
+UMD browser build, unmodified; see its `LICENSE` and `README.md`). It converts a clipped
+page to Markdown locally.
