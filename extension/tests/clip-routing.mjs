@@ -588,6 +588,35 @@ try {
   assert(JSON.parse(fs.readFileSync(path.join(folder, 'anchors.json'), 'utf8')).highlights.length);
   assert.equal((await call({ type: 'clipRead' }, reader)).code, 'not_found');
   console.log('PASS the clipped copy opens beside the page and can be deleted from the reader');
+
+  // When the reader tab closes, its conversation keeps the page it showed (as for #14's
+  // closed companions): the page address and document, marked closed.
+  tabs.delete(5);
+  const closedState = await call(
+    { type: 'readingState', conversationKey: readerView.state.conversationKey, companionTabId: 5 },
+    panel,
+  );
+  assert.deepEqual(
+    (({ url, kind, view, closed }) => ({ url, kind, view, closed }))(closedState.page),
+    { url: article, kind: 'web', view: 'clip', closed: true },
+  );
+  const closedMark = sent.length;
+  // A queued follow-up (the earlier turn is still running in this fixture).
+  await readerView.ui('codexRpc', {
+    id: 3,
+    method: 'thread/queue/add',
+    params: {
+      threadId: 'thread-reader',
+      input: [{ type: 'text', text: 'And now?', text_elements: [] }],
+    },
+  });
+  // The message waits for the vault's answers before it is sent.
+  for (let i = 0; i < 200 && !sent.slice(closedMark).some((m) => m.op === 'rpc'); i++) await wait();
+  const closedInput = sent.slice(closedMark).find((m) => m.op === 'rpc').message.params.input;
+  const closedContext = JSON.parse(closedInput[0].text.slice(closedInput[0].text.indexOf('{')));
+  assert.equal(closedContext.url, article);
+  assert.equal(closedContext.closed, true);
+  console.log('PASS a closed reader tab keeps its page for the conversation');
 } finally {
   python.stdin.end();
   fs.rmSync(temp, { recursive: true, force: true });
