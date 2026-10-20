@@ -256,57 +256,80 @@ async function importIntoVault(bytes, name, sha256) {
 
 async function showBook(file, sha256, token) {
   status(t('epubLoading'));
-  let book;
   try {
-    book = await openBook(file);
+    const book = await openBook(file);
+    if (token !== opening) {
+      book.destroy();
+      return false;
+    }
+    state.book = book;
+    state.sha256 = sha256;
+    state.title = label(book.metadata?.title) || file.name.replace(/\.epub$/i, '');
+    const author = label(book.metadata?.author);
+    state.meta = author ? { author } : {};
+    library.announce({ sha256, title: state.title });
+    document.title = state.title;
+    $('#bookTitle').textContent = state.title;
+    $('#start').hidden = true;
+    $('#viewer').hidden = $('#footer').hidden = $('#reading').hidden = false;
+    $('#contentsButton').disabled = false;
+    const view = document.createElement('foliate-view');
+    state.view = view;
+    $('#book').replaceChildren(view);
+    // A closed view can still finish loading; only the current view updates the reader.
+    const on = (name, handler) =>
+      view.addEventListener(name, (event) => state.view === view && handler(event));
+    on('load', onSectionLoad);
+    on('relocate', onRelocate);
+    // foliate attaches the chapter's overlayer just after this event; paint a microtask later.
+    on('create-overlay', ({ detail }) => queueMicrotask(() => paintSection(detail.index)));
+    on('draw-annotation', ({ detail }) => detail.draw(Overlayer.highlight, { color: COLOR }));
+    on('show-annotation', ({ detail }) => showHighlightMenu(detail));
+    view.addEventListener('external-link', (event) => {
+      event.preventDefault();
+      const href = event.detail.a.getAttribute('href') || '';
+      if (state.view === view && /^(?:https?|mailto):/i.test(href))
+        open(href, '_blank', 'noopener');
+    });
+    const highlights = loadHighlights(view);
+    await view.open(book);
+    if (state.view !== view) return false;
+    applySettings();
+    buildToc(book.toc || []);
+    const saved = await library.position(sha256);
+    await highlights;
+    if (state.view !== view) return false;
+    await view.init({ lastLocation: saved?.cfi, showTextStart: !saved?.cfi });
+    if (state.view !== view) return false;
+    status('');
+    void verifyAll();
+    return true;
   } catch (error) {
     if (token !== opening) return false;
-    status('');
-    failure('epubOpenFailed', error);
+    await bookFailed(error);
     return false;
   }
-  if (token !== opening) return false;
-  state.book = book;
-  state.sha256 = sha256;
-  state.title = label(book.metadata?.title) || file.name.replace(/\.epub$/i, '');
-  const author = label(book.metadata?.author);
-  state.meta = author ? { author } : {};
-  library.announce({ sha256, title: state.title });
-  document.title = state.title;
-  $('#bookTitle').textContent = state.title;
-  $('#start').hidden = true;
-  $('#viewer').hidden = $('#footer').hidden = $('#reading').hidden = false;
-  $('#contentsButton').disabled = false;
-  const view = document.createElement('foliate-view');
-  state.view = view;
-  $('#book').replaceChildren(view);
-  // A closed view can still finish loading; only the current view updates the reader.
-  const on = (name, handler) =>
-    view.addEventListener(name, (event) => state.view === view && handler(event));
-  on('load', onSectionLoad);
-  on('relocate', onRelocate);
-  // foliate attaches the chapter's overlayer just after this event; paint a microtask later.
-  on('create-overlay', ({ detail }) => queueMicrotask(() => paintSection(detail.index)));
-  on('draw-annotation', ({ detail }) => detail.draw(Overlayer.highlight, { color: COLOR }));
-  on('show-annotation', ({ detail }) => showHighlightMenu(detail));
-  view.addEventListener('external-link', (event) => {
-    event.preventDefault();
-    const href = event.detail.a.getAttribute('href') || '';
-    if (state.view === view && /^(?:https?|mailto):/i.test(href)) open(href, '_blank', 'noopener');
-  });
-  const highlights = loadHighlights(view);
-  await view.open(book);
-  if (state.view !== view) return false;
-  applySettings();
-  buildToc(book.toc || []);
-  const saved = await library.position(sha256);
-  await highlights;
-  if (state.view !== view) return false;
-  await view.init({ lastLocation: saved?.cfi, showTextStart: !saved?.cfi });
-  if (state.view !== view) return false;
-  status('');
-  void verifyAll();
-  return true;
+}
+
+async function bookFailed(error) {
+  const message = loadTimeData.getStringF('epubOpenFailed', error?.message || error);
+  closeBook();
+  history.replaceState(null, '', location.pathname);
+  status(message); // Persist the error beside the picker, so the user can retry.
+  toast(message);
+  await showLibrary();
+}
+
+async function navigate(action) {
+  const view = state.view;
+  if (!view) return false;
+  try {
+    await action(view);
+    return state.view === view;
+  } catch (error) {
+    if (state.view === view) await bookFailed(error);
+    return false;
+  }
 }
 
 function closeBook() {
@@ -374,9 +397,9 @@ $('#larger').onclick = () =>
   changeSettings({ fontSize: Math.min(200, state.settings.fontSize + 10) });
 $('#flow').onclick = () =>
   changeSettings({ flow: state.settings.flow === 'scrolled' ? 'paginated' : 'scrolled' });
-$('#prev').onclick = () => state.view?.goLeft();
-$('#next').onclick = () => state.view?.goRight();
-$('#progress').oninput = () => state.view?.goToFraction(Number($('#progress').value));
+$('#prev').onclick = () => navigate((view) => view.goLeft());
+$('#next').onclick = () => navigate((view) => view.goRight());
+$('#progress').oninput = () => navigate((view) => view.goToFraction(Number($('#progress').value)));
 
 function onKey(event) {
   if (!state.view || event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey)
@@ -394,8 +417,10 @@ function onKey(event) {
   if (event.target?.closest?.('input, textarea, [contenteditable], #drawer, .floating')) return;
   if (event.key === 'Escape') return void hideFloating();
   const paged = state.settings.flow !== 'scrolled';
-  if (event.key === 'ArrowLeft' || (paged && event.key === 'PageUp')) state.view.goLeft();
-  else if (event.key === 'ArrowRight' || (paged && event.key === 'PageDown')) state.view.goRight();
+  if (event.key === 'ArrowLeft' || (paged && event.key === 'PageUp'))
+    void navigate((view) => view.goLeft());
+  else if (event.key === 'ArrowRight' || (paged && event.key === 'PageDown'))
+    void navigate((view) => view.goRight());
   else return;
   event.preventDefault();
 }
@@ -430,7 +455,7 @@ function buildToc(items, parent = $('#toc')) {
     button.textContent = item.label?.trim() || t('epubUntitled');
     button.dataset.href = item.href || '';
     button.disabled = !item.href;
-    button.onclick = () => void state.view?.goTo(item.href);
+    button.onclick = () => void navigate((view) => view.goTo(item.href));
     li.append(button);
     if (item.subitems?.length) {
       const ol = document.createElement('ol');
@@ -503,7 +528,7 @@ function renderHighlightList() {
     button.append(meta);
     button.onclick = () => {
       if (entry.status === 'unanchored') return toast(t('epubUnanchoredHint'));
-      void state.view?.goTo(entry.cfi || entry.record.anchor.cfi);
+      void navigate((view) => view.goTo(entry.cfi || entry.record.anchor.cfi));
     };
     button.dataset.highlight = id;
     li.append(button);
@@ -918,8 +943,7 @@ library.handleCommands(async (command) => {
   const href = entry.record.anchor?.chapter?.href || '';
   if (command.action === 'jump') {
     if (entry.status === 'unanchored') return { found: false };
-    await state.view.goTo(entry.cfi || entry.record.anchor.cfi);
-    return { found: true };
+    return { found: await navigate((view) => view.goTo(entry.cfi || entry.record.anchor.cfi)) };
   }
   if (command.action !== 'context') throw Error('Unknown command');
   const index = state.book.sections.findIndex((section) => section.id === href);

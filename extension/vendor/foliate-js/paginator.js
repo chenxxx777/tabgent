@@ -1,3 +1,4 @@
+import { loadFrame } from './frame.js'
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
 
 const debounce = (f, wait, immediate) => {
@@ -251,39 +252,33 @@ class View {
         return this.#iframe.contentDocument
     }
     async load(src, afterLoad, beforeRender) {
-        if (typeof src !== 'string') throw new Error(`${src} is not string`)
-        return new Promise(resolve => {
-            this.#iframe.addEventListener('load', () => {
-                const doc = this.document
-                afterLoad?.(doc)
+        const doc = await loadFrame(this.#iframe, src)
+        afterLoad?.(doc)
 
-                // it needs to be visible for Firefox to get computed style
-                this.#iframe.style.display = 'block'
-                const { vertical, rtl } = getDirection(doc)
-                const background = getBackground(doc)
-                this.#iframe.style.display = 'none'
+        // it needs to be visible for Firefox to get computed style
+        this.#iframe.style.display = 'block'
+        const { vertical, rtl } = getDirection(doc)
+        const background = getBackground(doc)
+        this.#iframe.style.display = 'none'
 
-                this.#vertical = vertical
-                this.#rtl = rtl
+        this.#vertical = vertical
+        this.#rtl = rtl
 
-                this.#contentRange.selectNodeContents(doc.body)
-                const layout = beforeRender?.({ vertical, rtl, background })
-                this.#iframe.style.display = 'block'
-                this.render(layout)
-                this.#observer.observe(doc.body)
+        this.#contentRange.selectNodeContents(doc.body)
+        const layout = beforeRender?.({ vertical, rtl, background })
+        this.#iframe.style.display = 'block'
+        this.render(layout)
+        this.#observer.observe(doc.body)
 
-                // the resize observer above doesn't work in Firefox
-                // (see https://bugzilla.mozilla.org/show_bug.cgi?id=1832939)
-                // until the bug is fixed we can at least account for font load
-                doc.fonts.ready.then(() => this.expand())
-
-                resolve()
-            }, { once: true })
-            this.#iframe.src = src
+        // the resize observer above doesn't work in Firefox
+        // (see https://bugzilla.mozilla.org/show_bug.cgi?id=1832939)
+        // until the bug is fixed we can at least account for font load
+        doc.fonts.ready.then(() => {
+            if (this.document === doc) this.expand()
         })
     }
     render(layout) {
-        if (!layout) return
+        if (!layout || !this.document?.body) return
         this.#column = layout.flow !== 'scrolled'
         this.#layout = layout
         if (this.#column) this.columnize(layout)
@@ -752,7 +747,7 @@ export class Paginator extends HTMLElement {
         return { height, width, margin, gap, columnWidth }
     }
     render() {
-        if (!this.#view) return
+        if (!this.#view?.document?.body) return
         this.#view.render(this.#beforeRender({
             vertical: this.#vertical,
             rtl: this.#rtl,
@@ -1011,12 +1006,7 @@ export class Paginator extends HTMLElement {
                 this.dispatchEvent(new CustomEvent('load', { detail }))
             }
             await this.#display(Promise.resolve(this.sections[index].load())
-                .then(src => ({ index, src, anchor, onLoad, select }))
-                .catch(e => {
-                    console.warn(e)
-                    console.warn(new Error(`Failed to load section ${index}`))
-                    return {}
-                }))
+                .then(src => ({ index, src, anchor, onLoad, select })))
         }
     }
     async goTo(target) {
@@ -1109,18 +1099,23 @@ export class Paginator extends HTMLElement {
         } else $style.textContent = styles
 
         // NOTE: needs `requestAnimationFrame` in Chromium
-        requestAnimationFrame(() =>
-            this.#background.style.background = getBackground(this.#view.document))
+        const view = this.#view
+        requestAnimationFrame(() => {
+            if (this.#view === view && view?.document?.body)
+                this.#background.style.background = getBackground(view.document)
+        })
 
         // needed because the resize observer doesn't work in Firefox
-        this.#view?.document?.fonts?.ready?.then(() => this.#view.expand())
+        view?.document?.fonts?.ready?.then(() => {
+            if (this.#view === view) view.expand()
+        })
     }
     focusView() {
         this.#view.document.defaultView.focus()
     }
     destroy() {
         this.#observer.unobserve(this)
-        this.#view.destroy()
+        this.#view?.destroy()
         this.#view = null
         this.sections[this.#index]?.unload?.()
         this.#mediaQuery.removeEventListener('change', this.#mediaQueryListener)

@@ -2,10 +2,10 @@
 SHA-256) on every run. Usage: python3 epub_fixture.py <output.epub> [title] [noise characters]
 """
 
+import argparse
 import io
 import os
 from pathlib import Path
-import sys
 import zipfile
 
 TITLE = "A Small Book of Reading"
@@ -59,7 +59,7 @@ def xhtml(title, body):
 """
 
 
-def build(chapters=CHAPTERS, title=TITLE, author=AUTHOR):
+def build(chapters=CHAPTERS, title=TITLE, author=AUTHOR, fixed_layout=False):
     """The EPUB file as bytes."""
     manifest = "\n".join(
         f'<item id="c{i}" href="{href}" media-type="application/xhtml+xml"/>'
@@ -76,6 +76,9 @@ def build(chapters=CHAPTERS, title=TITLE, author=AUTHOR):
         + "</li>"
         for href, label, _ in chapters
     )
+    layout = (
+        '<meta property="rendition:layout">pre-paginated</meta>' if fixed_layout else ""
+    )
     files = {
         "META-INF/container.xml": """<?xml version="1.0" encoding="UTF-8"?>
 <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
@@ -91,6 +94,7 @@ def build(chapters=CHAPTERS, title=TITLE, author=AUTHOR):
 <dc:language>en</dc:language>
 <dc:date>2026-01-01</dc:date>
 <meta property="dcterms:modified">2026-01-01T00:00:00Z</meta>
+{layout}
 </metadata>
 <manifest>
 <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
@@ -113,6 +117,13 @@ def build(chapters=CHAPTERS, title=TITLE, author=AUTHOR):
     }
     for href, label, body in chapters:
         files["OEBPS/" + href] = xhtml(label, body)
+    if fixed_layout:
+        for name, text in files.items():
+            if name.endswith(".xhtml"):
+                files[name] = text.replace(
+                    "</head>",
+                    '<meta name="viewport" content="width=600,height=800"/></head>',
+                )
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as archive:
         stamp = (2026, 1, 1, 0, 0, 0)
@@ -125,11 +136,16 @@ def build(chapters=CHAPTERS, title=TITLE, author=AUTHOR):
 
 
 if __name__ == "__main__":
-    # Optional: a title, and a number of random hex characters that make the book large.
-    title = sys.argv[2] if len(sys.argv) > 2 else TITLE
-    noise = int(sys.argv[3]) if len(sys.argv) > 3 else 0
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("output")
+    parser.add_argument("title", nargs="?", default=TITLE)
+    parser.add_argument("noise", nargs="?", type=int, default=0)
+    parser.add_argument("--fixed-layout", action="store_true")
+    args = parser.parse_args()
     chapters = CHAPTERS
-    if noise:
-        filler = "<p>" + os.urandom(noise // 2).hex() + "</p>"
+    if args.noise:
+        filler = "<p>" + os.urandom(args.noise // 2).hex() + "</p>"
         chapters = [*CHAPTERS, ("noise.xhtml", "Noise", filler)]
-    Path(sys.argv[1]).write_bytes(build(chapters, title))
+    Path(args.output).write_bytes(
+        build(chapters, args.title, fixed_layout=args.fixed_layout)
+    )

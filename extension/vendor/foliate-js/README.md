@@ -8,7 +8,7 @@ License: MIT; see `LICENSE`. `vendor/zip.js` is the minified zip.js build that
 foliate-js ships at that commit (from `@zip.js/zip.js` 2.8.22 per its
 `package-lock.json`), under BSD-3-Clause; see `vendor/zip.js.LICENSE`.
 
-Included, unmodified: `view.js`, `epub.js`, `epubcfi.js`, `paginator.js`,
+Included: `view.js`, `epub.js`, `epubcfi.js`, `paginator.js`,
 `fixed-layout.js`, `overlayer.js`, `progress.js`, `text-walker.js` and
 `vendor/zip.js`. Omitted: other formats (MOBI, FB2, CBZ, PDF), TTS, search,
 dictionary, OPDS, the demo reader and UI, tests and `vendor/fflate.js`.
@@ -19,6 +19,32 @@ Tabgent's reader (`extension/epub/`) disables EPUB scripts: script resources are
 not loaded, `<script>` elements are neutralized by type (so CFIs stay stable),
 event handler attributes and `javascript:` URLs are removed, and the extension
 CSP plus the reader's own CSP block script execution and remote resources.
+
+## Tabgent patches
+
+- `paginator.js` and `fixed-layout.js` use the small local `frame.js` helper to
+  accept `{ srcdoc }` section sources as well as upstream URL strings. The EPUB
+  adapter in `extension/epub/book.js` fetches foliate's already rewritten and
+  sanitized chapter blobs and supplies HTML `srcdoc`; image/CSS/font resources
+  still use foliate's blob cache and unload lifecycle. Sandbox permissions and
+  the reader CSP are retained.
+- `frame.js` ignores the initial `about:blank` load, rejects inaccessible
+  documents/load errors and times out after 15 seconds. Layout callbacks run in
+  the awaiting async function so their exceptions reject instead of leaving an
+  unresolved DOM-listener promise. `view.js` propagates navigation errors to the
+  reader. The reader returns to the library with a persistent error and allows
+  another import; unsuccessful rendering starts no vault upload.
+- `paginator.js` stops swallowing section-source failures and guards pending
+  layout/font/animation callbacks against missing or closed chapter views.
+
+These patches address B1: Chromium 151's `MigrateAutomaticJsOptimizer` field trial
+(`MigrateToBlockV8OptimizerOnUnfamiliarSites`) makes an extension-created blob
+chapter a separate frame process that the parent cannot access, despite its
+matching serialized origin. Playwright's `--disable-field-trial-config` hides
+this path. Using `srcdoc` retains the embedding document's context without
+changing browser security settings. Recheck these patches when updating the
+vendor and run `npm run test:epub` (direct Chrome launch plus CDP, headed on macOS;
+`EPUB_HEADLESS=1` also exercises direct headless Chrome).
 
 ## Updating
 

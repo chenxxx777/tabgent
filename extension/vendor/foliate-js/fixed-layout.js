@@ -1,3 +1,4 @@
+import { loadFrame } from './frame.js'
 const parseViewport = str => str
     ?.split(/[,;\s]/) // NOTE: technically, only the comma is valid
     ?.filter(x => x)
@@ -70,7 +71,7 @@ export class FixedLayout extends HTMLElement {
     }
     async #createFrame({ index, src: srcOption }) {
         const srcOptionIsString = typeof srcOption === 'string'
-        const src = srcOptionIsString ? srcOption : srcOption?.src
+        const src = srcOptionIsString ? srcOption : srcOption?.srcdoc != null ? srcOption : srcOption?.src
         const onZoom = srcOptionIsString ? null : srcOption?.onZoom
         const element = document.createElement('div')
         element.setAttribute('dir', 'ltr')
@@ -88,21 +89,17 @@ export class FixedLayout extends HTMLElement {
         iframe.setAttribute('part', 'filter')
         this.#root.append(element)
         if (!src) return { blank: true, element, iframe }
-        return new Promise(resolve => {
-            iframe.addEventListener('load', () => {
-                const doc = iframe.contentDocument
-                this.dispatchEvent(new CustomEvent('load', { detail: { doc, index } }))
-                const { width, height } = getViewport(doc, this.defaultViewport)
-                resolve({
-                    element, iframe,
-                    width: parseFloat(width),
-                    height: parseFloat(height),
-                    onZoom,
-                })
-            }, { once: true })
-            iframe.src = src
-        })
+        const doc = await loadFrame(iframe, src)
+        this.dispatchEvent(new CustomEvent('load', { detail: { doc, index } }))
+        const { width, height } = getViewport(doc, this.defaultViewport)
+        return {
+            element, iframe,
+            width: parseFloat(width),
+            height: parseFloat(height),
+            onZoom,
+        }
     }
+
     #render(side = this.#side) {
         if (!side) return
         const left = this.#left ?? {}
