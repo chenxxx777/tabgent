@@ -42,7 +42,11 @@ These patches address B1: Chromium 151's `MigrateAutomaticJsOptimizer` field tri
 chapter a separate frame process that the parent cannot access, despite its
 matching serialized origin. Playwright's `--disable-field-trial-config` hides
 this path. Using `srcdoc` retains the embedding document's context without
-changing browser security settings. Recheck these patches when updating the
+changing browser security settings. This also matters to branded Chrome when
+unfamiliar-site JavaScript optimizer blocking is enabled: the same failure can
+be reproduced without field trials by setting the temporary profile preference
+`safebrowsing.javascript_optimizer_blocked_for_unfamiliar_sites` to `true`.
+The everyday Chrome profile is not needed for this compatibility check. Recheck these patches when updating the
 vendor and run `npm run test:epub` (direct Chrome launch plus CDP, headed on macOS;
 `EPUB_HEADLESS=1` also exercises direct headless Chrome).
 
