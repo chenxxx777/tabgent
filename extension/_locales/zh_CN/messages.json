@@ -101,6 +101,36 @@
   "highlightOpenPanel": {
     "message": "已发送到 Tabgent。点击工具栏中的 Tabgent 按钮即可打开侧边栏。"
   },
+  "highlightNoteAdd": {
+    "message": "添加笔记"
+  },
+  "highlightNoteEdit": {
+    "message": "编辑笔记"
+  },
+  "highlightNoteLabel": {
+    "message": "我的笔记"
+  },
+  "highlightNotePlaceholder": {
+    "message": "你怎么看这段文字？留空即删除笔记。"
+  },
+  "highlightNoteHint": {
+    "message": "⌘ Enter 保存 · Esc 取消"
+  },
+  "highlightNoteSave": {
+    "message": "保存笔记"
+  },
+  "highlightNoteCancel": {
+    "message": "取消"
+  },
+  "highlightNoteSaved": {
+    "message": "笔记已保存到阅读笔记。"
+  },
+  "highlightNoteRemoved": {
+    "message": "笔记已删除。"
+  },
+  "highlightNoteFailed": {
+    "message": "无法保存笔记：$1"
+  },
   "pdfPageLabel": {
     "message": "第 $1 页"
   },

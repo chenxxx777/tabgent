@@ -5,6 +5,9 @@
 // edits and the native fallback never asks about unsaved changes.
 import * as anchors from './pdf-anchor.js';
 import { pdfInfo } from './pdf-info.js';
+import '../highlight-note.js';
+
+const notes = globalThis.tabgentHighlightNote;
 
 const t = (key, ...values) => chrome.i18n.getMessage(key, values.map(String)) || key;
 const limit = 20000;
@@ -55,10 +58,13 @@ export async function startHighlights({ app, frame, source, name }) {
     root,
     toolbar,
     popover,
+    notePreview,
+    noteEditor,
     toast,
     draft = null,
     dismissed = null,
     active = null,
+    noteTarget = null,
     returnFocus = null,
     pointerDown = false,
     selectionTimer,
@@ -185,7 +191,7 @@ export async function startHighlights({ app, frame, source, name }) {
     host.popover = 'manual';
     root = host.attachShadow({ mode: 'closed' });
     const css = new win.CSSStyleSheet();
-    css.replaceSync(styles);
+    css.replaceSync(styles + notes.styles);
     root.adoptedStyleSheets = [css];
     toolbar = bar(t('highlightToolbar'), [
       ['highlight', t('highlightAdd'), true],
@@ -193,13 +199,20 @@ export async function startHighlights({ app, frame, source, name }) {
     ]);
     popover = bar(t('highlightActions'), [
       ['discuss', t('highlightAsk')],
+      ['note', t('highlightNoteAdd')],
       ['delete', t('highlightDelete')],
     ]);
+    // Clicking a highlight shows the user's note above its actions.
+    notePreview = notes.preview(doc, t);
+    popover.classList.add('card');
+    popover.prepend(notePreview);
+    popover.setAttribute('aria-describedby', notePreview.id);
+    noteEditor = notes.editor(doc, t, { save: saveNote, close: closeEditor });
     toast = doc.createElement('div');
     toast.className = 'toast';
     toast.setAttribute('role', 'status');
     toast.hidden = true;
-    root.append(toolbar, popover, toast);
+    root.append(toolbar, popover, noteEditor.element, toast);
     doc.documentElement.append(host);
   }
   function bar(name, actions) {
@@ -222,7 +235,7 @@ export async function startHighlights({ app, frame, source, name }) {
       button.tabIndex = -1;
       element.append(button);
     }
-    element.firstChild.tabIndex = 0;
+    element.querySelector('button').tabIndex = 0;
     // Keep the PDF selection while the toolbar is clicked.
     element.addEventListener('pointerdown', (event) => event.preventDefault());
     element.addEventListener('mousedown', (event) => event.preventDefault());
@@ -235,7 +248,7 @@ export async function startHighlights({ app, frame, source, name }) {
   }
   function syncHost() {
     if (!host?.isConnected) return;
-    const open = [toolbar, popover, toast].some((element) => !element.hidden);
+    const open = [toolbar, popover, noteEditor.element, toast].some((element) => !element.hidden);
     if (open && !host.matches(':popover-open')) host.showPopover();
     if (!open && host.matches(':popover-open')) host.hidePopover();
   }
@@ -272,10 +285,11 @@ export async function startHighlights({ app, frame, source, name }) {
     refocus();
     syncHost();
   }
-  // The stronger color marks the popover's highlight and one just shown by a jump.
+  // The stronger color marks the popover's highlight, the one whose note is being edited,
+  // and one just shown by a jump.
   function refocus() {
     focused.clear();
-    for (const record of [flashing, active])
+    for (const record of [flashing, active, noteTarget])
       if (record && records.get(record.highlight.id) === record)
         for (const range of record.ranges) focused.add(range);
   }
@@ -440,7 +454,43 @@ export async function startHighlights({ app, frame, source, name }) {
     if (action === 'highlight' || action === 'ask') return void create(action === 'ask');
     if (!active) return;
     if (action === 'discuss') return void discuss(active);
+    if (action === 'note') return void openEditor(active);
     if (action === 'delete') return void remove(active);
+  }
+  // The note editor opens where the highlight is and keeps focus until saved or closed.
+  function openEditor(record) {
+    const rect = record.ranges?.[0]?.getBoundingClientRect();
+    if (!rect) return;
+    if (!inUi()) returnFocus = doc.activeElement;
+    closeEditor(true);
+    hidePopover();
+    noteTarget = record;
+    refocus();
+    noteEditor.open({ note: record.highlight.note || '', text: record.highlight.text || '' });
+    place(noteEditor.element, rect);
+    noteEditor.focus();
+  }
+  function closeEditor(keepFocus = false) {
+    if (!noteEditor?.visible) return;
+    if (!keepFocus) leaveUi();
+    noteEditor.hide();
+    noteTarget = null;
+    refocus();
+    syncHost();
+  }
+  async function saveNote(note) {
+    const record = noteTarget;
+    if (!record?.highlight) return;
+    const response = await send({
+      type: 'highlightNote',
+      documentId,
+      highlightId: record.highlight.id,
+      note,
+      title,
+    });
+    if (response.highlight) record.highlight = response.highlight;
+    closeEditor();
+    notify(t(note ? 'highlightNoteSaved' : 'highlightNoteRemoved'));
   }
   const sameSegments = (a, b) => JSON.stringify(a) === JSON.stringify(b);
   async function create(ask) {
@@ -527,6 +577,7 @@ export async function startHighlights({ app, frame, source, name }) {
       if (error.code !== 'not_found') return void notify(t('highlightDeleteFailed', error.message));
     }
     records.delete(record.highlight.id);
+    if (noteTarget === record) closeEditor();
     repaint();
     report();
   }
@@ -551,6 +602,10 @@ export async function startHighlights({ app, frame, source, name }) {
     refocus();
     popover.querySelector('[data-action="discuss"]').textContent =
       record.highlight.turnCount > 0 ? t('highlightOpen') : t('highlightAsk');
+    popover.querySelector('[data-action="note"]').textContent = t(
+      record.highlight.note ? 'highlightNoteEdit' : 'highlightNoteAdd',
+    );
+    notePreview.show(record.highlight.note);
     place(popover, rect);
   }
 
@@ -669,6 +724,8 @@ export async function startHighlights({ app, frame, source, name }) {
       if (event.composedPath().includes(host)) return;
       pointerDown = true;
       hidePopover();
+      // A note with unsaved text stays open; Cancel or Escape discards it.
+      if (!noteEditor?.changed) closeEditor();
     },
     options,
   );
@@ -731,6 +788,7 @@ export async function startHighlights({ app, frame, source, name }) {
     if (inUi()) return;
     hideToolbar();
     hidePopover();
+    if (!noteEditor?.changed) closeEditor();
   };
   doc.addEventListener('scroll', hideOnMove, { capture: true, passive: true });
   win.addEventListener('resize', hideOnMove);

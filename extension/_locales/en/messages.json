@@ -880,6 +880,36 @@
   "highlightOpenPanel": {
     "message": "Sent to Tabgent. Click the Tabgent toolbar button to open the side panel."
   },
+  "highlightNoteAdd": {
+    "message": "Add note"
+  },
+  "highlightNoteEdit": {
+    "message": "Edit note"
+  },
+  "highlightNoteLabel": {
+    "message": "Your note"
+  },
+  "highlightNotePlaceholder": {
+    "message": "What do you think about this passage? Leave empty to remove the note."
+  },
+  "highlightNoteHint": {
+    "message": "⌘ Enter to save · Esc to cancel"
+  },
+  "highlightNoteSave": {
+    "message": "Save note"
+  },
+  "highlightNoteCancel": {
+    "message": "Cancel"
+  },
+  "highlightNoteSaved": {
+    "message": "Note saved to your reading notes."
+  },
+  "highlightNoteRemoved": {
+    "message": "Note removed."
+  },
+  "highlightNoteFailed": {
+    "message": "The note could not be saved: $1"
+  },
   "pdfPageLabel": {
     "message": "p. $1"
   },

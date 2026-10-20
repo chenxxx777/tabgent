@@ -319,6 +319,45 @@ assert.deepEqual(selections().at(-1).highlight, {
   kind: 'epub',
 });
 assert.equal(selections().at(-1).locator.anchor.cfi, anchor.cfi);
+// The user's own note is saved for a highlight of this book only.
+host['vault/highlight/update'] = (params) => ({
+  document,
+  highlight: { ...saved, note: params.note },
+});
+const changes = () => messages.filter((m) => m.name === 'codex-reading-changed').length;
+const changesBefore = changes();
+assert.equal(
+  (
+    await call({
+      type: 'epubHighlightNote',
+      sha256,
+      documentId: document.id,
+      highlightId: 'h001',
+      note: 'My reading',
+    })
+  ).highlight.note,
+  'My reading',
+);
+assert.deepEqual(vaultCalls().at(-1).params, {
+  documentId: document.id,
+  highlightId: 'h001',
+  note: 'My reading',
+});
+assert.equal(changes(), changesBefore + 1, 'The panel list refreshes');
+for (const params of [
+  { sha256: otherBook, note: 'x' },
+  { sha256, note: { text: 'x' } },
+]) {
+  const before = vaultCalls().filter((m) => m.method === 'vault/highlight/update').length;
+  const failed = await call({
+    type: 'epubHighlightNote',
+    documentId: document.id,
+    highlightId: 'h001',
+    ...params,
+  });
+  assert(failed.error, JSON.stringify(params));
+  assert.equal(vaultCalls().filter((m) => m.method === 'vault/highlight/update').length, before);
+}
 assert.deepEqual(await call({ type: 'epubResolve', sha256, title: 'A Small Book' }), {
   document,
   highlights: [saved],
@@ -402,6 +441,19 @@ assert.equal(opened.url, 'urn:sha256:' + sha256);
 assert.deepEqual(opened.context, { before: 'People are ', after: ' when' });
 assert.equal(opened.locator.kind, 'epub');
 assert.equal(opened.locator.chapterFile, folder + '/chapters/01-chapter-one.md');
+// A note from the panel list is saved and the reader refreshes its highlight records.
+readerCommands.refresh = () => null;
+await side({ type: 'readingNote', documentId: document.id, highlightId: 'h001', note: 'Mine' });
+assert.deepEqual(vaultCalls().findLast((m) => m.method === 'vault/highlight/update').params, {
+  documentId: document.id,
+  highlightId: 'h001',
+  note: 'Mine',
+});
+assert.deepEqual(posted.findLast((m) => m.type === 'command').command, {
+  type: 'tabgentHighlight',
+  action: 'refresh',
+});
+saved.note = 'Mine';
 // Messages from the reader tab carry a reading context that names the book's chapters.
 await chat.onMessage.listeners[0]({
   type: 'ui',
@@ -416,6 +468,7 @@ const reading = JSON.parse(part.text.slice(readingContextPrefix.length));
 assert.equal(reading.document.kind, 'epub');
 assert.equal(reading.document.url, 'urn:sha256:' + sha256);
 assert.equal(reading.document.chapters, folder + '/chapters');
+assert.equal(reading.highlight.userNote, 'Mine', "The user's note goes with the message");
 // A closed book leaves the reader tab without a document.
 for (const listener of port.onMessage.listeners) listener({ type: 'book', sha256: '' });
 assert.equal((await side({ type: 'readingState' })).page, null);

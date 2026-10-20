@@ -56,6 +56,7 @@ const quote = "endorsement of one's own actions";
     'agent-pointer.js',
     'i18n.js',
     'web-anchor.js',
+    'highlight-note.js',
     'vault-client.js',
     'highlight.css',
   ])
@@ -107,6 +108,12 @@ chrome.runtime.onMessage.addListener((m, sender, reply) => {
       return { ok: true };
     }
     if (m.type === 'highlightAsk') return { panelOpened: true };
+    if (m.type === 'highlightNote') {
+      const highlight = saved.highlights.find((h) => h.id === m.highlightId);
+      if (!highlight) throw Error('Highlight not found');
+      highlight.note = m.note;
+      return { highlight };
+    }
     return {};
   })().then(reply, (e) => reply({ error: e.message }));
   return true;
@@ -444,6 +451,72 @@ chrome.runtime.onMessage.addListener((m, sender, reply) => {
     await wait(300);
     assert.deepEqual(await painted(), ['independence from other people']);
     console.log('PASS the worker can ask a PDF viewer for context, jump to a highlight, refresh');
+
+    // The user's own note: Add note in the popover, typed keys never reach PDF.js shortcuts,
+    // and after a reload a click shows the note.
+    const strings = ['en', 'zh_CN'].map((locale) =>
+      JSON.parse(fs.readFileSync(`extension/_locales/${locale}/messages.json`)),
+    );
+    const message = (key) => strings.map((m) => m[key]?.message).filter(Boolean);
+    async function readerHtml() {
+      const client = await page.context().newCDPSession(page);
+      const { root } = await client.send('DOM.getDocument', { depth: -1, pierce: true });
+      let shadow = null;
+      (function walk(node) {
+        if (node.localName === 'tabgent-reader') shadow = node.shadowRoots?.[0];
+        for (const child of [
+          ...(node.children || []),
+          ...(node.shadowRoots || []),
+          ...(node.contentDocument ? [node.contentDocument] : []),
+        ])
+          walk(child);
+      })(root);
+      const { outerHTML } = await client.send('DOM.getOuterHTML', {
+        backendNodeId: shadow.backendNodeId,
+      });
+      await client.detach();
+      return outerHTML;
+    }
+    const clickHighlight = async (text) => {
+      const at = await pdf.evaluate((text) => {
+        const range = [...CSS.highlights.get('tabgent-highlight')].find((r) => String(r) === text);
+        const r = range.getBoundingClientRect();
+        return { x: r.left + 4, y: r.top + r.height / 2 };
+      }, text);
+      const box = await page.locator('#viewer').boundingBox();
+      await page.mouse.click(box.x + at.x, box.y + at.y);
+      await wait(300);
+    };
+    await wait(1700); // The jump above scrolls smoothly and flashes; let both finish.
+    await clickHighlight('independence from other people');
+    await press('note');
+    assert.equal(await pdf.evaluate(() => document.activeElement.localName), 'tabgent-reader');
+    const view = () =>
+      pdf.evaluate(() => [PDFViewerApplication.page, PDFViewerApplication.pdfViewer.currentScale]);
+    const before = await view();
+    await page.keyboard.type('n+ Mine: autonomy is endorsement');
+    await page.keyboard.press('End');
+    assert.deepEqual(await view(), before, 'PDF.js shortcuts do not see the note keys');
+    await page.keyboard.press('Control+Enter');
+    const noted = await until(async () => (await calls('highlightNote')).at(-1));
+    assert.deepEqual(noted, {
+      type: 'highlightNote',
+      documentId: 'paper-reading-companion-fixture-1a2b3c4d',
+      highlightId: 'h002',
+      note: 'n+ Mine: autonomy is endorsement',
+      title: 'Reading Companion Fixture',
+    });
+    await wait(300);
+    assert.match(await readerHtml(), /class="editor"[^>]*hidden=""/, 'The editor closed');
+    await open('#page=2');
+    await showPage(2);
+    await until(async () => (await painted()).includes('independence from other people'));
+    await clickHighlight('independence from other people');
+    const shown = await readerHtml();
+    assert(shown.includes('n+ Mine: autonomy is endorsement'), 'The note shows on click');
+    assert(message('highlightNoteEdit').some((label) => shown.includes(`>${label}<`)));
+    await page.keyboard.press('Escape');
+    console.log('PASS PDF note: Add note saves without triggering PDF.js keys; shown after reload');
 
     // A selection across the page break becomes one highlight on both pages.
     await showPage(1);

@@ -533,6 +533,95 @@ try {
   assert.deepEqual(listed.state.selection.context, { before: 'Before text', after: 'After text' });
   console.log('PASS the highlight list reopens a discussion with nearby page text');
 
+  // The user's own note: saved from the page or the panel list, and sent with every message
+  // about that highlight as the user's note.
+  const changedBefore = listed.events('codex-reading-changed').length;
+  const noted = await call(
+    {
+      type: 'highlightNote',
+      documentId,
+      highlightId: 'h001',
+      note: ' My view: autonomy is endorsement. ',
+      title: 'Article',
+    },
+    page(1),
+  );
+  assert.equal(noted.highlight.note, 'My view: autonomy is endorsement.');
+  assert(listed.events('codex-reading-changed').length > changedBefore, 'Panels refresh');
+  assert.match(
+    await highlightsFile('https://example.test/article?id=7'),
+    /> Autonomy is endorsement\n\n<!-- tabgent:note h001 start -->\n\n### 笔记\n\nMy view: autonomy is endorsement\.\n/,
+  );
+  const withNote = await sendMessage(listed, 'thread-a', 'What did I think?', {
+    ...listed.state.selection,
+  });
+  assert.deepEqual(readingPart(withNote).highlight, {
+    id: 'h001',
+    location: 'Chapter 3',
+    attached: true,
+    userNote: 'My view: autonomy is endorsement.',
+  });
+  await completeTurn(listed.session, 'thread-a', withNote, 'Stopped', { status: 'interrupted' });
+  const refreshes = () =>
+    contentMessages.filter((m) => m.tabId === 1 && m.message.action === 'refresh').length;
+  const refreshed = refreshes();
+  const fromPanel = await call(
+    {
+      type: 'readingNote',
+      conversationKey: listed.state.conversationKey,
+      companionTabId: 1,
+      documentId,
+      highlightId: 'h001',
+      note: 'Long note. '.repeat(250),
+    },
+    panel,
+  );
+  assert.equal(
+    fromPanel.highlights.find((h) => h.id === 'h001').note,
+    'Long note. '.repeat(250).trim(),
+  );
+  assert.equal(fromPanel.highlights.find((h) => h.id === 'h002').note, '');
+  assert.equal(refreshes(), refreshed + 1, 'The page shows the new note');
+  const bounded = await sendMessage(listed, 'thread-a', 'And this one?');
+  const userNote = readingPart(bounded).highlight.userNote;
+  assert.equal(userNote.length, 2000);
+  assert(userNote.startsWith('Long note. ') && userNote.endsWith('…'));
+  await completeTurn(listed.session, 'thread-a', bounded, 'Stopped', { status: 'interrupted' });
+  for (const [params, sender] of [
+    [{ type: 'readingNote', highlightId: 'h404', note: 'x' }, panel],
+    [{ type: 'readingNote', highlightId: 'h001', note: 5 }, panel],
+    [{ type: 'highlightNote', highlightId: 'h404', note: 'x' }, page(1)],
+    [{ type: 'highlightNote', highlightId: 'h001', note: null }, page(1)],
+    [{ type: 'highlightNote', highlightId: 'h001', note: 'x' }, page(2)],
+  ]) {
+    const reply = await call(
+      {
+        conversationKey: listed.state.conversationKey,
+        companionTabId: 1,
+        documentId,
+        ...params,
+      },
+      sender,
+    );
+    assert(reply.error, JSON.stringify(params));
+  }
+  await call(
+    {
+      type: 'readingNote',
+      conversationKey: listed.state.conversationKey,
+      companionTabId: 1,
+      documentId,
+      highlightId: 'h001',
+      note: '',
+    },
+    panel,
+  );
+  const cleared = await sendMessage(listed, 'thread-a', 'Without a note?');
+  assert.equal(readingPart(cleared).highlight.userNote, undefined);
+  await completeTurn(listed.session, 'thread-a', cleared, 'Stopped', { status: 'interrupted' });
+  assert.doesNotMatch(await highlightsFile('https://example.test/article?id=7'), /### 笔记/);
+  console.log('PASS highlight notes from the page and the panel reach the vault and the context');
+
   // After a browser restart, a thread resumed from page history recovers its binding
   // from the reading context recorded in its own messages.
   await call({ type: 'newConversation', conversationKey: listed.state.conversationKey }, panel);

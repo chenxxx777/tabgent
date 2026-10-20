@@ -136,6 +136,10 @@ export function createReadingCompanion({
     const resolved = vaultValue ? await resolveDocument(document) : null;
     const existing = resolved?.document?.createdAt ? resolved.document : null;
     const saving = savingTarget(s, document, bound, !!existing);
+    // The user's own note on the bound highlight, read fresh for every message.
+    const userNote = bound?.highlightId
+      ? (resolved?.highlights || []).find((h) => h.id === bound.highlightId)?.note
+      : '';
     let notes = [];
     const key = bound?.highlightId ? `${bound.documentId}/${bound.highlightId}` : null;
     if (key && vaultValue && s.readingNotes !== key) {
@@ -168,6 +172,7 @@ export function createReadingCompanion({
         location: bound.location,
         text: bound.text,
         attached: !!binding,
+        userNote,
       },
       notes,
       vault: vaultValue,
@@ -230,13 +235,9 @@ export function createReadingCompanion({
     }
     for (const port of s.ports) event(port, 'codex-reading-saved', value);
     if (!result.error && Number.isInteger(record.page?.tabId))
-      chrome.tabs
-        .sendMessage(
-          record.page.tabId,
-          { type: 'tabgentHighlight', action: 'refresh' },
-          { frameId: 0 },
-        )
-        .catch(() => {});
+      tabMessage(record.page.tabId, { type: 'tabgentHighlight', action: 'refresh' }).catch(
+        () => {},
+      );
   }
 
   async function append(params) {
@@ -371,19 +372,22 @@ export function createReadingCompanion({
       }).catch(() => null);
       return { found: !!result?.found };
     }
+    if (msg.type === 'readingNote') {
+      if (typeof msg.note !== 'string') throw Error('Invalid note');
+      const { resolved, highlight } = await pageHighlight(tabId, msg);
+      await vault.request('vault/highlight/update', {
+        documentId: resolved.document.id,
+        highlightId: highlight.id,
+        note: msg.note.slice(0, 20000),
+      });
+      // The page's highlight actions show the new note; other views of the tab update.
+      tabMessage(tabId, { type: 'tabgentHighlight', action: 'refresh' }).catch(() => {});
+      for (const s of sessions.values())
+        if (s.tabId === tabId) for (const port of s.ports) event(port, 'codex-reading-changed');
+      return state(source, tabId);
+    }
     if (msg.type === 'readingOpen') {
-      const document = await pageDocument(tabId);
-      const resolved = document
-        ? await vault.request('vault/document/resolve', {
-            url: document.url,
-            title: document.title,
-            kind: document.kind,
-          })
-        : null;
-      const highlight =
-        resolved?.document?.id === msg.documentId &&
-        (resolved.highlights || []).find((h) => h.id === msg.highlightId);
-      if (!highlight) throw Error('Highlight not found on this page');
+      const { document, resolved, highlight } = await pageHighlight(tabId, msg);
       const [frame, context] = await Promise.all([
         chrome.webNavigation.getFrame({ tabId, frameId: 0 }).catch(() => null),
         tabMessage(tabId, {
@@ -426,6 +430,23 @@ export function createReadingCompanion({
     return state(source, tabId);
   }
 
+  // A saved highlight of the document the tab shows, checked against the vault record.
+  async function pageHighlight(tabId, msg) {
+    const document = await pageDocument(tabId);
+    const resolved = document
+      ? await vault.request('vault/document/resolve', {
+          url: document.url,
+          title: document.title,
+          kind: document.kind,
+        })
+      : null;
+    const highlight =
+      resolved?.document?.id === msg.documentId &&
+      (resolved.highlights || []).find((h) => h.id === msg.highlightId);
+    if (!highlight) throw Error('Highlight not found on this page');
+    return { document, resolved, highlight };
+  }
+
   async function state(source, tabId) {
     const document = await pageDocument(tabId);
     const [vaultValue, resolved] = await Promise.all([
@@ -453,6 +474,7 @@ export function createReadingCompanion({
         id: h.id,
         text: clip(h.text, 400),
         location: h.location || '',
+        note: typeof h.note === 'string' ? h.note : '',
         turnCount: h.turnCount || 0,
         anchored: known ? !unanchored.has(h.id) : null,
       })),

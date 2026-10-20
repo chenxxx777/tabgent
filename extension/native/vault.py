@@ -45,10 +45,12 @@ LABELS = {
     "location": "位置",
     "created": "创建时间",
     "discussion": "对话",
+    "note": "笔记",
     "document": "文档对话",
     "empty": "（无内容）",
 }
 TEXT_LIMIT = 200_000
+NOTE_LIMIT = 20_000
 BODY_LIMIT = 2_000_000
 # Imported originals: uploaded in chunks, verified by SHA-256 and never changed after.
 SOURCE_FILES = {"epub": "original.epub", "pdf": "original.pdf"}
@@ -62,8 +64,9 @@ BLOCK = re.compile(r"<!-- tabgent:([a-z]+) (\S+) (start|end) -->")
 TURN = re.compile(r"<!-- tabgent:turn ([0-9a-f]{16}) -->")
 FENCE = re.compile(r" {0,3}(`{3,}|~{3,})")
 NOTE = (
-    "<!-- Tabgent adds highlights and replies inside the marked blocks and removes a "
-    "block when its highlight is deleted. Everything else in this file is yours. -->"
+    "<!-- Tabgent adds highlights, your notes on them and replies inside the marked "
+    "blocks and removes a block when its highlight is deleted. Everything else in this "
+    "file is yours. -->"
 )
 AGENTS = """# Reading vault
 
@@ -77,11 +80,12 @@ the user read, highlighted or discussed before. Vault path: {vault}
 - `Books/<document-id>/`: PDF documents (`paper-...`) and EPUB books (`book-...`).
 - `<document>/highlights.md`: the human record. YAML front matter (`title`, `type`,
   `document_id`, `source`), then one `## Highlight NNN` section per highlight with
-  its location, creation time, `Anchor ID`, the quoted source text and a `### 对话`
-  discussion of **User** questions and **Codex** answers. A `## 文档对话` section
-  holds discussion about the whole document. The user may add their own notes.
+  its location, creation time, `Anchor ID`, the quoted source text, the user's own
+  note on it under `### 笔记` (when they wrote one) and a `### 对话` discussion of
+  **User** questions and **Codex** answers. A `## 文档对话` section holds discussion
+  about the whole document. The user may add their own notes.
 - `<document>/anchors.json`: machine data for restoring highlights (quote, offsets,
-  discussion thread IDs and timestamps). Read it for exact data; never edit it.
+  notes, discussion thread IDs and timestamps). Read it for exact data; never edit it.
 - `Books/book-.../original.epub`: an imported EPUB, described by `source.json`.
   `chapters/NN-<title>.md` holds each chapter's text in reading order, generated
   from the EPUB at import. Read the chapter you need or search the `chapters`
@@ -116,7 +120,9 @@ Cite sources with the document title, highlight number and file path, for exampl
 
 - Stay close to the source text and explain it in its context instead of drifting
   into generic explanations.
-- Distinguish the author's views, the user's views and your own inferences.
+- Distinguish the author's views, the user's views and your own inferences. A
+  `### 笔记` section is the user's own note on a highlight: their view, not the
+  author's text.
 - When unsure, say so. Never invent or misquote source text.
 - Point to specific passages, sections or page numbers when you can.
 - Help clarify concepts and arguments; do not compress long texts into summaries
@@ -294,6 +300,58 @@ def delete_highlight(settings, params):
     return {"ok": True}
 
 
+def update_highlight(settings, params):
+    """Sets the user's own note on a highlight; an empty note removes it.
+
+    anchors.json holds the note, and highlights.md shows it in the highlight's block as
+    a marked `### 笔记` part. An unchanged note writes nothing."""
+    ident = _document_id(params.get("documentId"))
+    highlight_id = _highlight_id(params.get("highlightId"), required=True)
+    if "note" not in params:
+        raise VaultError("invalid_params", "note is required; use '' to remove it")
+    note = _string(params, "note", NOTE_LIMIT)
+    note = note.replace("\r\n", "\n").replace("\r", "\n").strip()
+    root = _root(settings)
+    if not _folder(root, ident).is_dir():
+        raise VaultError("not_found", f"Document {ident} does not exist")
+    with _locked(root):
+        data = _existing(root, ident)
+        item = next((h for h in data["highlights"] if h["id"] == highlight_id), None)
+        if item is None:
+            raise VaultError("not_found", f"Highlight {highlight_id} does not exist")
+        if item.get("note", "") != note:
+            if note:
+                item["note"] = note
+            else:
+                item.pop("note", None)
+            path = _folder(root, ident) / "highlights.md"
+            lines, crlf = _read_lines(path)
+            # Markdown is written before anchors.json, so a retry repeats the same edit.
+            if lines is None:
+                _write_lines(path, _render(data), False)
+            else:
+                blocks = _blocks(lines, "highlight", highlight_id)
+                if blocks:
+                    _set_note(lines, blocks[0][0], blocks[0][1], item)
+                else:
+                    # A missing block is restored in full from the machine record.
+                    turns = _turns(data, highlight_id)
+                    _insert(
+                        lines, _highlight_position(lines), _highlight_lines(item, turns)
+                    )
+                _write_lines(path, lines, crlf)
+            now = _now()
+            item["updatedAt"] = now
+            data["document"]["updatedAt"] = now
+            _save(root, data)
+    return {
+        "document": _public_document(
+            root, data["document"], data["document"]["createdAt"]
+        ),
+        "highlight": _public_highlight(data, item),
+    }
+
+
 def list_highlights(settings, params):
     root = _root(settings)
     data = _existing(root, _document_id(params.get("documentId")))
@@ -390,13 +448,8 @@ def append_discussion(settings, params):
                 # Markdown is written before anchors.json, so a retry is not repeated.
                 if _turn_key(turn) not in keys:
                     chunk = _turn_lines(turn)
-                    heading = f"### {LABELS['discussion']}"
-                    if (
-                        item
-                        and not keys
-                        and not any(l.rstrip() == heading for l in lines[start:end])
-                    ):
-                        chunk = [heading, "", *chunk]
+                    if item and not keys and not _has_heading(lines, start, end, item):
+                        chunk = [f"### {LABELS['discussion']}", "", *chunk]
                     _insert(lines, end, chunk)
                     _write_lines(path, lines, crlf)
         now = _now()
@@ -629,6 +682,7 @@ METHODS = {
     "vault/document/resolve": resolve,
     "vault/highlight/create": create_highlight,
     "vault/highlight/delete": delete_highlight,
+    "vault/highlight/update": update_highlight,
     "vault/highlights/list": list_highlights,
     "vault/discussion/append": append_discussion,
     "vault/discussion/get": get_discussion,
@@ -1111,6 +1165,7 @@ def _public_highlight(data, item):
         "anchor": item["anchor"],
         "createdAt": item["createdAt"],
         "updatedAt": item["updatedAt"],
+        "note": item.get("note", ""),
         "threadIds": _thread_ids(turns),
         "turnCount": len(turns),
     }
@@ -1480,11 +1535,66 @@ def _highlight_lines(item, turns):
     lines += [f"- {LABELS['created']}：{_human_time(item['createdAt'])}"]
     lines += [f"- Anchor ID: {item['id']}", ""]
     lines += [("> " + line).rstrip() for line in _split(item["text"])]
+    if item.get("note"):
+        lines += ["", *_note_lines(item)]
     if turns:
         lines += ["", f"### {LABELS['discussion']}"]
         for turn in turns:
             lines += ["", *_turn_lines(turn)]
     return [*lines, "", _marker("highlight", item["id"], "end")]
+
+
+def _has_heading(lines, start, end, item):
+    """Whether a highlight block has its discussion heading. The user's note may contain
+    the heading's text; that does not count."""
+    heading = f"### {LABELS['discussion']}"
+    note = {
+        number
+        for first, last, _ in _blocks(lines, "note", item["id"])
+        for number in range(first, last + 1)
+    }
+    return any(lines[n].rstrip() == heading for n in range(start, end) if n not in note)
+
+
+def _note_lines(item):
+    return [
+        _marker("note", item["id"], "start"),
+        "",
+        f"### {LABELS['note']}",
+        "",
+        *_content(item["note"]),
+        "",
+        _marker("note", item["id"], "end"),
+    ]
+
+
+def _set_note(lines, start, end, item):
+    """Replaces, adds or removes the note part of the highlight block lines[start..end].
+
+    The part goes after the quote, before the discussion; text around it is kept."""
+    found = [
+        (start + first, start + last)
+        for first, last, _ in _blocks(lines[start : end + 1], "note", item["id"])
+    ]
+    for first, last in reversed(found[1:]):
+        _remove(lines, first, last)  # A pasted copy of the part.
+    chunk = _note_lines(item) if item.get("note") else []
+    if found and chunk:
+        lines[found[0][0] : found[0][1] + 1] = chunk
+    elif found:
+        _remove(lines, *found[0])
+    elif chunk:
+        heading = f"### {LABELS['discussion']}"
+        at = next(
+            (
+                number
+                for number in range(start + 1, end)
+                if lines[number].rstrip() == heading
+                or TURN.fullmatch(lines[number].rstrip())
+            ),
+            end,
+        )
+        _insert(lines, at, chunk)
 
 
 def _discussion_lines(turns):
@@ -1526,7 +1636,8 @@ TOOL = {
     "name": "reading_vault",
     "description": (
         "Search and read the user's ReadingVault: their local Markdown reading notes "
-        "(highlights, locations and earlier discussions, one folder per document). "
+        "(highlights, the user's own notes on them, locations and earlier discussions, "
+        "one folder per document). "
         "Read-only and limited to the vault folder; it needs no command approval. "
         "Use list for the documents, search for keywords (any word matches; best matches "
         "first), then read a document's highlights.md (or source.md, anchors.json, or "

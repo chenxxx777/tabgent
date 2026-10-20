@@ -267,6 +267,33 @@ assert.deepEqual(
 assert.deepEqual(vaultCalls().at(-1).params, { documentId: document.id, highlightId: 'h001' });
 console.log("PASS delete is limited to highlights of the viewer's PDF");
 
+host['vault/highlight/update'] = (params) => ({
+  document,
+  highlight: { ...saved, note: params.note },
+});
+const updates = () => vaultCalls().filter((m) => m.method === 'vault/highlight/update');
+assert.equal(
+  (
+    await call(
+      { type: 'highlightNote', documentId: 'paper-other', highlightId: 'h001', note: 'x' },
+      viewer,
+    )
+  ).code,
+  'not_found',
+);
+assert.equal(updates().length, 0);
+const note = await call(
+  { type: 'highlightNote', documentId: document.id, highlightId: 'h001', note: 'Mine' },
+  viewer,
+);
+assert.equal(note.highlight.note, 'Mine');
+assert.deepEqual(updates().at(-1).params, {
+  documentId: document.id,
+  highlightId: 'h001',
+  note: 'Mine',
+});
+console.log("PASS notes are limited to highlights of the viewer's PDF");
+
 await call(
   { type: 'highlightStatus', documentId: document.id, anchored: 1, unanchored: ['h009'] },
   viewer,
