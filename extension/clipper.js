@@ -192,11 +192,12 @@ export function createClipper({ vault, changed = () => {}, fetch = globalThis.fe
         words: clip.words,
         chars: clip.chars,
         truncated: clip.truncated,
-        assets: downloaded.assets.map(({ sha256, ext, size, source }) => ({
+        assets: downloaded.assets.map(({ sha256, ext, size, source, sources }) => ({
           sha256,
           ext,
           size,
           source,
+          sources,
         })),
         images: {
           found,
@@ -224,6 +225,7 @@ export function createClipper({ vault, changed = () => {}, fetch = globalThis.fe
       ]
         .filter(Boolean)
         .join(' '),
+      open: true,
     });
     changed(tabId);
     return { ok: true, document: saved.document, clip: saved.clip, backup: saved.backup || null };

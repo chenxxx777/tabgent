@@ -484,12 +484,14 @@
     root.append(box);
     document.documentElement.append(host);
   }
-  function show(text, tone, actions = []) {
+  // A prompt (ask) takes focus until it is answered; a status with an action does not, so
+  // typing and the page's own shortcuts keep working.
+  function show(text, tone, actions = [], prompt = actions.length > 0) {
     ensure();
     clearTimeout(timer);
     box.replaceChildren(text);
     box.dataset.tone = tone || 'info';
-    box.setAttribute('role', actions.length ? 'alertdialog' : 'status');
+    box.setAttribute('role', prompt ? 'alertdialog' : 'status');
     if (actions.length) {
       const row = document.createElement('div');
       row.className = 'actions';
@@ -498,14 +500,14 @@
         button.type = 'button';
         button.textContent = name;
         if (primary) button.className = 'primary';
-        button.addEventListener('click', () => settle(value));
+        button.addEventListener('click', () => choose(value));
         row.append(button);
       }
       box.append(row);
     }
     box.hidden = false;
     if (!host.matches(':popover-open')) host.showPopover();
-    if (actions.length)
+    if (prompt)
       (box.querySelector('button.primary') || box.querySelector('button'))?.focus({
         preventScroll: true,
       });
@@ -514,6 +516,12 @@
     if (!box) return;
     box.hidden = true;
     if (host.matches(':popover-open')) host.hidePopover();
+  }
+  // A prompt's answer, or a status line's action: the saved copy opens beside the page.
+  function choose(value) {
+    if (pending) return settle(value);
+    hide();
+    if (value === 'open') void chrome.runtime.sendMessage({ type: 'clipOpen' }).catch(() => {});
   }
   function settle(value) {
     const done = pending;
@@ -560,10 +568,15 @@
     });
   }
   // A status line: progress stays until the next one; results hide after a few seconds.
-  function notify({ text, tone = 'info', busy = false } = {}) {
+  function notify({ text, tone = 'info', busy = false, open = false } = {}) {
     if (pending) return;
-    show(String(text || '').slice(0, 1000), tone);
-    if (!busy) timer = setTimeout(hide, tone === 'error' ? 10000 : 7000);
+    show(
+      String(text || '').slice(0, 1000),
+      tone,
+      open ? [['open', t('clipOpen'), true]] : [],
+      false,
+    );
+    if (!busy) timer = setTimeout(hide, open ? 12000 : tone === 'error' ? 10000 : 7000);
   }
   // cutMarkdown is exposed for tests; the worker calls run, ask and notify.
   globalThis.tabgentClip = { run, ask, notify, cutMarkdown };

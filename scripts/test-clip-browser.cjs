@@ -8,6 +8,7 @@ const assert = require('node:assert/strict'),
   http = require('node:http'),
   os = require('node:os'),
   path = require('node:path'),
+  zlib = require('node:zlib'),
   { execSync, spawnSync } = require('node:child_process');
 const root = path.resolve(__dirname, '..'),
   { chromium } = require(root + '/node_modules/playwright');
@@ -33,7 +34,8 @@ const article = `<!doctype html><html lang="en"><head><meta charset="utf-8"><tit
   <main><article><h1>On Autonomy</h1>
   <p id="a">Autonomy does not mean independence from others, but endorsement of one's own actions.</p>
   ${paragraphs(8, 'Body')}
-  <p><img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" data-src="/img/lazy.jpg" alt="Lazy figure" width="640" height="360"></p>
+  <p><img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" data-src="/img/lazy.png" alt="Lazy figure" width="640" height="360"></p>
+  <p><img src="/img/lazy.png?v=2" alt="Same figure" width="640" height="360"></p>
   <p><img src="/img/forbidden.png" alt="Forbidden" width="320" height="200">
     <img src="/img/vector.svg" alt="Vector" width="320" height="200"></p>
   <p>Read the <a href="/notes">notes</a> or <a href="javascript:alert(1)">this</a>.</p>
@@ -51,7 +53,31 @@ const bigImage = (n) => {
   Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, n]).copy(bytes);
   return bytes;
 };
-const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(3000, 7)]);
+// A real PNG, so the reader can show it.
+function png(width, height) {
+  const chunk = (type, data) => {
+    const body = Buffer.concat([Buffer.from(type, 'latin1'), data]);
+    const out = Buffer.alloc(body.length + 8);
+    out.writeUInt32BE(data.length, 0);
+    body.copy(out, 4);
+    out.writeUInt32BE(zlib.crc32(body), body.length + 4);
+    return out;
+  };
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header[8] = 8;
+  header[9] = 2;
+  const rows = Buffer.alloc((width * 3 + 1) * height, 0x60);
+  for (let y = 0; y < height; y++) rows[y * (width * 3 + 1)] = 0;
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', header),
+    chunk('IDAT', zlib.deflateSync(rows)),
+    chunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+const PICTURE = png(32, 18);
 const short = `<!doctype html><html><head><meta charset="utf-8"><title>Short note</title></head><body>
   <main><p>Only a few words on this page.</p></main><aside>${paragraphs(1, 'Aside')}</aside></body></html>`;
 
@@ -71,9 +97,9 @@ const short = `<!doctype html><html><head><meta charset="utf-8"><title>Short not
   const server = http.createServer((request, response) => {
     requested.push(request.url);
     const pathname = new URL(request.url, 'http://127.0.0.1').pathname;
-    if (pathname === '/img/lazy.jpg') {
-      response.setHeader('content-type', 'image/jpeg');
-      return void response.end(JPEG);
+    if (pathname === '/img/lazy.png') {
+      response.setHeader('content-type', 'image/png');
+      return void response.end(PICTURE);
     }
     if (pathname === '/img/vector.svg') {
       response.setHeader('content-type', 'image/svg+xml');
@@ -139,23 +165,27 @@ const short = `<!doctype html><html><head><meta charset="utf-8"><title>Short not
         allowed_origins: [`chrome-extension://${id}/`],
       }),
     );
-    context = await chromium.launchPersistentContext(profile, {
-      headless: true,
-      channel: 'chromium',
-      viewport: { width: 1100, height: 900 },
-      args: [
-        `--disable-extensions-except=${extension}`,
-        `--load-extension=${extension}`,
-        '--remote-debugging-port=0',
-      ],
-    });
     // Nothing leaves the machine: only the local fixture server answers.
     const outside = [];
-    await context.route(/^https?:\/\/(?!127\.0\.0\.1[:/])/, (route) => {
-      outside.push(route.request().url());
-      return route.abort();
-    });
-    const worker = context.serviceWorkers()[0] || (await context.waitForEvent('serviceworker'));
+    let worker;
+    async function launch() {
+      context = await chromium.launchPersistentContext(profile, {
+        headless: true,
+        channel: 'chromium',
+        viewport: { width: 1100, height: 900 },
+        args: [
+          `--disable-extensions-except=${extension}`,
+          `--load-extension=${extension}`,
+          '--remote-debugging-port=0',
+        ],
+      });
+      await context.route(/^https?:\/\/(?!127\.0\.0\.1[:/])/, (route) => {
+        outside.push(route.request().url());
+        return route.abort();
+      });
+      worker = context.serviceWorkers()[0] || (await context.waitForEvent('serviceworker'));
+    }
+    await launch();
     const message = (key, ...args) =>
       worker.evaluate(([key, args]) => chrome.i18n.getMessage(key, args), [key, args]);
 
@@ -298,9 +328,9 @@ const short = `<!doctype html><html><head><meta charset="utf-8"><title>Short not
     assert.match(markdown, /Autonomy does not mean independence from others, but endorsement/);
     assert.match(markdown, /Body paragraph 8: careful readers/);
     // The lazy image is saved in assets/; the forbidden and SVG images stay linked online.
-    const jpeg = `${crypto.createHash('sha256').update(JPEG).digest('hex').slice(0, 16)}.jpg`;
-    assert.match(markdown, new RegExp(`!\\[Lazy figure\\]\\(assets/${jpeg}\\)`));
-    assert.deepEqual(fs.readFileSync(path.join(articles, folder, 'assets', jpeg)), JPEG);
+    const picture = `${crypto.createHash('sha256').update(PICTURE).digest('hex').slice(0, 16)}.png`;
+    assert.match(markdown, new RegExp(`!\\[Lazy figure\\]\\(assets/${picture}\\)`));
+    assert.deepEqual(fs.readFileSync(path.join(articles, folder, 'assets', picture)), PICTURE);
     assert.match(markdown, new RegExp(`!\\[Forbidden\\]\\(${origin}/img/forbidden\\.png\\)`));
     assert.match(markdown, new RegExp(`!\\[Vector\\]\\(${origin}/img/vector\\.svg\\)`));
     assert.match(markdown, new RegExp(`\\[notes\\]\\(${origin}/notes\\)`));
@@ -312,8 +342,8 @@ const short = `<!doctype html><html><head><meta charset="utf-8"><title>Short not
     assert.equal(first.origin.pageUrl, origin + '/essays/autonomy?id=3#intro');
     assert.equal(first.origin.method, 'article');
     assert.deepEqual(first.images, {
-      found: 3,
-      saved: 1,
+      found: 4,
+      saved: 2,
       remote: 2,
       failed: [
         { source: `${origin}/img/forbidden.png`, reason: 'http_403' },
@@ -326,13 +356,19 @@ const short = `<!doctype html><html><head><meta charset="utf-8"><title>Short not
     });
     assert.deepEqual(
       first.assets.map((asset) => [asset.file, asset.mime]),
-      [[`assets/${jpeg}`, 'image/jpeg']],
+      [[`assets/${picture}`, 'image/png']],
     );
+    // One file, saved from two addresses: both are recorded.
+    assert.deepEqual(first.assets[0].sources.sort(), [
+      `${origin}/img/lazy.png`,
+      `${origin}/img/lazy.png?v=2`,
+    ]);
+    assert.match(markdown, new RegExp(`!\\[Same figure\\]\\(assets/${picture}\\)`));
     const anchors = JSON.parse(read(folder, 'anchors.json'));
     assert.equal(anchors.highlights.length, 1, 'The highlight is kept');
     const savedText = [
       await message('clipSaved', 'On Autonomy', String(first.words)),
-      await message('clipImagesSaved', '1'),
+      await message('clipImagesSaved', '2'),
       await message('clipImagesFailed', '2'),
     ].join(' ');
     assert(
@@ -342,7 +378,8 @@ const short = `<!doctype html><html><head><meta charset="utf-8"><title>Short not
     // Only the images are fetched, by the worker; the page itself is not loaded again.
     assert.deepEqual([...new Set(requested.slice(before))].sort(), [
       '/img/forbidden.png',
-      '/img/lazy.jpg',
+      '/img/lazy.png',
+      '/img/lazy.png?v=2',
       '/img/vector.svg',
     ]);
     assert.match(
@@ -440,6 +477,185 @@ print(json.dumps([m["path"] for m in found["matches"]][:3] + [read["text"][:2000
     assert.doesNotMatch(read(folder, 'article.md'), /My own addition\./);
     console.log('PASS clipping again asks first and keeps an edited article.md');
 
+    // The page's prompt opens the clipped copy in Tabgent's reader, next to the page.
+    const readerPrefix = `chrome-extension://${id}/clip/reader.html?url=`;
+    const opening = context.waitForEvent('page');
+    await clickIn(page, 'tabgent-clip', button(await message('clipOpen')));
+    const reader = await opening;
+    assert(await until(() => reader.url().startsWith(readerPrefix)), reader.url());
+    assert.equal(reader.url(), readerPrefix + origin + '/essays/autonomy?id=3');
+    await reader.waitForSelector('#content p');
+    assert.equal(await reader.textContent('#pageTitle'), 'On Autonomy');
+    assert.match(await reader.textContent('#byline'), /Fixture Author · Fixture Essays/);
+    // The live page's highlight is painted on the clipped copy.
+    const painted = (target) =>
+      target.evaluate(() => CSS.highlights.get('tabgent-highlight')?.size ?? 0);
+    assert(await until(async () => (await painted(reader)) === 1), 'The highlight is painted');
+    // Saved images come from the vault; the others link to their address online.
+    assert(
+      await until(() =>
+        reader.evaluate(() => {
+          // Both addresses of the saved image show the vault copy.
+          const images = [...document.querySelectorAll('#content img')];
+          return (
+            images.length === 2 &&
+            images.every((img) => img.src.startsWith('blob:') && img.naturalWidth === 32)
+          );
+        }),
+      ),
+      'The saved image is shown from the vault',
+    );
+    assert.deepEqual(
+      await reader.$$eval('#content .missing', (items) => items.map((item) => item.href)),
+      [`${origin}/img/forbidden.png`, `${origin}/img/vector.svg`],
+    );
+    // Web links (the page's own and the links to unsaved images) open in a new tab.
+    const webLinks = await reader.$$eval('#content a[href^="http"]', (links) =>
+      links.map((link) => [link.target, link.rel]),
+    );
+    assert.equal(webLinks.length, 3);
+    assert(webLinks.every(([target, rel]) => target === '_blank' && rel === 'noopener noreferrer'));
+    assert.equal(await reader.$$eval('#content a[href^="javascript"]', (l) => l.length), 0);
+    console.log('PASS the clipped copy opens offline in the reader with its highlight and image');
+
+    // A highlight made in the reader belongs to the page's document and shows on the page.
+    await reader.evaluate(() => {
+      const paragraph = [...document.querySelectorAll('#content p')].find((p) =>
+        p.textContent.includes('Body paragraph 2'),
+      );
+      paragraph.id = 'probe';
+    });
+    await reader.bringToFront();
+    // A passage that is unique on the page: repeated passages in identical context are left
+    // unanchored in the other view rather than guessed.
+    await drag(reader, '#probe', 'paragraph 2: careful readers');
+    await clickIn(reader, 'tabgent-reader', (node) => {
+      const at = (node.attributes || []).indexOf('data-action');
+      return at >= 0 && node.attributes[at + 1] === 'highlight';
+    });
+    const anchorsOf = () => JSON.parse(read(folder, 'anchors.json'));
+    assert(await until(() => anchorsOf().highlights.length === 2), 'Saved from the reader');
+    const made = anchorsOf().highlights[1];
+    assert.equal(made.text, 'paragraph 2: careful readers');
+    assert.equal(made.anchor.view, 'clip');
+    assert.equal(anchorsOf().document.url, origin + '/essays/autonomy?id=3');
+    await page.bringToFront();
+    await page.reload();
+    assert(await until(async () => (await painted(page)) === 2), 'Shown on the live page');
+    console.log('PASS a highlight made in the reader is saved to the page and shows on it');
+
+    // Ask AI in the reader binds the conversation to the page's highlight.
+    await reader.bringToFront();
+    await reader.evaluate(() => {
+      const paragraph = [...document.querySelectorAll('#content p')].find((p) =>
+        p.textContent.includes('Body paragraph 4'),
+      );
+      paragraph.id = 'probe2';
+    });
+    await drag(reader, '#probe2', 'paragraph 4: careful readers');
+    await clickIn(reader, 'tabgent-reader', (node) => {
+      const at = (node.attributes || []).indexOf('data-action');
+      return at >= 0 && node.attributes[at + 1] === 'ask';
+    });
+    assert(await until(() => anchorsOf().highlights.length === 3));
+    const asked = await until(() =>
+      worker.evaluate(async () => {
+        const { conversations = [] } = await chrome.storage.session.get('conversations');
+        return (
+          conversations
+            .map(([, s]) => s.selection)
+            .find((s) => s?.highlight?.highlightId === 'h003') || null
+        );
+      }),
+    );
+    assert.equal(asked.url, origin + '/essays/autonomy?id=3');
+    assert.equal(asked.highlight.kind, 'web');
+    assert.equal(asked.locator.view, 'clip');
+    const readerPanel = await sidePanel();
+    const readerQuestion = 'What does the clipped passage mean?';
+    assert(
+      await until(() =>
+        readerPanel(`(() => {
+          const prompt = document.getElementById('prompt'), button = document.getElementById('send');
+          prompt.value = ${JSON.stringify(readerQuestion)};
+          prompt.dispatchEvent(new Event('input'));
+          if (button.disabled) return false;
+          button.click();
+          return true;
+        })()`),
+      ),
+    );
+    assert(
+      await until(() => anchorsOf().turns.some((turn) => turn.highlightId === 'h003'), 15000),
+      'The reader turn is saved',
+    );
+    assert.match(
+      read(folder, 'highlights.md'),
+      /## Highlight 003[\s\S]*What does the clipped passage mean\?/,
+    );
+    readerPanel.close();
+    console.log('PASS Ask AI in the reader saves the discussion under the page highlight');
+
+    // The reader trusts nothing in the vault: a changed article.html is refused, and markup
+    // that also changes the record is cleaned, with no script, remote load, form or frame.
+    const htmlPath = path.join(articles, folder, 'article.html'),
+      recordPath = path.join(articles, folder, 'article.json');
+    const savedHtml = fs.readFileSync(htmlPath),
+      savedRecord = fs.readFileSync(recordPath);
+    fs.writeFileSync(
+      htmlPath,
+      savedHtml.toString().replace('<article>', '<article><p>Changed</p>'),
+    );
+    await reader.reload();
+    const incomplete = await message('clipIncomplete');
+    assert(await until(async () => (await reader.textContent('#status')).startsWith(incomplete)));
+    const evil = `<article>
+      <p id="evil">Evil text with <a href="javascript:window.pwned=1">a script link</a> and <a href="#fn1">a note</a>.</p>
+      <p id="fn1">The note.</p>
+      <p id="tabgentWebAnchor">Clobbering paragraph.</p>
+      <script>window.pwned = 1</script>
+      <img src="${origin}/img/tracker.png" onerror="window.pwned = 1" alt="Tracker">
+      <iframe src="${origin}/frame"></iframe>
+      <form action="${origin}/collect"><input name="q"><button>Send</button></form>
+      <style>#content { display: none }</style>
+      <svg><script>window.pwned = 1</script></svg>
+      <div style="position: fixed; inset: 0">Overlay text</div>
+      <p>Paragraph ${'words '.repeat(60)}</p>
+    </article>`;
+    const tampered = Buffer.from(savedHtml.toString().replace(/<article>[\s\S]*<\/article>/, evil));
+    fs.writeFileSync(htmlPath, tampered);
+    const forged = JSON.parse(savedRecord);
+    forged.files.html = {
+      file: 'article.html',
+      sha256: crypto.createHash('sha256').update(tampered).digest('hex'),
+      bytes: tampered.length,
+    };
+    fs.writeFileSync(recordPath, JSON.stringify(forged));
+    const beforeEvil = requested.length;
+    await reader.reload();
+    await reader.waitForSelector('#content #user-content-evil');
+    await wait(800);
+    assert.equal(await reader.evaluate(() => window.pwned), undefined);
+    assert.equal(
+      await reader.$$eval(
+        '#content script, #content iframe, #content form, #content input, #content style, #content svg, #content [style], #content [onerror]',
+        (l) => l.length,
+      ),
+      0,
+    );
+    assert.equal(await reader.$$eval('#content a[href^="javascript"]', (l) => l.length), 0);
+    assert.equal(await reader.getAttribute('#content a[href^="#"]', 'href'), '#user-content-fn1');
+    assert.equal(
+      await reader.evaluate(() => typeof globalThis.tabgentWebAnchor?.resolve),
+      'function',
+    );
+    assert(await reader.isVisible('#content'));
+    assert.deepEqual(requested.slice(beforeEvil), [], 'The reader loads nothing from the web');
+    fs.writeFileSync(htmlPath, savedHtml);
+    fs.writeFileSync(recordPath, savedRecord);
+    await reader.close();
+    console.log('PASS the reader refuses a changed copy and cleans untrusted markup');
+
     // A page that enforces Trusted Types is clipped too (the script runs in its own world).
     await page.goto(origin + '/trusted');
     await wait(800);
@@ -530,7 +746,56 @@ print(json.dumps([m["path"] for m in found["matches"]][:3] + [read["text"][:2000
     assert.equal(fs.readdirSync(path.join(articles, heavyFolder, 'assets')).length, 4);
     console.log(`PASS a highlight saves in ${latency} ms while a clip saves large images`);
 
+    // Offline after a restart: the library opens the clipped copy from the vault.
     panel.close();
+    await new Promise((resolve) => server.close(resolve));
+    server.closeAllConnections?.();
+    await context.close();
+    await launch();
+    const library = await context.newPage();
+    await library.goto(`chrome-extension://${id}/epub/reader.html`);
+    await library.waitForSelector('#books .item');
+    const entry = await until(() =>
+      library.evaluate(
+        (url) => {
+          const item = [...document.querySelectorAll('#books li')].find((li) =>
+            li.querySelector('.item')?.getAttribute('href')?.endsWith(url),
+          );
+          return (
+            item && {
+              href: item.querySelector('.item').getAttribute('href'),
+              original: item.querySelector('.original')?.getAttribute('href'),
+              meta: item.querySelector('.meta').textContent,
+            }
+          );
+        },
+        '?url=' + origin + '/essays/autonomy?id=3',
+      ),
+    );
+    assert(entry, 'The library lists the clipped page');
+    assert.equal(entry.original, origin + '/essays/autonomy?id=3');
+    assert(entry.meta.includes(await message('libraryKindClipped')), entry.meta);
+    await library.click(`#books a.item[href="${entry.href}"]`);
+    await library.waitForURL(readerPrefix + '**');
+    await library.waitForSelector('#content p');
+    assert(await until(async () => (await painted(library)) === 3), 'Highlights after restart');
+    assert(
+      await until(() =>
+        library.evaluate(() => document.querySelector('#content img')?.naturalWidth === 32),
+      ),
+      'The image is shown offline',
+    );
+    console.log('PASS after a restart and offline, the library opens the clipped copy');
+
+    // Deleting the clipped copy keeps the page's highlights and discussion.
+    library.once('dialog', (dialog) => dialog.accept());
+    await library.click('#delete');
+    const deletedText = await message('clipDeleted');
+    assert(await until(async () => (await library.textContent('#status')).startsWith(deletedText)));
+    assert(!fs.existsSync(path.join(articles, folder, 'article.json')));
+    assert.equal(JSON.parse(read(folder, 'anchors.json')).highlights.length, 3);
+    console.log('PASS deleting the clipped copy keeps the highlights');
+
     assert.deepEqual(outside, [], 'No request left the machine');
     assert.equal(personalState(), personalBefore, 'The personal ReadingVault is untouched');
     passed = true;

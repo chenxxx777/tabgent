@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!-- A clipped page is untrusted: no remote loads, forms, frames or inline styles, and
+         every HTML string goes through DOMPurify's Trusted Types policy. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; font-src 'self'; connect-src 'none'; media-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; require-trusted-types-for 'script'; trusted-types dompurify"
+    />
+    <title>Tabgent</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='none' stroke='%23858585' stroke-width='1.8' stroke-linejoin='round' d='M6 3h9l3 3v15H6zM9 9h6M9 13h6M9 17h4'/%3E%3C/svg%3E"
+    />
+    <link rel="stylesheet" href="reader.css" />
+    <link rel="stylesheet" href="../highlight.css" />
+    <script src="sanitize-config.js"></script>
+    <script src="../web-anchor.js"></script>
+    <script src="../highlight-note.js"></script>
+    <script type="module" src="reader.js"></script>
+  </head>
+  <body>
+    <header>
+      <button id="library" type="button">$i18n{epubLibrary}</button>
+      <span id="site"></span>
+      <div class="controls">
+        <button
+          id="smaller"
+          type="button"
+          aria-label="$i18n{epubFontSmaller}"
+          title="$i18n{epubFontSmaller}"
+        >
+          A−
+        </button>
+        <button
+          id="larger"
+          type="button"
+          aria-label="$i18n{epubFontLarger}"
+          title="$i18n{epubFontLarger}"
+        >
+          A+
+        </button>
+        <a id="original" target="_blank" rel="noopener noreferrer" hidden>$i18n{clipOriginal} ↗</a>
+        <button id="delete" type="button" hidden>$i18n{clipDelete}</button>
+      </div>
+    </header>
+    <main>
+      <div id="intro">
+        <h1 id="pageTitle"></h1>
+        <p id="byline"></p>
+      </div>
+      <article id="content"></article>
+      <p id="status" role="status">$i18n{epubLoading}</p>
+    </main>
+  </body>
+</html>

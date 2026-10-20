@@ -101,8 +101,13 @@ document from it, restarts the browser and checks drag and drop.
 forbidden and an SVG image stay linked, that the page is not changed and only its images are
 fetched, that `reading_vault` finds the text and that a question about
 the page names `article.md`. It then clips again (the page asks first and an edited
-`article.md` is kept), clips a page that enforces Trusted Types, saves a short page whole, and checks that a
-highlight in another tab saves within two seconds while a clip saves about 18 MB of images.
+`article.md` is kept), opens the clipped copy in the reader (the page's highlight painted, the saved image shown,
+the others linked), highlights and asks Codex there and sees the highlight on the live page,
+checks that the reader refuses a changed `article.html` and cleans forged markup without
+running scripts or loading anything, clips a page that enforces Trusted Types, saves a short
+page whole, checks that a highlight in another tab saves within two seconds while a clip saves
+about 18 MB of images, then stops the server, restarts the browser, opens the clipped copy
+from the library offline and deletes it.
 Every request outside `127.0.0.1` is refused.
 
 Clipping real sites cannot be tested offline. After updating Defuddle, clip by hand, in a

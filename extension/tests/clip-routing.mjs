@@ -82,6 +82,7 @@ const tabs = new Map([
 ]);
 // The page's answers: what clipping returns, what the user chooses in the page prompt.
 const page = { run: [], ask: [] };
+const created = [];
 const injected = [],
   notes = [],
   menus = [];
@@ -136,7 +137,8 @@ globalThis.chrome = {
       if (!tabs.has(id)) throw Error('No tab');
       return tabs.get(id);
     },
-    create: async () => ({ id: 9 }),
+    create: async (options) => (created.push(options), { id: 9 }),
+    query: async () => [...tabs.values()],
     update: async () => {},
     sendMessage: async () => null,
     onRemoved: event(),
@@ -269,7 +271,13 @@ try {
   // The page's image is downloaded and saved; one that fails stays linked online.
   const png = crypto.createHash('sha256').update(PNG).digest('hex');
   assert.deepEqual(save.assets, [
-    { sha256: png, ext: 'png', size: PNG.length, source: 'https://example.test/figure.png' },
+    {
+      sha256: png,
+      ext: 'png',
+      size: PNG.length,
+      source: 'https://example.test/figure.png',
+      sources: ['https://example.test/figure.png'],
+    },
   ]);
   assert.deepEqual(save.images, {
     found: 2,
@@ -452,6 +460,180 @@ try {
   assert(injected.length > injections, 'The shortcut injects the clipping script');
   await wait(50);
   console.log('PASS the keyboard shortcut clips the page');
+
+  // The clipped-page reader: its address names the page; the request never does.
+  const { clipSource, clipViewerUrl, clipTab } = await import('../clip-routing.js');
+  const readerUrl = base + 'clip/reader.html?url=' + article;
+  assert.equal(clipSource(readerUrl + '#top'), article);
+  assert.equal(clipViewerUrl(article + '#top'), readerUrl);
+  for (const bad of [
+    base + 'clip/reader.html?url=javascript:alert(1)',
+    base + 'clip/reader.html?url=file:///etc/passwd',
+    base + 'clip/reader.htmlx?url=' + article,
+    'https://example.test/clip/reader.html?url=' + article,
+    base + 'pdf/viewer.html?url=' + article,
+  ])
+    assert.equal(clipSource(bad), null, bad);
+  assert.deepEqual(clipTab({ id: 5, url: readerUrl, title: 'T' }), {
+    id: 5,
+    url: article,
+    title: 'T',
+    viewer: 'clip',
+  });
+  tabs.set(5, { id: 5, windowId: 1, index: 4, url: readerUrl, title: 'On Autonomy' });
+  const reader = { id: 'test', tab: { id: 5 }, frameId: 0, documentId: 'reader-1', url: readerUrl };
+  // Until the reader registers its port, and from any other document, nothing is read.
+  assert.match((await call({ type: 'clipRead' }, reader)).error, /Invalid clipped page reader/);
+  const readerPort = {
+    name: 'clip',
+    sender: reader,
+    onMessage: event(),
+    onDisconnect: event(),
+    postMessage: () => {},
+    disconnect: () => {},
+  };
+  for (const listen of chrome.runtime.onConnect.listeners) listen(readerPort);
+  for (const other of [
+    { ...reader, documentId: 'reader-0' },
+    { ...reader, frameId: 1 },
+    { ...reader, url: base + 'epub/reader.html' },
+    { ...reader, tab: { id: 5, incognito: true } },
+  ])
+    assert.match((await call({ type: 'clipRead' }, other)).error, /Invalid clipped page reader/);
+  const read = await call(
+    { type: 'clipRead', documentId: 'article-other-00000000', offset: 0, length: 4 * 1024 * 1024 },
+    reader,
+  );
+  assert.equal(read.document.url, article, 'The document comes from the reader address');
+  assert.deepEqual(
+    Buffer.from(read.data, 'base64'),
+    fs.readFileSync(path.join(folder, 'article.html')),
+  );
+  const image = await call({ type: 'clipAsset', file: read.clip.assets[0].file }, reader);
+  assert.deepEqual(Buffer.from(image.data, 'base64'), Buffer.from(PNG));
+  assert.equal(
+    (await call({ type: 'clipAsset', file: 'article.md' }, reader)).code,
+    'invalid_params',
+  );
+  console.log('PASS the reader reads the clip its address names, and only from its own document');
+
+  // Highlights and selections in the reader belong to the page; anchors are marked 'clip'.
+  const readerView = await attach(5);
+  const anchor = {
+    kind: 'web',
+    view: 'page',
+    quote: { exact: 'endorsement', prefix: 'Autonomy is the ', suffix: " of one's" },
+    position: { start: 16, end: 27 },
+  };
+  const made = await call(
+    { type: 'highlightCreate', text: 'endorsement', anchor, title: 'On Autonomy' },
+    reader,
+  );
+  assert.equal(made.url, article);
+  assert.equal(made.document.id, first.document.id);
+  const stored = JSON.parse(fs.readFileSync(path.join(folder, 'anchors.json'), 'utf8'));
+  assert.equal(stored.highlights.at(-1).anchor.view, 'clip');
+  // A webpage cannot claim the clipped view for its anchors.
+  await call(
+    {
+      type: 'highlightCreate',
+      text: 'own actions',
+      anchor: { ...anchor, view: 'clip', quote: { exact: 'own actions' } },
+      title: 'On Autonomy',
+    },
+    live,
+  );
+  const again = JSON.parse(fs.readFileSync(path.join(folder, 'anchors.json'), 'utf8'));
+  assert.equal(again.highlights.at(-1).anchor.view, undefined);
+  await call(
+    { type: 'pageSelection', text: 'actions', title: 'On Autonomy', selectionId: 'r1' },
+    reader,
+  );
+  assert.equal(readerView.events('codex-selection').at(-1).url, article);
+  const readerState = await call(
+    { type: 'readingState', conversationKey: readerView.state.conversationKey, companionTabId: 5 },
+    panel,
+  );
+  assert.deepEqual(readerState.page, {
+    url: article,
+    title: 'On Autonomy',
+    kind: 'web',
+    view: 'clip',
+  });
+  assert.equal(readerState.clip.complete, true);
+  // A message from the reader tab names the page and the clipped view.
+  await readerView.port.onMessage.listeners[0]({ type: 'bind', threadId: 'thread-reader' });
+  const mark = sent.length;
+  await readerView.ui('codexRpc', {
+    id: 2,
+    method: 'turn/start',
+    params: {
+      threadId: 'thread-reader',
+      input: [{ type: 'text', text: 'Explain.', text_elements: [] }],
+    },
+  });
+  const sentInput = sent.slice(mark).find((m) => m.op === 'rpc').message.params.input;
+  const pageContext = JSON.parse(sentInput[0].text.slice(sentInput[0].text.indexOf('{')));
+  assert.equal(pageContext.url, article);
+  assert.equal(pageContext.viewer, 'clip');
+  console.log('PASS highlights, selections and messages in the reader belong to the page');
+
+  // The clipped copy opens beside the page, from its prompt or the side panel.
+  created.length = 0;
+  assert.deepEqual(await call({ type: 'clipOpen' }, { ...live, url: article + '#top' }), {});
+  assert.deepEqual(
+    await call(
+      { type: 'clipOpenView', conversationKey: view.state.conversationKey, companionTabId: 1 },
+      panel,
+    ),
+    {},
+  );
+  assert.deepEqual(created, [
+    { url: readerUrl, windowId: 1, index: 1 },
+    { url: readerUrl, windowId: 1, index: 1 },
+  ]);
+  assert.match(
+    (await call({ type: 'clipOpen' }, { ...reader })).error,
+    /Invalid clip sender|Stale page/,
+  );
+  // Deleting from the reader keeps the page's highlights; the side panel beside the live
+  // page refreshes too.
+  const refreshes = view.events('codex-reading-changed').length;
+  assert.deepEqual(await call({ type: 'clipDelete' }, reader), { ok: true, backup: null });
+  assert(view.events('codex-reading-changed').length > refreshes, 'The live page panel refreshes');
+  assert(!fs.existsSync(path.join(folder, 'article.json')));
+  assert(JSON.parse(fs.readFileSync(path.join(folder, 'anchors.json'), 'utf8')).highlights.length);
+  assert.equal((await call({ type: 'clipRead' }, reader)).code, 'not_found');
+  console.log('PASS the clipped copy opens beside the page and can be deleted from the reader');
+
+  // When the reader tab closes, its conversation keeps the page it showed (as for #14's
+  // closed companions): the page address and document, marked closed.
+  tabs.delete(5);
+  const closedState = await call(
+    { type: 'readingState', conversationKey: readerView.state.conversationKey, companionTabId: 5 },
+    panel,
+  );
+  assert.deepEqual(
+    (({ url, kind, view, closed }) => ({ url, kind, view, closed }))(closedState.page),
+    { url: article, kind: 'web', view: 'clip', closed: true },
+  );
+  const closedMark = sent.length;
+  // A queued follow-up (the earlier turn is still running in this fixture).
+  await readerView.ui('codexRpc', {
+    id: 3,
+    method: 'thread/queue/add',
+    params: {
+      threadId: 'thread-reader',
+      input: [{ type: 'text', text: 'And now?', text_elements: [] }],
+    },
+  });
+  // The message waits for the vault's answers before it is sent.
+  for (let i = 0; i < 200 && !sent.slice(closedMark).some((m) => m.op === 'rpc'); i++) await wait();
+  const closedInput = sent.slice(closedMark).find((m) => m.op === 'rpc').message.params.input;
+  const closedContext = JSON.parse(closedInput[0].text.slice(closedInput[0].text.indexOf('{')));
+  assert.equal(closedContext.url, article);
+  assert.equal(closedContext.closed, true);
+  console.log('PASS a closed reader tab keeps its page for the conversation');
 } finally {
   python.stdin.end();
   fs.rmSync(temp, { recursive: true, force: true });
