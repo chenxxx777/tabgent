@@ -2049,8 +2049,13 @@ body.history-open {
 #readingError {
   color: var(--error);
 }
+#readingClip,
 #readingLibrary {
   margin-top: 8px;
+}
+#readingClipSelection,
+#readingClip:not([hidden]) ~ #readingLibrary {
+  margin-top: 2px;
 }
 #highlightSection {
   margin-bottom: 8px;

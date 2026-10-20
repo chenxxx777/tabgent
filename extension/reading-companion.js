@@ -166,6 +166,11 @@ export function createReadingCompanion({
           document.kind === 'pdf' && document.url.startsWith('urn:sha256:') && existing?.folder
             ? existing.folder + '/pages'
             : '',
+        // A clipped webpage's full text (article.md), whichever view the user reads.
+        article:
+          document.kind === 'web' && existing && resolved?.clip?.complete
+            ? clip(resolved.clip.articlePath, 4096)
+            : '',
       },
       highlight: bound?.highlightId && {
         highlightId: bound.highlightId,
@@ -470,6 +475,11 @@ export function createReadingCompanion({
       vault: vaultValue,
       page: document,
       document: existing && { id: existing.id, highlightsPath: existing.highlightsPath },
+      // The page's clipped text in the vault, for the reading notes menu.
+      clip:
+        existing && resolved?.clip?.clippedAt
+          ? { clippedAt: resolved.clip.clippedAt, complete: !!resolved.clip.complete }
+          : null,
       highlights: (resolved?.highlights || []).map((h) => ({
         id: h.id,
         text: clip(h.text, 400),

@@ -334,5 +334,71 @@
   },
   "pdfLocalFailed": {
     "message": "无法从阅读库打开这个 PDF：$1"
+  },
+  "clipPage": {
+    "message": "剪藏此网页"
+  },
+  "clipAgain": {
+    "message": "重新剪藏"
+  },
+  "clipSelection": {
+    "message": "仅剪藏选中内容"
+  },
+  "clipCommand": {
+    "message": "剪藏当前网页"
+  },
+  "clipSaving": {
+    "message": "正在剪藏…"
+  },
+  "clipSaved": {
+    "message": "已剪藏《$1》· $2 字，已保存到阅读笔记。"
+  },
+  "clipXPartial": {
+    "message": "已保存 $1 条（仅页面上已加载的部分）。"
+  },
+  "clipTruncated": {
+    "message": "正文过长，已截断。"
+  },
+  "clipReplaceAsk": {
+    "message": "已于 $1 剪藏过这个网页，用当前页面替换吗？"
+  },
+  "clipReplaceIncomplete": {
+    "message": "这个网页有一份不完整的剪藏，替换吗？"
+  },
+  "clipReplace": {
+    "message": "替换"
+  },
+  "clipCancel": {
+    "message": "取消"
+  },
+  "clipTooLittle": {
+    "message": "没找到多少正文。"
+  },
+  "clipWholePage": {
+    "message": "改存整页"
+  },
+  "clipUnsupported": {
+    "message": "此页面不能剪藏。"
+  },
+  "clipXOpenPost": {
+    "message": "请打开单条帖子再剪藏，或选中文字只剪藏选区。"
+  },
+  "clipNoSelection": {
+    "message": "请先在页面上选中文字。"
+  },
+  "clipFailed": {
+    "message": "无法剪藏这个页面。$1"
+  },
+  "clipSaveFailed": {
+    "message": "无法保存剪藏：$1"
+  },
+  "clipConflict": {
+    "message": "这个网页刚在另一个标签页里剪藏过，请重试。"
+  },
+  "clipEmbedded": {
+    "message": "嵌入内容（$1）"
+  },
+  "readingClipped": {
+    "message": "剪藏于 $1"
   }
 }
