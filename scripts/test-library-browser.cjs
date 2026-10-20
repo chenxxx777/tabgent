@@ -281,6 +281,26 @@ for method, params in json.loads(sys.argv[3]):
         (model.border[1] + model.border[5]) / 2,
       );
     }
+    // The reading layer's closed shadow root inside the PDF.js frame, as markup.
+    async function layerHtml() {
+      const client = await page.context().newCDPSession(page);
+      const { root: document } = await client.send('DOM.getDocument', { depth: -1, pierce: true });
+      let shadow = null;
+      (function walk(node) {
+        if (node.localName === 'tabgent-reader') shadow = node.shadowRoots?.[0];
+        for (const child of [
+          ...(node.children || []),
+          ...(node.shadowRoots || []),
+          ...(node.contentDocument ? [node.contentDocument] : []),
+        ])
+          walk(child);
+      })(document);
+      const { outerHTML } = await client.send('DOM.getOuterHTML', {
+        backendNodeId: shadow.backendNodeId,
+      });
+      await client.detach();
+      return outerHTML;
+    }
     // Evaluates in the side panel (chat.html) over CDP, awaiting promises.
     async function sidePanel() {
       const port = fs.readFileSync(path.join(profile, 'DevToolsActivePort'), 'utf8').split('\n')[0];
@@ -496,6 +516,33 @@ for method, params in json.loads(sys.argv[3]):
     await viewer();
     assert(await paintedAre([first, second].sort()), 'Highlights restored after a restart');
     console.log('PASS restart: the imported PDF reopens from the vault with its highlights');
+
+    // A note on an imported PDF's highlight, written in its popover, is saved to its vault
+    // document and shown again when the PDF reopens from the library.
+    const note = '我的看法: endorsement, not isolation.';
+    const target = await textPoint(second);
+    await page.mouse.click(target.left + 4, target.y);
+    await wait(300);
+    await press('note');
+    await page.keyboard.type(note);
+    await page.keyboard.press('Control+Enter');
+    assert(await until(() => anchorsOf(local).highlights[1].note === note), 'The note is saved');
+    assert.match(
+      fs.readFileSync(path.join(books, local, 'highlights.md'), 'utf8'),
+      /## Highlight 002[\s\S]*<!-- tabgent:note h002 start -->\n\n### 笔记\n\n我的看法: endorsement, not isolation\.\n\n<!-- tabgent:note h002 end -->\n\n### 对话[\s\S]*Why is autonomy not independence\?/,
+    );
+    await page.close();
+    await openLibrary();
+    const noted = await listed(4);
+    assert(noted[0].meta.includes(await message('epubHighlightCount', '2')), noted[0].meta);
+    await page.click('#books .item >> text=Local Reading Fixture');
+    await viewer();
+    assert(await paintedAre([first, second].sort()));
+    const reopened = await textPoint(second);
+    await page.mouse.click(reopened.left + 4, reopened.y);
+    await wait(300);
+    assert((await layerHtml()).includes(`<span>${note}</span>`), 'The note shows on click');
+    console.log('PASS a note on the imported PDF is saved and shown when it reopens');
 
     // Dropping the same file again reuses its vault copy; another PDF is a new document.
     const drop = (file, name) =>

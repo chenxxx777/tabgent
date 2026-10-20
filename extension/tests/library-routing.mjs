@@ -414,7 +414,27 @@ try {
   });
   assert.match(notes, /^source: "urn:sha256:[0-9a-f]{64}"$/m);
   assert.match(notes, /## Highlight 001[\s\S]*p\. 2[\s\S]*What does this mean\?/);
-  console.log('PASS highlights and saved turns on an imported PDF use its vault document');
+  // A note from the viewer's popover belongs to the imported document's highlight.
+  const userNote = 'My view: agreeing, not isolation.';
+  const noted = await call(
+    { type: 'highlightNote', documentId, highlightId: 'h001', note: userNote, title: 'A Paper' },
+    viewer,
+  );
+  assert.equal(noted.highlight.note, userNote);
+  assert.equal(
+    JSON.parse(fs.readFileSync(path.join(folder, 'anchors.json'), 'utf8')).highlights[0].note,
+    userNote,
+  );
+  assert.match(
+    fs.readFileSync(path.join(folder, 'highlights.md'), 'utf8'),
+    /## Highlight 001[\s\S]*### 笔记\n\nMy view: agreeing, not isolation\.\n[\s\S]*### 对话/,
+  );
+  assert.equal(
+    (await call({ type: 'highlightNote', documentId, highlightId: 'h009', note: 'x' }, viewer))
+      .code,
+    'not_found',
+  );
+  console.log('PASS highlights, notes and saved turns on an imported PDF use its vault document');
 
   // The side panel's reading state maps the viewer tab to the imported document.
   const panel = { id: 'test', url: base + 'ui/chat.html' };
