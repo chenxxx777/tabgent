@@ -106,6 +106,7 @@ const reading = createReadingCompanion({
   pdfSource,
   filePdfDocument,
   epubDocument,
+  isEpubReaderUrl,
   // Highlight commands reach webpage content scripts or the EPUB reader page.
   tabMessage: async (tabId, message) => {
     const tab = await chrome.tabs.get(tabId).catch(() => null);
@@ -146,6 +147,43 @@ async function getSession(tabId) {
     await persist();
   }
   return s;
+}
+// Closing a companion page does not end the Agent views that show its conversation. They
+// keep the page's last known address, marked closed; the reading companion keeps its
+// document (s.pageDocuments), and sessions created from such a view belong to its own tab.
+const openTab = async (tabId, fallback) =>
+  tabId != null && (await chrome.tabs.get(tabId).catch(() => null)) ? tabId : fallback;
+function closedPage(s, tabId) {
+  const document = s.pageDocuments?.[tabId];
+  return { url: s.pageUrls?.[tabId] || document?.url || '', title: document?.title || '' };
+}
+// The browser context sent with each message from a view.
+async function companionPage(s, port) {
+  const tab = await chrome.tabs.get(port.companionTabId).catch(() => null);
+  if (tab)
+    return {
+      tabId: tab.id,
+      windowId: tab.windowId,
+      url: pdfSource(tab.url) || tab.url,
+      title: tab.title || '',
+    };
+  const view = await chrome.tabs.get(port.sender.tab?.id ?? s.tabId).catch(() => null);
+  return {
+    tabId: port.companionTabId,
+    windowId: view?.windowId,
+    ...closedPage(s, port.companionTabId),
+    closed: true,
+  };
+}
+// The page shown in a view's composer.
+async function viewContext(s, port) {
+  if (await chrome.tabs.get(port.companionTabId).catch(() => null))
+    return context({ ...s, tabId: port.companionTabId });
+  const page = closedPage(s, port.companionTabId);
+  return {
+    scope: s.scope,
+    page: page.url && !s.noCompanion ? { id: port.companionTabId, ...page, closed: true } : null,
+  };
 }
 async function historyUrl(s) {
   const tab = await chrome.tabs.get(s.tabId).catch(() => null);
@@ -358,8 +396,10 @@ async function receive(message) {
         typeof m.params.arguments === 'string'
           ? JSON.parse(m.params.arguments)
           : m.params.arguments;
+      // The message's tab anchors scope; once it has closed, the conversation's own tab does.
+      const anchor = await openTab(s.toolTabId, s.tabId);
       const value = await browserTool(
-        { ...s, tabId: s.toolTabId ?? s.tabId },
+        { ...s, tabId: anchor },
         args,
         (params) =>
           new Promise((resolve, reject) => {
@@ -602,17 +642,9 @@ chrome.runtime.onConnect.addListener((port) => {
           const input = [...(m.params.input || [])];
           let page = input.find((p) => p.type === 'text' && p.text?.startsWith(pageContextPrefix));
           if (!page) {
-            const tab = await chrome.tabs.get(port.companionTabId);
             page = {
               type: 'text',
-              text:
-                pageContextPrefix +
-                JSON.stringify({
-                  tabId: tab.id,
-                  windowId: tab.windowId,
-                  url: pdfSource(tab.url) || tab.url,
-                  title: tab.title || '',
-                }),
+              text: pageContextPrefix + JSON.stringify(await companionPage(s, port)),
             };
             input.unshift(page);
           }
@@ -702,8 +734,7 @@ chrome.runtime.onConnect.addListener((port) => {
         for (const p of s.ports) if (p !== port) event(p, 'codex-scope', s.scope);
         await persist();
       }
-      if (msg.name === 'codexContext')
-        event(port, 'codex-context', await context({ ...s, tabId: port.companionTabId }));
+      if (msg.name === 'codexContext') event(port, 'codex-context', await viewContext(s, port));
       if (msg.name === 'codexCheckAuth') {
         connect().postMessage({ op: 'checkAuth', session: s.id });
       }
@@ -1240,7 +1271,10 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
       if (!source) throw Error('Conversation not found');
       const url = new URL(msg.url);
       if (!['http:', 'https:'].includes(url.protocol)) throw Error('Invalid link');
-      const owner = await chrome.tabs.get(msg.companionTabId ?? source.tabId);
+      // A closed companion page cannot be navigated: the link opens beside the view instead.
+      const owner = await chrome.tabs.get(
+        await openTab(msg.companionTabId ?? source.tabId, sender.tab?.id ?? source.tabId),
+      );
       if (msg.newTab === false && !owner.url?.startsWith(chrome.runtime.getURL('ui/chat.html'))) {
         await chrome.tabs.update(owner.id, { url: url.href });
         return { tabId: owner.id };
@@ -1303,7 +1337,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
         target = {
           id,
           key: id,
-          tabId: viewTabId,
+          tabId: await openTab(viewTabId, sender.tab?.id ?? source.tabId),
           threadId: entry.threadId,
           title: entry.title,
           hasUserInput: true,
@@ -1314,7 +1348,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
         };
         sessions.set(id, target);
       }
-
+      reading.keepPage(target, source, viewTabId);
       if (sender.tab && agentViews.has(sender.tab.id)) {
         agentViews.set(sender.tab.id, target.key);
       } else {
@@ -1395,6 +1429,10 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
       if (msg.fork?.threadId && !source.messageForks?.includes(msg.fork.threadId))
         throw Error('Conversation fork is not available');
       const id = crypto.randomUUID();
+      const tabId = await openTab(
+        msg.companionTabId ?? source.tabId,
+        sender.tab?.id ?? source.tabId,
+      );
       const session = {
         threadId: msg.fork?.threadId,
         forkInput: msg.fork?.input || null,
@@ -1403,7 +1441,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
 
         id,
         key: id,
-        tabId: msg.companionTabId ?? source.tabId,
+        tabId,
         scope: source.scope,
         viewOnly: Boolean(sender.tab && agentViews.has(sender.tab.id)),
         settings: {
@@ -1418,6 +1456,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
         annotations: cleanAnnotations(msg.annotations),
         ports: new Set(),
       };
+      reading.keepPage(session, source, msg.companionTabId ?? source.tabId);
       await recordHistory(source);
       sessions.set(id, session);
       if (msg.fork?.threadId) await recordHistory(session);
@@ -1476,6 +1515,13 @@ chrome.tabs.onRemoved.addListener(async (id) => {
   }
   await persist();
   for (const session of sessions.values()) broadcast(session, { method: 'bridge/lineageChanged' });
+  // Agent views whose page closed keep their conversation and show the page as closed.
+  for (const session of sessions.values())
+    for (const port of session.ports)
+      if (port.companionTabId === id) {
+        event(port, 'codex-context', await viewContext(session, port));
+        event(port, 'codex-reading-changed');
+      }
 });
 chrome.webNavigation.onCommitted.addListener(async (detail) => {
   await loaded;
@@ -1491,6 +1537,7 @@ chrome.webNavigation.onCommitted.addListener(async (detail) => {
     if (detail.frameId === 0 && detail.url) {
       s.pageUrls ||= {};
       s.pageUrls[detail.tabId] = pdfSource(detail.url) || detail.url;
+      reading.navigated(s, detail.tabId, s.pageUrls[detail.tabId]);
       await persist();
     }
 

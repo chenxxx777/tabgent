@@ -1804,8 +1804,10 @@ addWebUiListener('codex-context', (value) => {
   $('context').hidden = !value.page;
   // A file from the computer that Chrome does not let Tabgent read yet.
   $('fileAccess').hidden = value.fileAccess !== false;
+  // An Agent tab outlives its page: the closed page keeps its last known address.
+  const name = value.page ? value.page.title || value.page.url : '';
   for (const [id, text] of [
-    ['contextText', value.page ? value.page.title || value.page.url : ''],
+    ['contextText', value.page?.closed ? i18n('pageClosedContext', name) : name],
     ['contextFullTitle', value.page?.title || ''],
     ['contextFullUrl', value.page?.url || ''],
   ]) {

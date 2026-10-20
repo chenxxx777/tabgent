@@ -494,10 +494,143 @@ const separateSidebar = await attach(opened.tabId);
 assert.equal(separateSidebar.messages[0].state.threadId, undefined);
 await separateSidebar.send({ type: 'ui', name: 'codexContext' });
 assert.equal(separateSidebar.messages.at(-1).value.page.id, opened.tabId);
+const lastPage = saved.conversations.find(([key]) => key === 1)[1].pageUrls[1];
+assert.equal(lastPage, originalUrl);
+mirrored.messages.length = 0;
 tabs.delete(1);
 await chrome.tabs.onRemoved.emit(1);
 assert(!sent.some((m) => m.op === 'close' && m.session === session.id));
+// The Agent tab keeps the conversation after its source page closes (B2): the page shows
+// as closed, and asking, steering, stopping and page history keep working.
+const closedContext = mirrored.messages.find((m) => m.name === 'codex-context').value;
+assert.deepEqual(closedContext.page, { id: 1, url: lastPage, title: '', closed: true });
+assert(mirrored.messages.some((m) => m.name === 'codex-reading-changed'));
+const afterClose = await attach(opened.tabId, opened.tabId);
+assert.equal(afterClose.messages[0].state.threadId, 'thread-one');
+assert.equal(afterClose.messages[0].state.companionTabId, 1);
+await afterClose.send({ type: 'ui', name: 'codexContext' });
+assert.deepEqual(afterClose.messages.at(-1).value.page, closedContext.page);
+const lastRpc = () => sent.findLast((m) => m.op === 'rpc');
+const pageOf = (message) =>
+  JSON.parse(
+    message.message.params.input
+      .find((p) => p.text?.startsWith('Browser context'))
+      .text.split('\n')[1],
+  );
+const errors = (view) =>
+  view.messages.filter((m) => m.value?.method === 'bridge/error').map((m) => m.value);
+await afterClose.send({
+  type: 'ui',
+  name: 'codexRpc',
+  args: [
+    {
+      id: 41,
+      method: 'turn/start',
+      params: { threadId: 'thread-one', input: [{ type: 'text', text: 'Search my notes' }] },
+    },
+  ],
+});
+const askedAfterClose = lastRpc();
+assert.equal(askedAfterClose.message.method, 'turn/start', 'The turn reaches the connector');
+assert.equal(askedAfterClose.session, session.id);
+assert.deepEqual(pageOf(askedAfterClose), {
+  tabId: 1,
+  windowId: 1,
+  url: lastPage,
+  title: '',
+  closed: true,
+});
+await native.onMessage.emit({
+  session: session.id,
+  message: { id: askedAfterClose.message.id, result: { turn: { id: 'after-close' } } },
+});
+await afterClose.send({
+  type: 'ui',
+  name: 'codexRpc',
+  args: [
+    {
+      id: 42,
+      method: 'turn/steer',
+      params: {
+        threadId: 'thread-one',
+        expectedTurnId: 'after-close',
+        input: [{ type: 'text', text: 'Only the vault' }],
+      },
+    },
+  ],
+});
+assert.equal(lastRpc().message.method, 'turn/steer');
+assert.equal(pageOf(lastRpc()).closed, true);
+await afterClose.send({
+  type: 'ui',
+  name: 'codexRpc',
+  args: [{ id: 43, method: 'turn/interrupt', params: { threadId: 'thread-one', turnId: 'x' } }],
+});
+assert.equal(lastRpc().message.method, 'turn/interrupt');
+assert.deepEqual(errors(afterClose), [], 'No request fails with the closed tab');
+assert.deepEqual(errors(mirrored), []);
+// Browser actions on the closed page fail clearly; scope follows the Agent tab's window.
+const toolResult = async (id, args) => {
+  await native.onMessage.emit({
+    session: session.id,
+    message: { id, method: 'item/tool/call', params: { tool: 'browser', arguments: args } },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  return sent.findLast((m) => m.message?.id === id).message.result;
+};
+const closedRead = await toolResult(951, { action: 'read', tabId: 1 });
+assert.equal(closedRead.success, false);
+assert.match(closedRead.contentItems[0].text, /^Tab 1 was closed/);
+const listedTabs = await toolResult(952, { action: 'tabs', tabId: newWebTab.id });
+assert.equal(listedTabs.success, true, listedTabs.contentItems[0].text);
+assert(JSON.parse(listedTabs.contentItems[0].text).some((tab) => tab.id === newWebTab.id));
+const agentSender = (tabId) => ({
+  id: 'test',
+  url: chrome.runtime.getURL('ui/chat.html'),
+  tab: tabs.get(tabId),
+});
+const callFrom = (tabId, m) =>
+  new Promise((resolve) => chrome.runtime.onMessage.listeners[0](m, agentSender(tabId), resolve));
+const closedHistory = await callFrom(opened.tabId, {
+  type: 'urlHistory',
+  conversationKey: 1,
+  companionTabId: 1,
+});
+assert(!closedHistory.error, closedHistory.error);
+assert.equal(closedHistory.url, lastPage, 'History keeps the last known address');
+assert.equal(closedHistory.current, 'thread-one');
+// Agent + in that tab starts a conversation owned by the Agent tab itself.
+const fromClosed = await callFrom(opened.tabId, {
+  type: 'newConversation',
+  conversationKey: 1,
+  companionTabId: 1,
+  settings: copiedSettings,
+});
+assert(!fromClosed.error, fromClosed.error);
+assert.equal(
+  saved.conversations.find(([key]) => key === fromClosed.conversationKey)[1].tabId,
+  opened.tabId,
+);
+const freshAfterClose = await attach(opened.tabId, opened.tabId);
+assert.equal(freshAfterClose.messages[0].type, 'attached');
+assert.equal(freshAfterClose.messages[0].state.conversationKey, fromClosed.conversationKey);
+await freshAfterClose.send({ type: 'ui', name: 'codexContext' });
+assert.deepEqual(freshAfterClose.messages.at(-1).value.page, closedContext.page);
+const freshHistory = await callFrom(opened.tabId, {
+  type: 'urlHistory',
+  conversationKey: fromClosed.conversationKey,
+  companionTabId: 1,
+});
+assert(freshHistory.entries.some((entry) => entry.threadId === 'thread-one'));
+const reopenedOld = await callFrom(opened.tabId, {
+  type: 'switchHistory',
+  conversationKey: fromClosed.conversationKey,
+  companionTabId: 1,
+  threadId: 'thread-one',
+});
+assert(!reopenedOld.error, reopenedOld.error);
 assert.equal((await attach(opened.tabId, opened.tabId)).messages[0].state.threadId, 'thread-one');
+console.log('PASS the Agent tab continues after its source page closes; the page shows closed');
 tabs.delete(opened.tabId);
 await chrome.tabs.onRemoved.emit(opened.tabId);
 assert(sent.some((m) => m.op === 'close' && m.session === session.id));
