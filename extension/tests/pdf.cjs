@@ -12,6 +12,7 @@ const { chromium } = require('playwright');
     fs.cpSync('extension/' + name, ext + '/' + name, { recursive: true });
   for (const name of [
     'pdf-routing.js',
+    'local-files.js',
     'browser-tools.js',
     'resource-files.js',
     'browser-input.js',
