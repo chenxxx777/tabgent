@@ -431,14 +431,18 @@ with tempfile.TemporaryDirectory(prefix="tabgent-clip-assets-") as directory:
         (folder / "article.md").write_text("Edited by me.\n")
         deleted = call(settings, "vault/clip/delete", {"documentId": ident})
         assert deleted["ok"] is True and deleted["backup"].startswith("article-edited-")
-        remaining = sorted(path.name for path in folder.iterdir())
-        assert remaining == sorted(
-            ["anchors.json", "highlights.md", "assets", deleted["backup"]]
-        ), remaining
+        remaining = sorted(
+            path.name
+            for path in folder.iterdir()
+            if not path.name.startswith("article-edited-")
+        )
+        assert remaining == ["anchors.json", "assets", "highlights.md"], remaining
+        assert (folder / deleted["backup"]).read_text() == "Edited by me.\n"
         assert not (folder / "article.json").exists()
-        assert sorted(path.name for path in (folder / "assets").iterdir()) == [
-            "my-sketch.png"
-        ]
+        # The kept edited copy may link the clip's images, so they stay with it.
+        assert sorted(path.name for path in (folder / "assets").iterdir()) == sorted(
+            [f"{digest(JPEG)[:16]}.jpg", "my-sketch.png"]
+        )
         assert (
             call(
                 settings,

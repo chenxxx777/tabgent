@@ -520,14 +520,6 @@ try {
   const stored = JSON.parse(fs.readFileSync(path.join(folder, 'anchors.json'), 'utf8'));
   assert.equal(stored.highlights.at(-1).anchor.view, 'clip');
   // A webpage cannot claim the clipped view for its anchors.
-  // Chrome's sender.tab is the whole tab.
-  const live = {
-    id: 'test',
-    tab: tabs.get(1),
-    frameId: 0,
-    documentId: documentId(1),
-    url: article,
-  };
   await call(
     {
       type: 'highlightCreate',

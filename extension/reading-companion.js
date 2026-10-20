@@ -472,7 +472,7 @@ export function createReadingCompanion({
           tabId,
           locator: {
             kind: document.kind,
-            ...(clipSource(tab.url) ? { view: 'clip' } : {}),
+            ...(clipSource(tab?.url) ? { view: 'clip' } : {}),
             anchor: highlight.anchor || null,
             // The EPUB reader names the chapter file Codex reads instead of the reader tab.
             ...(/^chapters\/[^/\\]+\.md$/.test(context?.chapterFile || '')

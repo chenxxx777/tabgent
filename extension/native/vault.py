@@ -989,8 +989,8 @@ def read_clip_asset(settings, params):
 
 def delete_clip(settings, params):
     """Deletes a page's clipped copy: article.html, article.json, the images it recorded and
-    article.md (kept as article-edited-<time>.md if the user edited it). The page's
-    highlights, notes and discussions stay."""
+    article.md. An article.md the user edited is kept as article-edited-<time>.md, with the
+    images it links. The page's highlights, notes and discussions stay."""
     ident = _document_id(params.get("documentId"))
     root = _root(settings)
     if not _folder(root, ident).is_dir():
@@ -1009,9 +1009,11 @@ def delete_clip(settings, params):
         for name in (CLIP_RECORD, CLIP_HTML, CLIP_MARKDOWN):
             with contextlib.suppress(FileNotFoundError):
                 (folder / name).unlink()
-        _clip_prune_assets(folder, current, {"assets": []})
-        with contextlib.suppress(OSError):
-            (folder / "assets").rmdir()  # Only when empty; the user's files stay.
+        # The kept copy of an edited article.md still links the clip's images.
+        if not backup:
+            _clip_prune_assets(folder, current, {"assets": []})
+            with contextlib.suppress(OSError):
+                (folder / "assets").rmdir()  # Only when empty; the user's files stay.
         data["document"]["updatedAt"] = _now()
         _save(root, data)
     return {"ok": True, "backup": backup}

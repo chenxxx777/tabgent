@@ -493,7 +493,8 @@ current top-frame reader document. `clipRead`, `clipAsset` and `clipDelete` reso
 document from that address, never from the request, and relay `vault/clip/read` (chunks of
 `article.html` with the record), `vault/clip/asset/read` (only images the record lists, at
 their exact path, no symlinks) and `vault/clip/delete` (which keeps an edited `article.md`
-as a copy and leaves highlights, notes and other files in `assets/`).
+as a copy, with the images it may link, and leaves highlights, notes and other files in
+`assets/`).
 
 The clipped HTML is untrusted, also from the vault: the reader checks it against the
 SHA-256 in `article.json` and refuses a changed copy, then cleans it again with the shared
