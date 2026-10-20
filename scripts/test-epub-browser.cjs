@@ -174,7 +174,15 @@ async function until(check, ms = 10000) {
     };
     const chapter = () =>
       until(() => page.frames().find((frame) => frame.url() === 'about:srcdoc'));
-    const chapterTitle = async () => (await chapter()).evaluate(() => document.title);
+    const chapterTitle = async () => {
+      const frame = await chapter();
+      try {
+        return await frame.evaluate(() => document.title);
+      } catch (error) {
+        if (frame.isDetached()) return null; // A navigation replaced the polled frame.
+        throw error;
+      }
+    };
     // CDP sees foliate's closed shadow roots: count painted highlight groups.
     async function painted() {
       const client = await page.context().newCDPSession(page);
@@ -683,6 +691,82 @@ async function until(check, ms = 10000) {
       { handlers: 0, exposedImage: true, scripts: true },
     );
     assert.equal(await page.evaluate(() => globalThis.tabgentRawTextRan), undefined);
+
+    // A loads its frame after B supersedes it, while B is still fetching its
+    // source. C returns to A's chapter: it must load a fully initialized view.
+    assert.deepEqual(
+      await page.evaluate(async () => {
+        const view = document.querySelector('foliate-view');
+        await view.goTo('OEBPS/ch2.xhtml');
+        const section = view.book.sections[3],
+          load = section.load,
+          prototype = HTMLIFrameElement.prototype,
+          descriptor = Object.getOwnPropertyDescriptor(prototype, 'srcdoc');
+        let releaseFrame, frameStarted, releaseSource, sourceStarted;
+        const framePending = new Promise((resolve) => (frameStarted = resolve)),
+          sourcePending = new Promise((resolve) => (sourceStarted = resolve)),
+          sourceGate = new Promise((resolve) => (releaseSource = resolve));
+        const bounded = (promise) =>
+          new Promise((resolve, reject) => {
+            const timer = setTimeout(() => reject(Error('Navigation gate timed out')), 5000);
+            promise.then(resolve, reject).finally(() => clearTimeout(timer));
+          });
+        let heldDocument;
+        const loads = [];
+        const loaded = ({ detail: { index } }) => loads.push(index);
+        view.addEventListener('load', loaded);
+        section.load = async function () {
+          sourceStarted();
+          await sourceGate;
+          return load.call(this);
+        };
+        Object.defineProperty(prototype, 'srcdoc', {
+          ...descriptor,
+          set(value) {
+            Object.defineProperty(prototype, 'srcdoc', descriptor);
+            releaseFrame = () => descriptor.set.call(this, value);
+            frameStarted();
+          },
+        });
+        try {
+          const first = view.goTo('OEBPS/ch1.xhtml');
+          await bounded(framePending);
+          const second = view.goTo('OEBPS/ch3.xhtml');
+          await bounded(sourcePending);
+          releaseFrame();
+          await bounded(first);
+          heldDocument = view.renderer.getContents()[0].doc;
+          await view.goTo('OEBPS/ch1.xhtml');
+          releaseSource();
+          await bounded(second);
+          const { doc, overlayer } = view.renderer.getContents()[0];
+          return {
+            reloaded: doc !== heldDocument,
+            styled: [...doc.head.querySelectorAll('style')].some((style) =>
+              style.textContent.includes('color-scheme: light'),
+            ),
+            overlayer: !!overlayer,
+            loads,
+          };
+        } finally {
+          Object.defineProperty(prototype, 'srcdoc', descriptor);
+          section.load = load;
+          releaseSource();
+          view.removeEventListener('load', loaded);
+        }
+      }),
+      { reloaded: true, styled: true, overlayer: true, loads: [1] },
+    );
+    await select('independence from others');
+    await page.keyboard.press('Escape');
+    await (await chapter()).click('#next-chapter');
+    assert(await hasChapter('Chapter Three: Endings'));
+    assert(await page.isVisible('#viewer'));
+    await page.evaluate(() => document.querySelector('foliate-view').goTo('OEBPS/ch1.xhtml'));
+    console.log(
+      'PASS returning to a superseded chapter restores styles, overlays, selection and links',
+    );
+
     const navigationId = new URL(page.url()).searchParams.get('book');
     const navigationDigest = crypto
       .createHash('sha256')

@@ -272,7 +272,6 @@ class View {
         this.render(layout)
         this.#observer.observe(doc.body)
 
-        this.ready = true
         // the resize observer above doesn't work in Firefox
         // (see https://bugzilla.mozilla.org/show_bug.cgi?id=1832939)
         // until the bug is fixed we can at least account for font load
@@ -1018,6 +1017,9 @@ export class Paginator extends HTMLElement {
         }
         if (navigation !== this.#navigation) throw cancelled()
         if (hasFocus) this.focusView()
+        // A superseded load can finish without styles, handlers or an overlayer.
+        // Only a completed navigation makes this view reusable for the same index.
+        this.#view.ready = true
     }
     #canGoToIndex(index) {
         return Number.isInteger(index) && index >= 0 && index <= this.sections.length - 1

@@ -41,7 +41,10 @@ Review follow-up patches:
 
 - Destroying a reflowable view or replacing a fixed-layout spread aborts pending
   frame loads. Navigation generations prevent an older source/load from replacing
-  a newer chapter, and cancellation never becomes a reader error.
+  a newer chapter, and cancellation never becomes a reader error. A reflowable
+  view becomes ready for reuse only after its own navigation finishes, including
+  styles, load handlers and the annotation overlayer; a cancelled load is reloaded
+  even when the next navigation returns to the same chapter.
 - Unresolved targets are no-ops. Stale saved positions fall back to the text start;
   a CFI anchor that no longer fits the HTML tree falls back to the section start.
 - Both renderers emit a composed `load-error` for actual source/render failures.
