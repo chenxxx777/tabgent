@@ -8,6 +8,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
+// The worker's reader routing reads extension addresses.
+globalThis.chrome = { runtime: { getURL: (file) => 'chrome-extension://test/' + file } };
+const { registerClipPort, clipViewerUrl } = await import('../clip-routing.js');
 import {
   FEED_LIMIT,
   createFeeds,
@@ -17,6 +20,7 @@ import {
   looksLikeFeed,
   retryAfter,
   toBase64,
+  trackingImage,
 } from '../feeds.js';
 
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'tabgent-feeds-'));
@@ -350,6 +354,174 @@ try {
   const bounded = await timed.refresh();
   assert.ok(bounded.checked >= 3 && bounded.checked < 14, JSON.stringify(bounded));
   console.log('PASS scheduled runs: three at a time, a time budget, paused and other alarms');
+
+  // The reader at an item's address: open, images, full text, state and saving.
+  const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
+  routes.set('https://feed.test/reader.xml', () =>
+    respond(
+      '<?xml version="1.0"?><rss xmlns:content="http://purl.org/rss/1.0/modules/content/">' +
+        '<channel><title>Reader</title><link>https://read.test/</link>' +
+        '<item><title>Short one</title><guid>r1</guid>' +
+        '<link>https://read.test/short?utm_source=rss</link>' +
+        '<description>Just a summary.</description></item></channel></rss>',
+      { 'content-type': 'application/rss+xml' },
+    ),
+  );
+  await feeds.message({ type: 'feedsSubscribe', url: 'https://feed.test/reader.xml' });
+  const itemUrl = 'https://read.test/short';
+  const readerSender = { tab: { id: 77 }, url: clipViewerUrl(itemUrl), frameId: 0 };
+  const openedItem = await feeds.reader({ type: 'feedOpen' }, readerSender);
+  assert.equal(openedItem.item.title, 'Short one');
+  assert.equal(openedItem.item.link, 'https://read.test/short?utm_source=rss');
+  assert.equal(openedItem.saved, false);
+  assert.equal(openedItem.document, null);
+  const unreadNow = await request('vault/feeds/library', { view: 'unread' });
+  assert(!unreadNow.items.some((entry) => entry.url === itemUrl), 'Opening marks it read');
+  await assert.rejects(
+    feeds.reader({ type: 'feedOpen' }, { ...readerSender, url: 'https://read.test/short' }),
+    /Invalid clipped page reader/,
+  );
+
+  // Images: no cookies or referrer; trackers and non-images are refused.
+  routes.set('https://img.test/a.png', () => respond(PNG, { 'content-type': 'text/html' }));
+  routes.set('https://img.test/page.png', () => respond('<html>', { 'content-type': 'image/png' }));
+  requests.length = 0;
+  const image = await feeds.reader(
+    { type: 'feedImage', url: 'https://img.test/a.png' },
+    readerSender,
+  );
+  assert.equal(image.mime, 'image/png');
+  assert.deepEqual(Buffer.from(image.data, 'base64'), Buffer.from(PNG));
+  assert.equal(requests[0].options.credentials, 'omit');
+  assert.equal(requests[0].options.referrerPolicy, 'no-referrer');
+  await assert.rejects(
+    feeds.reader({ type: 'feedImage', url: 'https://img.test/page.png' }, readerSender),
+    /Not an image/,
+  );
+  assert.equal(trackingImage('https://feeds.feedburner.com/~r/x/~4/abc'), true);
+  assert.equal(trackingImage('https://stats.wordpress.com/b.gif?v=1'), true);
+  assert.equal(trackingImage('https://news.test/open.gif'), true);
+  assert.equal(trackingImage('https://img.test/a.png'), false);
+  await assert.rejects(
+    feeds.reader({ type: 'feedImage', url: 'https://pixel.wp.com/g.gif' }, readerSender),
+    /Not loaded/,
+  );
+  // Images off for this subscription: nothing is fetched.
+  await feeds.message({
+    type: 'feedsUpdate',
+    sourceId: openedItem.source.id,
+    settings: { images: false },
+  });
+  await feeds.reader({ type: 'feedOpen' }, readerSender);
+  requests.length = 0;
+  await assert.rejects(
+    feeds.reader({ type: 'feedImage', url: 'https://img.test/a.png' }, readerSender),
+    /Images are off/,
+  );
+  assert.equal(requests.length, 0);
+
+  // Full text: the item's own link, with the site's cookies (R3), never another address.
+  routes.set('https://read.test/short?utm_source=rss', () =>
+    respond('<html><body><article><p>Whole text.</p></article></body></html>', {
+      'content-type': 'text/html; charset=utf-8',
+    }),
+  );
+  requests.length = 0;
+  const page = await feeds.reader(
+    { type: 'feedFullText', url: 'https://evil.test/' },
+    readerSender,
+  );
+  assert.match(page.html, /Whole text/);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, 'https://read.test/short?utm_source=rss');
+  assert.equal(requests[0].options.credentials, 'include');
+  assert.equal(requests[0].options.referrerPolicy, 'no-referrer');
+  await feeds.reader({ type: 'feedContent', html: '<p>Whole text.</p>' }, readerSender);
+  assert.equal((await request('vault/feeds/open', { url: itemUrl })).content.kind, 'fulltext');
+
+  // Later and archive for an item not saved yet stay in the subscriptions.
+  await feeds.reader({ type: 'feedState', state: 'later' }, readerSender);
+  assert.deepEqual(
+    (await request('vault/feeds/library', { view: 'later' })).items.map((entry) => entry.url),
+    [itemUrl],
+  );
+
+  // Before the first highlight the reader hands over its text; the item becomes a document
+  // with a feed origin, and its later state moves to the document.
+  const replies = [];
+  const portListeners = [];
+  const port = {
+    name: 'clip',
+    sender: { tab: { id: 77 }, frameId: 0, documentId: 'reader-doc', url: readerSender.url },
+    onMessage: { addListener: (fn) => portListeners.push(fn) },
+    onDisconnect: { addListener() {} },
+    postMessage(message) {
+      replies.push(message);
+      if (message.type !== 'command') return;
+      queueMicrotask(() =>
+        portListeners.forEach((fn) =>
+          fn({
+            type: 'reply',
+            id: message.id,
+            result: {
+              method: 'fulltext',
+              result: {
+                ok: true,
+                mode: 'article',
+                extractor: 'defuddle',
+                title: 'Short one',
+                html: '<p>Whole text.</p>',
+                markdown: 'Whole text.',
+                images: [],
+                imageToken: '',
+                words: 2,
+                chars: 11,
+              },
+            },
+          }),
+        ),
+      );
+    },
+    disconnect() {},
+  };
+  assert.equal(registerClipPort(port), true);
+  const committed = await feeds.commit(77, itemUrl);
+  assert.equal(committed.saved, true);
+  assert.equal(replies.at(-1).command.type, 'feedCommit');
+  const resolved = await request('vault/document/resolve', {
+    url: itemUrl,
+    title: '',
+    kind: 'web',
+  });
+  assert.equal(resolved.clip.complete, true);
+  assert.equal(resolved.document.library.state, 'later');
+  const article = JSON.parse(
+    fs.readFileSync(path.join(resolved.document.folder, 'article.json'), 'utf8'),
+  );
+  assert.equal(article.origin.type, 'feed');
+  assert.equal(article.origin.method, 'fulltext');
+  assert.equal(article.origin.sourceTitle, 'Reader');
+  assert.equal(article.origin.pageUrl, 'https://read.test/short?utm_source=rss');
+  const later = await request('vault/feeds/library', { view: 'later' });
+  assert.deepEqual(
+    later.items.map((entry) => [entry.kind, entry.url]),
+    [['document', itemUrl]],
+  );
+  // Saved: the reader now shows the vault copy; state changes go to the document.
+  assert.equal((await feeds.reader({ type: 'feedOpen' }, readerSender)).saved, true);
+  await feeds.reader({ type: 'feedState', state: 'archive' }, readerSender);
+  assert.equal(
+    (await request('vault/document/resolve', { url: itemUrl, title: '', kind: 'web' })).document
+      .library.state,
+    'archive',
+  );
+  // A reader that is not showing an unsaved item answers nothing: nothing is saved.
+  port.postMessage = (message) => {
+    if (message.type === 'command')
+      queueMicrotask(() => portListeners.forEach((fn) => fn({ type: 'reply', id: message.id })));
+  };
+  assert.equal(await feeds.commit(77, itemUrl), null);
+  console.log('PASS the reader opens, fetches images and full text, and saves feed items');
 
   // Unsubscribing everything removes the alarms.
   for (const source of (await feeds.message({ type: 'feedsSources' })).sources)

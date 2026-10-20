@@ -2,11 +2,12 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <!-- A clipped page is untrusted: no remote loads, forms, frames or inline styles, and
-         every HTML string goes through DOMPurify's Trusted Types policy. -->
+    <!-- A clipped page or feed item is untrusted: no remote loads, forms, web frames or inline
+         styles, and every HTML string goes through DOMPurify's Trusted Types policy. The only
+         frame is Tabgent's own cleaning page (extract.html). -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; font-src 'self'; connect-src 'none'; media-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; require-trusted-types-for 'script'; trusted-types dompurify"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; font-src 'self'; connect-src 'none'; media-src 'none'; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; require-trusted-types-for 'script'; trusted-types dompurify"
     />
     <title>Tabgent</title>
     <link
@@ -45,13 +46,30 @@
         <button id="delete" type="button" hidden>$i18n{clipDelete}</button>
       </div>
     </header>
+    <div id="feedTools" role="toolbar" aria-label="$i18n{libraryTabFeeds}" hidden>
+      <button id="back" type="button">← $i18n{feedsBack}</button>
+      <span class="spacer"></span>
+      <button id="fullText" type="button" hidden>$i18n{feedsLoadFullText}</button>
+      <button id="save" type="button">$i18n{feedsSaveToLibrary}</button>
+      <button id="later" type="button" aria-pressed="false">$i18n{feedsLater}</button>
+      <button id="archive" type="button" aria-pressed="false">$i18n{feedsArchive}</button>
+    </div>
     <main>
       <div id="intro">
         <h1 id="pageTitle"></h1>
         <p id="byline"></p>
+        <p id="notice" role="status" hidden></p>
       </div>
       <article id="content"></article>
       <p id="status" role="status">$i18n{epubLoading}</p>
     </main>
+    <iframe
+      id="cleaner"
+      src="extract.html"
+      title=""
+      aria-hidden="true"
+      tabindex="-1"
+      hidden
+    ></iframe>
   </body>
 </html>

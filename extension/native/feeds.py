@@ -306,6 +306,12 @@ def identity(url):
     )
 
 
+def item_urn(source_url, key):
+    """The vault identity of an entry without a link: urn:tabgent:feed:<sha256>."""
+    digest = hashlib.sha256(f"{source_url}\n{key}".encode("utf-8")).hexdigest()
+    return "urn:tabgent:feed:" + digest
+
+
 def _link(value, base):
     """An absolute http(s) address, or "" (an empty value is not the base address)."""
     value = (value or "").strip()
@@ -916,6 +922,8 @@ def _store_items(db, row, feed, now):
         # A date in the future does not keep an item at the top; undated keep feed order.
         order = min(published, now) if published else now - position / 1000
         ident = "item-" + uuid.uuid4().hex[:16]
+        # An entry without a link is named by its subscription and key.
+        address = entry["url"] or item_urn(row["url"], entry["key"])
         db.execute(
             "INSERT INTO items (id, source_id, key, url, link, title, author, published_at, "
             "updated_at, first_seen_at, sort_at, summary, content_kind, image, "
@@ -924,7 +932,7 @@ def _store_items(db, row, feed, now):
                 ident,
                 row["id"],
                 entry["key"],
-                entry["url"],
+                address,
                 entry["link"],
                 entry["title"],
                 entry["author"],
@@ -1323,6 +1331,279 @@ def items(settings, params):
         return {"items": [_public_item(row) for row in rows], "total": total}
 
 
+FULLTEXT_LIMIT = 4 * 1024 * 1024  # UTF-8 bytes of a page's cleaned full text
+ITEM_URL = re.compile(r"(?:https?://|urn:tabgent:feed:[0-9a-f]{64}$)", re.IGNORECASE)
+VIEWS = ("unread", "later", "archive", "all")
+STATES = ("inbox", "later", "archive")
+
+
+def _item_url(params):
+    value = params.get("url")
+    if not isinstance(value, str) or len(value) > 16384 or not ITEM_URL.match(value):
+        raise VaultError("invalid_params", "url must be an item's address")
+    return value.split("#", 1)[0]
+
+
+def _item_urls(params):
+    urls = params.get("urls")
+    if not isinstance(urls, list) or not urls or len(urls) > 500:
+        raise VaultError("invalid_params", "urls must list 1 to 500 item addresses")
+    return list(dict.fromkeys(_item_url({"url": url}) for url in urls))
+
+
+def open_item(settings, params):
+    """The newest item at an address, for the reader, marked read. Also the feeds that
+    list it, the subscription's settings, and the content to show: the cached full text,
+    else the feed's own HTML (untrusted)."""
+    url = _item_url(params)
+    root = vault._root(settings)
+    if not _index(root).is_file():
+        raise VaultError("not_found", "This item is not in your subscriptions")
+    with _writing(root) as db:
+        rows = db.execute(
+            "SELECT items.*, sources.title AS source_title, sources.url AS source_url, "
+            "sources.settings AS source_settings FROM items JOIN sources "
+            "ON sources.id = items.source_id WHERE items.url = ? ORDER BY items.sort_at DESC",
+            (url,),
+        ).fetchall()
+        if not rows:
+            raise VaultError("not_found", "This item is not in your subscriptions")
+        db.execute(
+            "UPDATE items SET read_at = ? WHERE url = ? AND read_at IS NULL",
+            (_iso(time.time()), url),
+        )
+        row = rows[0]
+        content = db.execute(
+            "SELECT item_content.kind, item_content.html FROM items JOIN item_content "
+            "ON item_content.item_id = items.id WHERE items.url = ? "
+            "ORDER BY item_content.kind = 'fulltext' DESC, items.sort_at DESC LIMIT 1",
+            (url,),
+        ).fetchone()
+        try:
+            settings_value = json.loads(row["source_settings"] or "{}")
+        except ValueError:
+            settings_value = {}
+        return {
+            "item": {
+                **_public_item(row),
+                "key": row["key"],
+                "sources": list(
+                    dict.fromkeys(r["source_title"] or r["source_url"] for r in rows)
+                ),
+                "documentId": next(
+                    (r["document_id"] for r in rows if r["document_id"]), None
+                ),
+            },
+            "source": {
+                "id": row["source_id"],
+                "title": row["source_title"] or "",
+                "url": row["source_url"],
+                "settings": settings_value if isinstance(settings_value, dict) else {},
+            },
+            "content": (
+                {"kind": content["kind"], "html": content["html"]} if content else None
+            ),
+        }
+
+
+def mark(settings, params):
+    """Read or unread, and inbox, later or archive, for the items at some addresses (every
+    feed's entry there). A saved item's state is its document's, so state skips them.
+    allRead marks every unread item of the inbox, or of one subscription, as read, with
+    the other feeds' entries at the same addresses."""
+    read = params.get("read")
+    state = params.get("state")
+    if read is not None and not isinstance(read, bool):
+        raise VaultError("invalid_params", "read must be true or false")
+    if state is not None and state not in STATES:
+        raise VaultError("invalid_params", "state must be inbox, later or archive")
+    every = params.get("allRead") is True
+    source = (
+        _source_id(params["sourceId"]) if params.get("sourceId") is not None else None
+    )
+    urls = None if every else _item_urls(params)
+    root = vault._root(settings)
+    if not _index(root).is_file():
+        return {"changed": 0}
+    now = _iso(time.time())
+    with _writing(root) as db:
+        if every:
+            # By address, as the inbox lists them: an entry also in another feed is read too.
+            clause = "state = 'inbox' AND read_at IS NULL AND document_id IS NULL"
+            args = [now]
+            if source:
+                clause += " AND source_id = ?"
+                args.append(source)
+            changed = db.execute(
+                "UPDATE items SET read_at = ? WHERE read_at IS NULL AND url IN "
+                f"(SELECT url FROM items WHERE {clause})",
+                args,
+            ).rowcount
+            return {"changed": changed}
+        marks = ",".join("?" * len(urls))
+        changed = 0
+        if read is not None:
+            changed = db.execute(
+                f"UPDATE items SET read_at = ? WHERE url IN ({marks})",
+                (now if read else None, *urls),
+            ).rowcount
+        if state is not None:
+            changed = db.execute(
+                f"UPDATE items SET state = ? WHERE url IN ({marks}) AND document_id IS NULL",
+                (state, *urls),
+            ).rowcount
+        return {"changed": changed}
+
+
+def save_content(settings, params):
+    """Keeps the cleaned full text the reader extracted from an item's page."""
+    url = _item_url(params)
+    html = params.get("html")
+    if not isinstance(html, str) or not html.strip():
+        raise VaultError("invalid_params", "html must be the item's cleaned text")
+    size = len(html.encode("utf-8"))
+    if size > FULLTEXT_LIMIT:
+        raise VaultError("invalid_params", "html is too long")
+    root = vault._root(settings)
+    if not _index(root).is_file():
+        raise VaultError("not_found", "This item is not in your subscriptions")
+    now = _iso(time.time())
+    with _writing(root) as db:
+        ids = [
+            row[0] for row in db.execute("SELECT id FROM items WHERE url = ?", (url,))
+        ]
+        if not ids:
+            raise VaultError("not_found", "This item is not in your subscriptions")
+        for ident in ids:
+            db.execute(
+                "INSERT OR REPLACE INTO item_content (item_id, kind, html, bytes, fetched_at) "
+                "VALUES (?, 'fulltext', ?, ?, ?)",
+                (ident, html, size, now),
+            )
+    return {"saved": len(ids)}
+
+
+def saved(settings, params):
+    """Links the items at an address to the vault document saved from them. Their later or
+    archive state moves to the document (document.library), which keeps it from then on.
+    """
+    url = _item_url(params)
+    root = vault._root(settings)
+    if not _index(root).is_file():
+        return {"linked": 0}
+    with _writing(root) as db:
+        rows = db.execute(
+            "SELECT id, state FROM items WHERE url = ? ORDER BY sort_at DESC", (url,)
+        ).fetchall()
+        if not rows:
+            return {"linked": 0}
+        data = vault._find(root, None, (url, "", "web", {}))
+        if data is None:
+            raise VaultError("not_found", "The document is not saved")
+        state = next(
+            (r["state"] for r in rows if r["state"] in ("later", "archive")), None
+        )
+        if state and not data["document"].get("library"):
+            vault._set_library(data, state)
+            vault._save(root, data)
+        db.execute(
+            "UPDATE items SET document_id = ?, state = NULL, read_at = COALESCE(read_at, ?) "
+            "WHERE url = ?",
+            (data["document"]["id"], _iso(time.time()), url),
+        )
+        return {"linked": len(rows), "documentId": data["document"]["id"]}
+
+
+def library(settings, params):
+    """The inbox list: items not saved yet in a view (unread, later, archive or all), and,
+    for later and archive, saved documents marked so, newest first. One entry per address;
+    a saved document wins over the items at its address."""
+    view = params.get("view", "unread")
+    if view not in VIEWS:
+        raise VaultError("invalid_params", "view must be unread, later, archive or all")
+    limit = vault._integer(params, "limit", 1, 200, 50)
+    offset = vault._integer(params, "offset", 0, 100_000, 0)
+    source = (
+        _source_id(params["sourceId"]) if params.get("sourceId") is not None else None
+    )
+    root = vault._root(settings)
+    entries, total = [], 0
+    with _reading(root) as db:
+        if db is not None:
+            clause = {
+                "unread": "items.state = 'inbox' AND items.read_at IS NULL "
+                "AND items.document_id IS NULL",
+                "later": "items.state = 'later' AND items.document_id IS NULL",
+                "archive": "items.state = 'archive' AND items.document_id IS NULL",
+                "all": "1",
+            }[view]
+            args = []
+            if source:
+                clause += " AND items.source_id = ?"
+                args.append(source)
+            total = db.execute(
+                f"SELECT COUNT(DISTINCT items.url) FROM items WHERE {clause}", args
+            ).fetchone()[0]
+            rows = db.execute(
+                "SELECT items.*, sources.title AS source_title FROM items JOIN sources "
+                f"ON sources.id = items.source_id WHERE {clause} "
+                "ORDER BY items.sort_at DESC LIMIT ?",
+                (*args, (offset + limit) * 2 + 20),
+            ).fetchall()
+            by_url = {}
+            for row in rows:
+                entry = by_url.get(row["url"])
+                if entry is not None:
+                    if row["source_title"] not in entry["sources"]:
+                        entry["sources"].append(row["source_title"] or "")
+                    continue
+                by_url[row["url"]] = entry = {
+                    "kind": "item",
+                    **_public_item(row),
+                    "sources": [row["source_title"] or ""],
+                    "read": row["read_at"] is not None,
+                    "saved": row["document_id"] is not None,
+                    "sortAt": row["sort_at"],
+                }
+                entries.append(entry)
+    if view in ("later", "archive") and not source:
+        documents = vault.library_documents(root, (view,))
+        addresses = {entry["document"]["url"] for entry in documents}
+        entries = [entry for entry in entries if entry["url"] not in addresses]
+        total += len(documents)
+        for found in documents:
+            document = found["document"]
+            entries.append(
+                {
+                    "kind": "document",
+                    "id": document["id"],
+                    "documentId": document["id"],
+                    "url": document["url"],
+                    "link": (
+                        document["url"]
+                        if re.match(r"https?://", document["url"])
+                        else ""
+                    ),
+                    "title": document["title"],
+                    "author": document.get("author", ""),
+                    "documentKind": document["kind"],
+                    "publishedAt": None,
+                    "summary": "",
+                    "sources": [],
+                    "state": document["library"]["state"],
+                    "read": True,
+                    "saved": True,
+                    "clip": bool(found["clip"] and found["clip"].get("complete")),
+                    "sortAt": vault._instant(document["library"]["updatedAt"]),
+                }
+            )
+    entries.sort(key=lambda entry: entry["sortAt"], reverse=True)
+    page = entries[offset : offset + limit]
+    for entry in page:
+        entry.pop("sortAt", None)
+    return {"items": page, "total": total}
+
+
 def opml_parse(settings, params, prepared=None):
     try:
         return {"outlines": parse_opml(params.get("text"))}
@@ -1379,6 +1660,11 @@ METHODS = {
     "vault/feeds/refresh": refresh,
     "vault/feeds/ingest": ingest,
     "vault/feeds/items": items,
+    "vault/feeds/open": open_item,
+    "vault/feeds/mark": mark,
+    "vault/feeds/content": save_content,
+    "vault/feeds/saved": saved,
+    "vault/feeds/library": library,
     "vault/feeds/opml/parse": opml_parse,
     "vault/feeds/opml/export": opml_export,
 }

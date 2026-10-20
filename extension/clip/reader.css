@@ -162,3 +162,33 @@ main {
   color: var(--muted);
   font-size: 0.8em;
 }
+/* A feed item: back to the subscriptions, full text, save, later and archive. */
+#feedTools {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+#feedTools .spacer {
+  flex: 1;
+}
+#feedTools button[aria-pressed='true'],
+#feedTools button:disabled {
+  background: var(--hover);
+  font-weight: 600;
+}
+#feedTools button:disabled {
+  cursor: default;
+}
+#notice {
+  margin: 0 0 24px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--hover);
+  color: var(--muted);
+}
+#cleaner {
+  display: none;
+}

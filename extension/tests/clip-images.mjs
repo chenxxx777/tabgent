@@ -106,17 +106,18 @@ const result = await fetchImages(images, page, {
   limit: { ...IMAGE_LIMIT, size: 5000, timeout: 100 },
   onProgress: (done, total) => progress.push([done, total]),
 });
-// One file per distinct image: the same bytes at two addresses are one asset.
+// One file per distinct image: the same bytes at two addresses are one asset. Downloads
+// finish in any order, so the lists are compared sorted.
 assert.deepEqual(
-  result.assets.map(({ ext, size, sha256 }) => [ext, size, sha256]),
+  result.assets.map(({ ext, size, sha256 }) => [ext, size, sha256]).sort(),
   [
-    ['png', PNG.length, sha(PNG)],
     ['jpg', JPEG.length, sha(JPEG)],
+    ['png', PNG.length, sha(PNG)],
   ],
 );
 const pngFile = `${sha(PNG).slice(0, 16)}.png`;
 assert.deepEqual(
-  [...result.files],
+  [...result.files].sort(([a], [b]) => a - b),
   [
     [0, pngFile],
     [1, `${sha(JPEG).slice(0, 16)}.jpg`],

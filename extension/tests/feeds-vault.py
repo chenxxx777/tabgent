@@ -4,7 +4,9 @@ and host routing that parses feeds before the vault queue. Generated fixtures on
 """
 
 import base64
+import json
 from pathlib import Path
+import re
 import sqlite3
 import sys
 import tempfile
@@ -349,6 +351,212 @@ with tempfile.TemporaryDirectory(prefix="tabgent-feeds-vault-") as directory:
         assert (
             code(settings, "vault/feeds/subscribe", {"url": "https://a.example/"})
             == "io_error"
+        )
+
+
+# The inbox and saved items: reading marks an item read, states move with it, the full text
+# is cached, and saving it as a document (a feed-origin clip) links every feed's entry.
+def vault_call(settings, method, params):
+    reply = vault.handle(settings, method, params)
+    assert set(reply) == {"result"}, (method, reply)
+    return reply["result"]
+
+
+with tempfile.TemporaryDirectory(prefix="tabgent-feeds-inbox-") as directory:
+    base = Path(directory)
+    settings = base / "codex/projects/tabgent/vault.json"
+    root = base / "ReadingVault"
+    with patch.object(vault, "default_path", lambda: root):
+        first = call(
+            settings,
+            "vault/feeds/subscribe",
+            {"url": "https://one.example/rss", "data": rss(entries(range(3)), "One")},
+        )["source"]["id"]
+        second = call(
+            settings,
+            "vault/feeds/subscribe",
+            {"url": "https://two.example/rss", "data": rss(entries([2, 9]), "Two")},
+        )["source"]["id"]
+        # An entry without a link is named by its subscription and key.
+        bare = base64.b64encode(
+            b'<rss><channel><title>Bare</title><item><guid isPermaLink="false">k1</guid>'
+            b"<title>No link</title>"
+            b"<description>Only text</description></item></channel></rss>"
+        ).decode()
+        call(
+            settings,
+            "vault/feeds/subscribe",
+            {"url": "https://bare.example/rss", "data": bare},
+        )
+        urn = feeds.item_urn("https://bare.example/rss", "k1")
+        assert re.fullmatch(r"urn:tabgent:feed:[0-9a-f]{64}", urn)
+
+        def listed(view, **extra):
+            return call(settings, "vault/feeds/library", {"view": view, **extra})
+
+        unread = listed("unread")
+        # post-2 is in both feeds: one entry, from both.
+        assert unread["total"] == 5, unread
+        two = next(item for item in unread["items"] if item["title"] == "Post 2")
+        assert sorted(two["sources"]) == ["One", "Two"] and two["kind"] == "item"
+        assert any(item["url"] == urn for item in unread["items"])
+        assert listed("unread", sourceId=second)["total"] == 2
+
+        # Opening an item marks every feed's entry read and returns its content.
+        opened = call(settings, "vault/feeds/open", {"url": two["url"]})
+        assert opened["item"]["title"] == "Post 2" and opened["item"]["key"]
+        assert sorted(opened["item"]["sources"]) == ["One", "Two"]
+        assert opened["content"] is None or opened["content"]["kind"] == "feed"
+        assert opened["source"]["settings"] == {}
+        assert listed("unread")["total"] == 4
+        assert code(
+            settings, "vault/feeds/open", {"url": "https://nowhere.example/"}
+        ) == ("not_found")
+        assert (
+            code(settings, "vault/feeds/open", {"url": "javascript:x"})
+            == "invalid_params"
+        )
+
+        # Read, unread, later and archive by address; mark all read per subscription.
+        post0 = "https://site.example/post-0"
+        call(settings, "vault/feeds/mark", {"urls": [two["url"]], "read": False})
+        assert listed("unread")["total"] == 5
+        call(settings, "vault/feeds/mark", {"urls": [post0], "state": "later"})
+        assert [item["url"] for item in listed("later")["items"]] == [post0]
+        assert listed("unread")["total"] == 4
+        call(settings, "vault/feeds/mark", {"urls": [post0], "state": "archive"})
+        assert listed("later")["total"] == 0 and listed("archive")["total"] == 1
+        assert call(
+            settings, "vault/feeds/mark", {"allRead": True, "sourceId": second}
+        ) == {
+            "changed": 3
+        }  # post-2 is also One's entry: it is read too.
+        assert listed("unread")["total"] == 2
+        assert code(settings, "vault/feeds/mark", {"urls": [post0], "state": "x"}) == (
+            "invalid_params"
+        )
+        assert code(settings, "vault/feeds/library", {"view": "x"}) == "invalid_params"
+
+        # The full text extracted from the page is cached for the item and kept on refresh.
+        call(
+            settings,
+            "vault/feeds/content",
+            {"url": post0, "html": "<p>Whole text.</p>"},
+        )
+        assert call(settings, "vault/feeds/open", {"url": post0})["content"] == {
+            "kind": "fulltext",
+            "html": "<p>Whole text.</p>",
+        }
+        fetch(settings, first, range(3))
+        assert (
+            call(settings, "vault/feeds/open", {"url": post0})["content"]["kind"]
+            == "fulltext"
+        )
+        assert code(
+            settings,
+            "vault/feeds/content",
+            {"url": post0, "html": "x" * (5 * 1024 * 1024)},
+        ) == ("invalid_params")
+
+        # Saving: a clip with a feed origin, then the items link to the document, and the
+        # archive state moves to the document.
+        clip = {
+            "url": post0,
+            "title": "Post 0",
+            "kind": "web",
+            "markdown": "Whole text.",
+            "html": "<p>Whole text.</p>",
+            "origin": {
+                "type": "feed",
+                "method": "fulltext",
+                "pageUrl": post0,
+                "sourceId": first,
+                "sourceUrl": "https://one.example/rss",
+                "sourceTitle": "One",
+                "guid": "post-0",
+                "publishedAt": "2023-11-14T22:13:20+00:00",
+            },
+        }
+        saved_clip = vault_call(settings, "vault/clip/save", clip)
+        assert saved_clip["saved"] and saved_clip["clip"]["complete"]
+        record = json.loads(
+            (Path(saved_clip["document"]["folder"]) / "article.json").read_text()
+        )
+        assert (
+            record["origin"]["type"] == "feed"
+            and record["origin"]["sourceTitle"] == "One"
+        )
+        assert record["origin"]["method"] == "fulltext"
+        linked = call(settings, "vault/feeds/saved", {"url": post0})
+        assert (
+            linked["linked"] == 1
+            and linked["documentId"] == saved_clip["document"]["id"]
+        )
+        anchors = json.loads(
+            (Path(saved_clip["document"]["folder"]) / "anchors.json").read_text()
+        )
+        assert anchors["document"]["library"]["state"] == "archive"
+        archived = listed("archive")
+        assert archived["total"] == 1 and archived["items"][0]["kind"] == "document"
+        assert archived["items"][0]["clip"] is True and archived["items"][0]["saved"]
+        everything = listed("all")
+        assert any(
+            item["url"] == post0 and item["saved"] for item in everything["items"]
+        )
+
+        # The document's own state: later, then none.
+        state = vault_call(
+            settings,
+            "vault/document/state",
+            {"url": post0, "title": "", "kind": "web", "state": "later"},
+        )
+        assert state["document"]["library"]["state"] == "later"
+        assert [item["kind"] for item in listed("later")["items"]] == ["document"]
+        vault_call(
+            settings,
+            "vault/document/state",
+            {"url": post0, "title": "", "kind": "web", "state": None},
+        )
+        assert listed("later")["total"] == 0 and listed("archive")["total"] == 0
+        assert (
+            vault.handle(
+                settings,
+                "vault/document/state",
+                {
+                    "url": "https://x.example/",
+                    "title": "",
+                    "kind": "web",
+                    "state": "later",
+                },
+            )["error"]["code"]
+            == "not_found"
+        )
+
+        # An item without a link is saved under its urn; a clip may not use other urns.
+        urn_clip = {
+            **clip,
+            "url": urn,
+            "origin": {**clip["origin"], "method": "feed", "pageUrl": ""},
+        }
+        assert vault_call(settings, "vault/clip/save", urn_clip)["saved"]
+        assert call(settings, "vault/feeds/saved", {"url": urn})["linked"] == 1
+        bad = {**urn_clip, "url": "urn:tabgent:feed:xyz"}
+        assert (
+            vault.handle(settings, "vault/clip/save", bad)["error"]["code"]
+            == "invalid_params"
+        )
+        plain = {**clip, "url": urn, "origin": {"method": "article"}}
+        assert (
+            vault.handle(settings, "vault/clip/save", plain)["error"]["code"]
+            == "invalid_params"
+        )
+        assert (
+            vault.handle(
+                settings,
+                "vault/clip/save",
+                {**clip, "origin": {**clip["origin"], "method": "page"}},
+            )["error"]["code"]
+            == "invalid_params"
         )
 
 # The host parses feeds on its feed thread, then writes on the vault queue in order.

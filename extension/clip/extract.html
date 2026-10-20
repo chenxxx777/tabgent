@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!-- The reader's cleaning frame: it cleans untrusted HTML (a feed item, or a page fetched
+         for its full text) in inert documents. It loads nothing and runs only Tabgent's
+         scripts, which the reader calls directly (same origin). -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; base-uri 'none'; form-action 'none'"
+    />
+    <title>Tabgent</title>
+    <script src="../vendor/defuddle/defuddle.js"></script>
+    <script src="../vendor/turndown/turndown.js"></script>
+    <script src="../vendor/dompurify/purify.umd.js"></script>
+    <script src="sanitize-config.js"></script>
+    <script src="clip-content.js"></script>
+  </head>
+</html>

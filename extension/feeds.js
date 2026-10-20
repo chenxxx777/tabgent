@@ -1,3 +1,7 @@
+import { cleanClip, storeClip } from './clipper.js';
+import { clipCommand, clipSource } from './clip-routing.js';
+import { sniff } from './clip-images.js';
+
 // Subscriptions: the service worker fetches feeds on a schedule (chrome.alarms) and hands
 // the raw bytes to the connector, which parses them outside the vault queue and keeps
 // subscriptions and items in the vault's .tabgent/feeds.db. Feed requests never carry
@@ -34,7 +38,35 @@ export const feedMessages = new Set([
   'feedsPause',
   'feedsOpmlParse',
   'feedsOpmlExport',
+  'feedsList',
+  'feedsMark',
+  'feedsMarkAll',
+  'feedsDocumentState',
 ]);
+// Messages from Tabgent's reader showing a feed item (the clip reader at the item's address).
+export const feedReaderMessages = new Set([
+  'feedOpen',
+  'feedFullText',
+  'feedContent',
+  'feedImage',
+  'feedSave',
+  'feedState',
+]);
+// Images known to count readers rather than illustrate the item.
+const TRACKERS =
+  /(?:^|\.)(?:doubleclick\.net|google-analytics\.com|googletagmanager\.com|scorecardresearch\.com|quantserve\.com|pixel\.wp\.com|stats\.wordpress\.com|feeds\.feedburner\.com|feedproxy\.google\.com|feedsportal\.com)$/i;
+export function trackingImage(url) {
+  try {
+    const { hostname, pathname } = new URL(url);
+    return (
+      TRACKERS.test(hostname) ||
+      /\/(?:pixel|beacon|track(?:ing)?|open)\.(?:gif|png)$/i.test(pathname)
+    );
+  } catch {
+    return true;
+  }
+}
+const IMAGE_SIZE = 5 * 1024 * 1024;
 
 const text = (value, limit) => (typeof value === 'string' ? value.slice(0, limit) : '');
 export function feedAddress(value) {
@@ -404,9 +436,199 @@ export function createFeeds({
         );
       case 'feedsOpmlExport':
         return request('vault/feeds/opml/export', {});
+      case 'feedsList':
+        return request('vault/feeds/library', {
+          view: ['unread', 'later', 'archive', 'all'].includes(msg.view) ? msg.view : 'unread',
+          ...(sourceId ? { sourceId } : {}),
+          limit: Number.isInteger(msg.limit) ? msg.limit : 50,
+          offset: Number.isInteger(msg.offset) ? msg.offset : 0,
+        });
+      case 'feedsMark': {
+        const params = { urls: Array.isArray(msg.urls) ? msg.urls.slice(0, 500) : [] };
+        if (typeof msg.read === 'boolean') params.read = msg.read;
+        if (['inbox', 'later', 'archive'].includes(msg.state)) params.state = msg.state;
+        const result = await request('vault/feeds/mark', params);
+        await storage.set({ [CHANGED]: now() });
+        return result;
+      }
+      case 'feedsMarkAll': {
+        const result = await request('vault/feeds/mark', {
+          allRead: true,
+          ...(sourceId ? { sourceId } : {}),
+        });
+        await storage.set({ [CHANGED]: now() });
+        return result;
+      }
+      case 'feedsDocumentState': {
+        const state = ['later', 'archive'].includes(msg.state) ? msg.state : null;
+        const result = await request('vault/document/state', {
+          url: text(msg.url, 16384),
+          title: '',
+          kind: 'web',
+          state,
+        });
+        await storage.set({ [CHANGED]: now() });
+        return result;
+      }
     }
     throw Error('Unknown subscription message');
   }
 
-  return { onAlarm, start, refresh, message };
+  // A reader tab's item: the subscription settings and link, kept while the worker runs.
+  const opened = new Map();
+  async function item(url) {
+    if (!opened.has(url)) opened.set(url, await request('vault/feeds/open', { url }));
+    return opened.get(url);
+  }
+  async function changedNow() {
+    await storage.set({ [CHANGED]: now() });
+  }
+
+  // Saves what the reader shows of an item as a vault document (article.md, article.html
+  // and images, fetched without cookies), and links the item to it. result is the reader's
+  // cleaned text, as the clipping script returns it for a page.
+  async function saveItem(url, { result, method }) {
+    const clip = cleanClip(result);
+    if (!clip) throw Error('The item has no text to save');
+    const { item: entry, source } = await item(url);
+    const link = /^https?:/i.test(entry.link || '') ? entry.link : '';
+    const stored = await storeClip(
+      { request },
+      {
+        url,
+        title: clip.title || entry.title,
+        clip,
+        imagesFrom: '',
+        origin: {
+          type: 'feed',
+          method: method === 'fulltext' ? 'fulltext' : 'feed',
+          extractor: clip.extractor,
+          pageUrl: link,
+          sourceId: source.id,
+          sourceUrl: source.url,
+          sourceTitle: source.title,
+          guid: text(entry.key, 1024),
+          publishedAt: entry.publishedAt || '',
+        },
+        fetch: fetchImpl,
+      },
+    );
+    if (!stored.ok) throw Error('The item is too long to save');
+    // The page was clipped already: the item joins that document.
+    await request('vault/feeds/saved', { url });
+    opened.delete(url);
+    await changedNow();
+    return {
+      saved: true,
+      document: stored.saved.document || null,
+      clip: stored.saved.clip || null,
+      already: !stored.saved.saved,
+    };
+  }
+
+  // Before the first highlight on an item that is not saved yet, the reader hands over its
+  // text and the item becomes a vault document, so the highlight has its article.
+  async function commit(tabId, url) {
+    const value = await clipCommand(tabId, { type: 'feedCommit' }).catch(() => null);
+    if (!value?.result) return null;
+    return saveItem(url, value);
+  }
+
+  // Messages from the reader at an item's address (the sender is checked by the caller).
+  async function reader(msg, sender) {
+    const url = clipSource(sender.url);
+    if (!url) throw Error('Invalid clipped page reader');
+    if (msg.type === 'feedOpen') {
+      opened.delete(url);
+      const value = await item(url);
+      const resolved = await request('vault/document/resolve', {
+        url,
+        title: value.item.title,
+        kind: 'web',
+      });
+      await changedNow();
+      return {
+        ...value,
+        document: resolved.document?.createdAt ? resolved.document : null,
+        saved: !!resolved.clip?.complete,
+      };
+    }
+    const { item: entry, source } = await item(url);
+    if (msg.type === 'feedFullText') {
+      // As if the user opened the page: with the site's cookies (paywalled text the user can
+      // read), without a referrer. Only the item's own link is fetched.
+      if (!/^https?:/i.test(entry.link || '')) throw Error('The item has no page');
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), FEED_LIMIT.timeout);
+      try {
+        const response = await fetchImpl(entry.link, {
+          credentials: 'include',
+          referrerPolicy: 'no-referrer',
+          redirect: 'follow',
+          signal: controller.signal,
+        });
+        if (!response.ok) throw Error(`HTTP ${response.status}`);
+        const type = response.headers.get('content-type') || '';
+        if (type && !/html|xml/i.test(type)) throw Error('The page is not HTML');
+        const { bytes } = await readBody(response, FEED_LIMIT.size, false);
+        return { html: decodePage(bytes, type), url: response.url || entry.link };
+      } catch (error) {
+        throw Error(
+          controller.signal.aborted ? 'The page did not answer within 20 seconds' : error.message,
+        );
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+    if (msg.type === 'feedContent')
+      return request('vault/feeds/content', { url, html: text(msg.html, 4 * 1024 * 1024) });
+    if (msg.type === 'feedImage') {
+      // Item images: without cookies or a referrer, never trackers, off when the user
+      // turned images off for this subscription.
+      const address = text(msg.url, 4096);
+      if (source.settings.images === false) throw Error('Images are off for this subscription');
+      if (!/^https?:/i.test(address) || trackingImage(address)) throw Error('Not loaded');
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), FEED_LIMIT.timeout);
+      try {
+        const response = await fetchImpl(address, {
+          credentials: 'omit',
+          referrerPolicy: 'no-referrer',
+          signal: controller.signal,
+        });
+        if (!response.ok) throw Error(`HTTP ${response.status}`);
+        const { bytes } = await readBody(response, IMAGE_SIZE, false);
+        const kind = sniff(bytes);
+        if (!kind) throw Error('Not an image');
+        const mime = {
+          jpg: 'image/jpeg',
+          png: 'image/png',
+          gif: 'image/gif',
+          webp: 'image/webp',
+          avif: 'image/avif',
+        }[kind];
+        return { mime, data: toBase64(bytes) };
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+    if (msg.type === 'feedSave') return saveItem(url, { result: msg.result, method: msg.method });
+    if (msg.type === 'feedState') {
+      const state = ['inbox', 'later', 'archive'].includes(msg.state) ? msg.state : 'inbox';
+      const resolved = await request('vault/document/resolve', { url, title: '', kind: 'web' });
+      if (resolved.document?.createdAt && resolved.clip?.complete)
+        await request('vault/document/state', {
+          url,
+          title: '',
+          kind: 'web',
+          state: state === 'inbox' ? null : state,
+        });
+      else await request('vault/feeds/mark', { urls: [url], state });
+      await changedNow();
+      return { state };
+    }
+    throw Error('Unknown subscription message');
+  }
+
+  return { onAlarm, start, refresh, message, reader, commit };
 }

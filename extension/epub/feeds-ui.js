@@ -2,6 +2,7 @@
 // manage them, and list their items. The service worker fetches every address; this page
 // only reads fetched pages with DOMParser (an inert document) to find their feeds.
 import { t, loadTimeData } from '../i18n.js';
+import { clipViewerUrl } from '../clip-routing.js';
 
 const $ = (selector) => document.querySelector(selector);
 const FEED_TYPES =
@@ -40,7 +41,7 @@ export function discoverFeeds(html, pageUrl) {
   return found.slice(0, 20);
 }
 
-export function initFeeds({ send, toast }) {
+export function initFeeds({ send, toast, destination }) {
   const state = {
     sources: [],
     sourceId: null,
@@ -299,14 +300,24 @@ export function initFeeds({ send, toast }) {
     await send({ type: 'feedsPause', paused });
     state.paused = paused;
   };
-  $('#feedViewUnread').onclick = () => setView('unread');
-  $('#feedViewAll').onclick = () => setView('all');
+  for (const button of document.querySelectorAll('#feedViews [data-view]'))
+    button.onclick = () => setView(button.dataset.view);
   function setView(view) {
     state.view = view;
-    $('#feedViewUnread').setAttribute('aria-pressed', String(view === 'unread'));
-    $('#feedViewAll').setAttribute('aria-pressed', String(view === 'all'));
+    for (const button of document.querySelectorAll('#feedViews [data-view]'))
+      button.setAttribute('aria-pressed', String(button.dataset.view === view));
+    $('#feedMarkAll').hidden = view !== 'unread';
     void loadItems();
   }
+  $('#feedMarkAll').onclick = async () => {
+    const count = state.sourceId
+      ? state.sources.find((source) => source.id === state.sourceId)?.unread || 0
+      : state.sources.reduce((sum, source) => sum + source.unread, 0);
+    if (!count) return;
+    if (count > 20 && !confirm(loadTimeData.getStringF('feedsMarkAllConfirm', count))) return;
+    await send({ type: 'feedsMarkAll', ...(state.sourceId ? { sourceId: state.sourceId } : {}) });
+    await load();
+  };
   $('#feedMore').onclick = () => void loadItems(true);
 
   // Subscriptions, with their state and settings.
@@ -367,6 +378,21 @@ export function initFeeds({ send, toast }) {
       ),
     );
     interval.value = source.settings.interval ? String(source.settings.interval) : '';
+    const fullText = element(
+      'select',
+      {},
+      ...['auto', 'always', 'never'].map((mode) =>
+        element('option', {
+          value: mode,
+          textContent: t('feedsFullText' + mode[0].toUpperCase() + mode.slice(1)),
+        }),
+      ),
+    );
+    fullText.value = source.settings.fullText || 'auto';
+    const images = element('input', {
+      type: 'checkbox',
+      checked: source.settings.images !== false,
+    });
     const paused = element('input', { type: 'checkbox', checked: !!source.settings.paused });
     const save = element('button', {
       className: 'primary',
@@ -381,6 +407,8 @@ export function initFeeds({ send, toast }) {
             settings: {
               interval: interval.value ? Number(interval.value) : null,
               paused: paused.checked,
+              fullText: fullText.value,
+              images: images.checked,
             },
           });
           await load();
@@ -417,6 +445,8 @@ export function initFeeds({ send, toast }) {
         field('feedsName', title),
         field('feedsCategory', category),
         field('feedsInterval', interval),
+        field('feedsFullTextMode', fullText),
+        element('label', { className: 'check' }, images, ' ', t('feedsImages')),
         element('label', { className: 'check' }, paused, ' ', t('feedsPause')),
         element('p', { className: 'meta', textContent: source.url }),
         element('div', { className: 'row' }, remove, save),
@@ -448,14 +478,15 @@ export function initFeeds({ send, toast }) {
     $('#feedSources').replaceChildren(...list);
   }
 
-  // Items, newest first. Opening one opens its page (without tracking parameters).
+  // The inbox: items newest first, one per address. An item opens in Tabgent's reader in this
+  // tab; its page opens by its address without tracking parameters.
   async function loadItems(more = false) {
     state.offset = more ? state.offset + PAGE : 0;
     const list = $('#feedItems');
     if (!more) list.replaceChildren();
     try {
       const { items, total } = await send({
-        type: 'feedsItems',
+        type: 'feedsList',
         view: state.view,
         limit: PAGE,
         offset: state.offset,
@@ -463,29 +494,82 @@ export function initFeeds({ send, toast }) {
       });
       for (const item of items) list.append(feedItem(item));
       $('#feedMore').hidden = state.offset + items.length >= total;
-      $('#feedItemsStatus').textContent = total
+      $('#feedItemsStatus').textContent = list.children.length
         ? ''
         : t(state.sources.length ? 'feedsEmpty' : 'feedsNone');
     } catch (error) {
       $('#feedItemsStatus').textContent = loadTimeData.getStringF('feedsAddFailed', message(error));
     }
   }
+  const web = (value) => /^https?:\/\//i.test(value || '');
+  // Where an entry opens: a feed item, or a saved webpage with its clip, in the reader; other
+  // documents where the library opens them.
+  function opens(item) {
+    if (item.kind === 'item' || (item.documentKind === 'web' && item.clip))
+      return clipViewerUrl(item.url);
+    return (
+      destination?.({
+        kind: item.documentKind,
+        url: item.url,
+        id: item.documentId,
+        clip: null,
+        source: true,
+      })?.href || ''
+    );
+  }
+  async function mark(item, change) {
+    try {
+      // A saved item's later or archive state is its document's.
+      if (item.saved && change.state)
+        await send({
+          type: 'feedsDocumentState',
+          url: item.url,
+          state: change.state === 'inbox' ? null : change.state,
+        });
+      else if (!item.saved) await send({ type: 'feedsMark', urls: [item.url], ...change });
+      await load();
+    } catch (error) {
+      toast(loadTimeData.getStringF('feedsAddFailed', message(error)));
+    }
+  }
+  const actions = {
+    read: (item) => !item.saved && mark(item, { read: !item.read }),
+    later: (item) => mark(item, { state: item.state === 'later' ? 'inbox' : 'later' }),
+    archive: (item) => mark(item, { state: item.state === 'archive' ? 'inbox' : 'archive' }),
+    original: (item) =>
+      web(item.link) &&
+      window.open(item.url && web(item.url) ? item.url : item.link, '_blank', 'noopener'),
+    open: (item) => {
+      const href = opens(item);
+      if (href) location.href = href;
+    },
+  };
+  const rows = new WeakMap();
   function feedItem(item) {
-    const link = item.url || item.link;
-    const title = element(link ? 'a' : 'span', {
+    const href = opens(item);
+    const title = element(href ? 'a' : 'span', {
       className: 'title',
       textContent: item.title || t('epubUntitled'),
     });
-    if (link) Object.assign(title, { href: link, target: '_blank', rel: 'noopener noreferrer' });
+    if (href) title.href = href;
     const published = Date.parse(item.publishedAt || item.firstSeenAt);
-    return element(
+    const button = (key, label, pressed) => {
+      const node = element('button', {
+        textContent: t(label),
+        onclick: () => void actions[key](item),
+      });
+      if (pressed !== undefined) node.setAttribute('aria-pressed', String(pressed));
+      return node;
+    };
+    const row = element(
       'li',
-      { className: item.readAt ? 'feed-item' : 'feed-item unread' },
+      { className: `feed-item${item.read ? '' : ' unread'}`, tabIndex: -1 },
       title,
       element('span', {
         className: 'meta',
         textContent: [
-          item.sourceTitle,
+          item.saved ? t('feedsSaved') : '',
+          item.sources.length ? loadTimeData.getStringF('feedsFrom', item.sources.join(', ')) : '',
           item.author,
           Number.isNaN(published) ? '' : dates.format(published),
         ]
@@ -493,8 +577,38 @@ export function initFeeds({ send, toast }) {
           .join(' · '),
       }),
       item.summary ? element('p', { className: 'summary', textContent: item.summary }) : null,
+      element(
+        'div',
+        { className: 'actions' },
+        item.saved ? null : button('read', item.read ? 'feedsMarkUnread' : 'feedsMarkRead'),
+        button('later', 'feedsLater', item.state === 'later'),
+        button('archive', 'feedsArchive', item.state === 'archive'),
+        web(item.link) ? button('original', 'clipOriginal') : null,
+      ),
     );
+    rows.set(row, item);
+    return row;
   }
+  // Keys in the list: j/k move, Enter or o opens, m read, l later, e archive, v original page.
+  const KEYS = { m: 'read', l: 'later', e: 'archive', v: 'original', o: 'open', Enter: 'open' };
+  addEventListener('keydown', (event) => {
+    if (!state.shown || $('#feedsPanel').hidden || event.defaultPrevented) return;
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
+    if (event.target?.closest?.('input, textarea, select, [contenteditable], details, dialog'))
+      return;
+    const list = [...$('#feedItems').children];
+    if (!list.length) return;
+    const at = list.indexOf(document.activeElement);
+    if (event.key === 'j' || event.key === 'k') {
+      const next = list[Math.max(0, Math.min(list.length - 1, at + (event.key === 'j' ? 1 : -1)))];
+      next.focus();
+      next.scrollIntoView({ block: 'nearest' });
+    } else if (KEYS[event.key] && at >= 0) {
+      if (event.key === 'Enter' && event.target !== list[at]) return;
+      void actions[KEYS[event.key]](rows.get(list[at]));
+    } else return;
+    event.preventDefault();
+  });
 
   async function load() {
     try {
