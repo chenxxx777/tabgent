@@ -14,6 +14,12 @@ const native = {
   },
 };
 globalThis.chrome = {
+  alarms: {
+    onAlarm: event(),
+    get: async () => null,
+    create: async () => {},
+    clear: async () => true,
+  },
   scripting: { executeScript: async () => [] },
   runtime: {
     id: 'test',
@@ -51,6 +57,7 @@ globalThis.chrome = {
   webNavigation: { onCommitted: event() },
 };
 chrome.runtime.onInstalled = event();
+chrome.runtime.onStartup = event();
 chrome.contextMenus = { onClicked: event() };
 await import('../background.js');
 await new Promise((resolve) => setTimeout(resolve, 0));

@@ -12,6 +12,7 @@ import threading
 import time
 import uuid
 import attachments
+import feeds
 import lineage
 import local_files
 import message_fork
@@ -24,6 +25,8 @@ SESSIONS = {}
 POOL = concurrent.futures.ThreadPoolExecutor(max_workers=8)
 # Vault I/O never queues behind Codex startup; one worker keeps arrival order.
 VAULT_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+# Fetched feeds are parsed here first, so a large feed never holds the vault queue.
+FEED_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 CONFIG = None
 
 
@@ -710,10 +713,26 @@ def warm():
         POOL.submit(session.start)
 
 
-def vault_request(message):
+def vault_request(message, prepared=None):
     settings = HOME / "projects/tabgent/vault.json"
-    reply = vault.handle(settings, message.get("method"), message.get("params"))
+    method = message.get("method")
+    if isinstance(method, str) and method.startswith("vault/feeds/"):
+        reply = feeds.handle(settings, method, message.get("params"), prepared)
+    else:
+        reply = vault.handle(settings, method, message.get("params"))
     send({"op": "vault", "id": message.get("id"), **reply})
+
+
+def feed_request(message):
+    method = message.get("method")
+    if method in feeds.PARSE_ONLY:
+        vault_request(message)
+        return
+    try:
+        prepared = feeds.prepare(method, message.get("params"))
+    except Exception as error:
+        prepared = {"error": f"The feed could not be read: {error}"[:300]}
+    VAULT_POOL.submit(vault_request, message, prepared)
 
 
 def handle(message):
@@ -721,7 +740,13 @@ def handle(message):
     op = message.get("op")
     if op == "vault":
         # Local files only: independent of warm config, sessions and the app-server.
-        VAULT_POOL.submit(vault_request, message)
+        method = message.get("method")
+        # Only a string can name a feed method; anything else goes to vault.handle,
+        # which refuses it.
+        if isinstance(method, str) and method in feeds.PARSE_ONLY | feeds.PARSING:
+            FEED_POOL.submit(feed_request, message)
+        else:
+            VAULT_POOL.submit(vault_request, message)
         return
     ident = message.get("session")
     if op == "warm":
@@ -812,6 +837,7 @@ def main():
         pass
     finally:
         # Finish saves already received before Chrome stops the connector.
+        FEED_POOL.shutdown(wait=True)
         VAULT_POOL.shutdown(wait=True)
         for session in list(SESSIONS.values()):
             session.close()

@@ -69,20 +69,68 @@
         <button id="next" class="turn" aria-label="$i18n{epubNext}">›</button>
       </section>
       <section id="start">
-        <div id="drop">
-          <h1>$i18n{libraryTitle}</h1>
-          <p>$i18n{libraryDropHint}</p>
-          <button id="choose" class="primary">$i18n{libraryChoose}</button>
-          <input
-            id="file"
-            type="file"
-            accept=".epub,application/epub+zip,.pdf,application/pdf"
-            hidden
-          />
+        <div id="libraryTabs" role="tablist" aria-label="$i18n{libraryTitle}">
+          <button id="documentsTab" role="tab" aria-selected="true" aria-controls="documentsPanel">
+            $i18n{libraryTabDocuments}</button
+          ><button id="feedsTab" role="tab" aria-selected="false" aria-controls="feedsPanel">
+            $i18n{libraryTabFeeds}
+          </button>
         </div>
-        <h2>$i18n{libraryDocuments}</h2>
-        <p id="booksStatus" class="muted"></p>
-        <ul id="books"></ul>
+        <div id="documentsPanel" role="tabpanel" aria-labelledby="documentsTab">
+          <div id="drop">
+            <h1>$i18n{libraryTitle}</h1>
+            <p>$i18n{libraryDropHint}</p>
+            <button id="choose" class="primary">$i18n{libraryChoose}</button>
+            <input
+              id="file"
+              type="file"
+              accept=".epub,application/epub+zip,.pdf,application/pdf"
+              hidden
+            />
+          </div>
+          <h2>$i18n{libraryDocuments}</h2>
+          <p id="booksStatus" class="muted"></p>
+          <ul id="books"></ul>
+        </div>
+        <div id="feedsPanel" role="tabpanel" aria-labelledby="feedsTab" hidden>
+          <form id="feedAddForm">
+            <input
+              id="feedUrl"
+              type="text"
+              inputmode="url"
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="$i18n{feedsAddHint}"
+              aria-label="$i18n{feedsAddHint}"
+            />
+            <button id="feedAdd" class="primary" type="submit">$i18n{feedsAdd}</button>
+          </form>
+          <div id="feedFound" hidden></div>
+          <div id="feedActions">
+            <button id="feedImport">$i18n{feedsImportOpml}</button
+            ><input
+              id="feedOpml"
+              type="file"
+              accept=".opml,.xml,text/x-opml,text/xml,application/xml"
+              hidden
+            /><button id="feedExport">$i18n{feedsExportOpml}</button
+            ><button id="feedRefreshAll">$i18n{feedsRefreshAll}</button>
+            <label><input id="feedPauseAll" type="checkbox" /> $i18n{feedsPauseAll}</label>
+          </div>
+          <p id="feedStatus" class="muted" role="status"></p>
+          <div id="feeds">
+            <ul id="feedSources" aria-label="$i18n{libraryTabFeeds}"></ul>
+            <div>
+              <div id="feedViews" role="group" aria-label="$i18n{feedsShow}">
+                <button id="feedViewUnread" aria-pressed="true">$i18n{feedsUnread}</button
+                ><button id="feedViewAll" aria-pressed="false">$i18n{feedsEverything}</button>
+              </div>
+              <ul id="feedItems"></ul>
+              <p id="feedItemsStatus" class="muted"></p>
+              <button id="feedMore" hidden>$i18n{feedsMore}</button>
+            </div>
+          </div>
+        </div>
       </section>
     </main>
     <footer id="footer" hidden>

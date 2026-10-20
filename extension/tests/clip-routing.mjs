@@ -88,12 +88,19 @@ const injected = [],
   menus = [];
 const documentId = (tabId) => `document-${tabId}`;
 globalThis.chrome = {
+  alarms: {
+    onAlarm: event(),
+    get: async () => null,
+    create: async () => {},
+    clear: async () => true,
+  },
   runtime: {
     id: 'test',
     getURL: (p) => base + p,
     onConnect: event(),
     onMessage: event(),
     onInstalled: event(),
+    onStartup: event(),
     connectNative: () => native,
   },
   i18n: {
