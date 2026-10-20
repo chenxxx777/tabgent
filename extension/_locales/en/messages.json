@@ -1114,6 +1114,15 @@
   "pdfLocalFailed": {
     "message": "This PDF could not be opened from your reading vault: $1"
   },
+  "setupPageTitle": {
+    "message": "Set up Tabgent"
+  },
+  "pdfFrameTitle": {
+    "message": "PDF document"
+  },
+  "epubPageTitle": {
+    "message": "EPUB"
+  },
   "clipPage": {
     "message": "Clip this page"
   },
