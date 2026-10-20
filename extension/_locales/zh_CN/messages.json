@@ -1161,5 +1161,146 @@
   },
   "libraryKindFile": {
     "message": "这台电脑上的文件"
+  },
+  "libraryTabDocuments": {
+    "message": "文档"
+  },
+  "libraryTabFeeds": {
+    "message": "订阅"
+  },
+  "feedsAll": {
+    "message": "全部订阅"
+  },
+  "feedsShow": {
+    "message": "显示"
+  },
+  "feedsUnread": {
+    "message": "未读"
+  },
+  "feedsEverything": {
+    "message": "全部"
+  },
+  "feedsAdd": {
+    "message": "添加订阅"
+  },
+  "feedsAddHint": {
+    "message": "订阅源或网站地址"
+  },
+  "feedsChecking": {
+    "message": "正在检查…"
+  },
+  "feedsFound": {
+    "message": "在这个网站上找到 $1 个订阅源，请选择："
+  },
+  "feedsNotFound": {
+    "message": "这个地址上没有找到订阅源。"
+  },
+  "feedsAddFailed": {
+    "message": "无法读取这个地址：$1"
+  },
+  "feedsItemCount": {
+    "message": "$1 条"
+  },
+  "feedsSubscribe": {
+    "message": "订阅"
+  },
+  "feedsSubscribed": {
+    "message": "已订阅"
+  },
+  "feedsSubscribedNew": {
+    "message": "已订阅 $1，新增 $2 条。"
+  },
+  "feedsImportOpml": {
+    "message": "导入 OPML"
+  },
+  "feedsExportOpml": {
+    "message": "导出 OPML"
+  },
+  "feedsImportPreview": {
+    "message": "导入 $1 个订阅（另有 $2 个已订阅）"
+  },
+  "feedsImported": {
+    "message": "已添加 $1 个订阅，接下来几分钟内会陆续更新。"
+  },
+  "feedsOpmlEmpty": {
+    "message": "这个 OPML 文件里没有订阅。"
+  },
+  "feedsOpmlTooLarge": {
+    "message": "OPML 文件超过 2 MB。"
+  },
+  "feedsRefresh": {
+    "message": "刷新"
+  },
+  "feedsRefreshAll": {
+    "message": "全部刷新"
+  },
+  "feedsRefreshing": {
+    "message": "正在刷新…"
+  },
+  "feedsRefreshed": {
+    "message": "检查了 $1 个订阅，新增 $2 条。"
+  },
+  "feedsPauseAll": {
+    "message": "暂停所有订阅"
+  },
+  "feedsPaused": {
+    "message": "已暂停"
+  },
+  "feedsUpdated": {
+    "message": "上次更新：$1"
+  },
+  "feedsNotChecked": {
+    "message": "还没有更新过"
+  },
+  "feedsFailed": {
+    "message": "上次更新失败：$1，$2重试。"
+  },
+  "feedsRetry": {
+    "message": "重试"
+  },
+  "feedsGone": {
+    "message": "这个订阅源已失效。"
+  },
+  "feedsRefused": {
+    "message": "这个订阅源拒绝访问或需要登录。"
+  },
+  "feedsSettings": {
+    "message": "设置"
+  },
+  "feedsName": {
+    "message": "名称"
+  },
+  "feedsCategory": {
+    "message": "分类"
+  },
+  "feedsInterval": {
+    "message": "更新间隔"
+  },
+  "feedsIntervalAuto": {
+    "message": "自动"
+  },
+  "feedsPause": {
+    "message": "暂停更新"
+  },
+  "feedsSave": {
+    "message": "保存"
+  },
+  "feedsUnsubscribe": {
+    "message": "退订"
+  },
+  "feedsUnsubscribeConfirm": {
+    "message": "退订 $1？"
+  },
+  "feedsUnsubscribeKeeps": {
+    "message": "它的条目会从「订阅」里删除，已保存的文档会留在资料库里。"
+  },
+  "feedsEmpty": {
+    "message": "没有新内容。"
+  },
+  "feedsNone": {
+    "message": "填入订阅源或网站地址来添加订阅。"
+  },
+  "feedsMore": {
+    "message": "加载更多"
   }
 }

@@ -42,6 +42,7 @@ shutil.copy2(root / "native/lineage.py", home / "lineage.py")
 shutil.copy2(root / "native/message_fork.py", home / "message_fork.py")
 shutil.copy2(root / "native/local_files.py", home / "local_files.py")
 shutil.copy2(root / "native/vault.py", home / "vault.py")
+shutil.copy2(root / "native/feeds.py", home / "feeds.py")
 shutil.copy2(root / "native/epub_text.py", home / "epub_text.py")
 shutil.copy2(root / "native/pdf_text.py", home / "pdf_text.py")
 launcher = home / "connector"

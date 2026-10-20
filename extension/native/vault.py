@@ -99,7 +99,7 @@ the user read, highlighted or discussed before. Vault path: {vault}
   page that has text, generated with the copy; read the pages you need. PDFs opened from the web keep
   their URL and have no copy or page files, and an imported copy of the same file is
   a separate document. PDF highlights name their page.
-- `.tabgent/`: Tabgent's index and lock file. Ignore it.
+- `.tabgent/`: Tabgent's indexes (also of subscriptions) and lock file. Ignore it.
 
 HTML comments such as `<!-- tabgent:highlight h001 start -->` mark the blocks that
 Tabgent maintains. Keep them in place if you are asked to edit a file.
@@ -142,11 +142,16 @@ class VaultError(Exception):
 
 def handle(settings, method, params):
     """Run one vault request: returns {"result": ...} or {"error": {code, message}}."""
+    return handle_with(METHODS, settings, method, params)
+
+
+def handle_with(methods, settings, method, params):
+    """handle for another module's methods (feeds.py), with the same errors."""
     try:
         params = {} if params is None else params
         if not isinstance(params, dict):
             raise VaultError("invalid_params", "params must be an object")
-        action = METHODS.get(method) if isinstance(method, str) else None
+        action = methods.get(method) if isinstance(method, str) else None
         if action is None:
             raise VaultError("unknown_method", f"Unknown vault method: {method}")
         return {"result": action(Path(settings), params)}

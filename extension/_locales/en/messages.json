@@ -1161,5 +1161,146 @@
   },
   "libraryKindFile": {
     "message": "File on this computer"
+  },
+  "libraryTabDocuments": {
+    "message": "Documents"
+  },
+  "libraryTabFeeds": {
+    "message": "Subscriptions"
+  },
+  "feedsAll": {
+    "message": "All subscriptions"
+  },
+  "feedsShow": {
+    "message": "Show"
+  },
+  "feedsUnread": {
+    "message": "Unread"
+  },
+  "feedsEverything": {
+    "message": "All"
+  },
+  "feedsAdd": {
+    "message": "Add subscription"
+  },
+  "feedsAddHint": {
+    "message": "Feed or website address"
+  },
+  "feedsChecking": {
+    "message": "Checking…"
+  },
+  "feedsFound": {
+    "message": "Found $1 feeds on this site. Choose one:"
+  },
+  "feedsNotFound": {
+    "message": "No feed was found at this address."
+  },
+  "feedsAddFailed": {
+    "message": "Could not read this address: $1"
+  },
+  "feedsItemCount": {
+    "message": "$1 items"
+  },
+  "feedsSubscribe": {
+    "message": "Subscribe"
+  },
+  "feedsSubscribed": {
+    "message": "Subscribed"
+  },
+  "feedsSubscribedNew": {
+    "message": "Subscribed to $1: $2 new items."
+  },
+  "feedsImportOpml": {
+    "message": "Import OPML"
+  },
+  "feedsExportOpml": {
+    "message": "Export OPML"
+  },
+  "feedsImportPreview": {
+    "message": "Import $1 subscriptions ($2 already subscribed)"
+  },
+  "feedsImported": {
+    "message": "Added $1 subscriptions. They are checked over the next few minutes."
+  },
+  "feedsOpmlEmpty": {
+    "message": "This OPML file has no subscriptions."
+  },
+  "feedsOpmlTooLarge": {
+    "message": "The OPML file is larger than 2 MB."
+  },
+  "feedsRefresh": {
+    "message": "Refresh"
+  },
+  "feedsRefreshAll": {
+    "message": "Refresh all"
+  },
+  "feedsRefreshing": {
+    "message": "Refreshing…"
+  },
+  "feedsRefreshed": {
+    "message": "Checked $1 subscriptions: $2 new items."
+  },
+  "feedsPauseAll": {
+    "message": "Pause all subscriptions"
+  },
+  "feedsPaused": {
+    "message": "Paused"
+  },
+  "feedsUpdated": {
+    "message": "Updated $1"
+  },
+  "feedsNotChecked": {
+    "message": "Not checked yet"
+  },
+  "feedsFailed": {
+    "message": "Last update failed: $1. Next try $2."
+  },
+  "feedsRetry": {
+    "message": "Retry"
+  },
+  "feedsGone": {
+    "message": "This feed no longer exists."
+  },
+  "feedsRefused": {
+    "message": "This feed refuses access or needs a login."
+  },
+  "feedsSettings": {
+    "message": "Settings"
+  },
+  "feedsName": {
+    "message": "Name"
+  },
+  "feedsCategory": {
+    "message": "Category"
+  },
+  "feedsInterval": {
+    "message": "Check every"
+  },
+  "feedsIntervalAuto": {
+    "message": "Automatic"
+  },
+  "feedsPause": {
+    "message": "Pause updates"
+  },
+  "feedsSave": {
+    "message": "Save"
+  },
+  "feedsUnsubscribe": {
+    "message": "Unsubscribe"
+  },
+  "feedsUnsubscribeConfirm": {
+    "message": "Unsubscribe from $1?"
+  },
+  "feedsUnsubscribeKeeps": {
+    "message": "Its items are removed from Subscriptions. Saved documents stay in your library."
+  },
+  "feedsEmpty": {
+    "message": "Nothing new."
+  },
+  "feedsNone": {
+    "message": "Add a feed or website address to subscribe."
+  },
+  "feedsMore": {
+    "message": "Load more"
   }
 }

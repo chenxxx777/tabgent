@@ -4,6 +4,7 @@ import { localize, t, loadTimeData } from '../i18n.js';
 import { openBook, label } from './book.js';
 import * as epubAnchor from './anchor.js';
 import * as library from './library.js';
+import { initFeeds } from './feeds-ui.js';
 import { pdfViewerUrl } from '../pdf-routing.js';
 import { isLocalFileUrl } from '../local-files.js';
 
@@ -61,7 +62,11 @@ addEventListener('dragleave', (event) => {
 addEventListener('drop', (event) => {
   event.preventDefault();
   document.body.classList.remove('dragging');
-  void openFile(event.dataTransfer?.files?.[0]);
+  const file = event.dataTransfer?.files?.[0];
+  // An OPML file dropped on the Subscriptions tab is imported.
+  if (file && !$('#feedsPanel').hidden && /\.(opml|xml)$/i.test(file.name))
+    return void feeds.importFile(file);
+  void openFile(file);
 });
 $('#library').onclick = () => {
   acceptedFile = ++fileChoice;
@@ -72,10 +77,41 @@ $('#library').onclick = () => {
   void showLibrary();
 };
 
+// The library's two tabs: vault documents, and subscriptions (?view=feeds).
+const feeds = initFeeds({ send: (message) => library.send(message), toast });
+$('#documentsTab').onclick = () => showTab('documents');
+$('#feedsTab').onclick = () => showTab('feeds');
+$('#libraryTabs').addEventListener('keydown', (event) => {
+  if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+  const next = $('#feedsPanel').hidden ? 'feeds' : 'documents';
+  showTab(next);
+  $(next === 'feeds' ? '#feedsTab' : '#documentsTab').focus();
+});
+function showTab(name) {
+  const isFeeds = name === 'feeds';
+  $('#documentsTab').setAttribute('aria-selected', String(!isFeeds));
+  $('#feedsTab').setAttribute('aria-selected', String(isFeeds));
+  $('#documentsTab').tabIndex = isFeeds ? -1 : 0;
+  $('#feedsTab').tabIndex = isFeeds ? 0 : -1;
+  $('#documentsPanel').hidden = isFeeds;
+  $('#feedsPanel').hidden = !isFeeds;
+  $('#start').classList.toggle('feeds', isFeeds);
+  history.replaceState(null, '', isFeeds ? '?view=feeds' : location.pathname);
+  if (isFeeds) void feeds.show();
+  else {
+    feeds.hide();
+    void showDocuments();
+  }
+}
+
 async function showLibrary() {
   document.title = t('libraryTitle');
   $('#bookTitle').textContent = t('libraryTitle');
   $('#start').hidden = false;
+  showTab(new URLSearchParams(location.search).get('view') === 'feeds' ? 'feeds' : 'documents');
+}
+
+async function showDocuments() {
   const list = $('#books');
   list.replaceChildren();
   $('#booksStatus').textContent = t('epubLoading');

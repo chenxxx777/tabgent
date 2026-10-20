@@ -30,6 +30,7 @@ flowchart LR
 | `extension/file-access.html`      | Explains Chrome's "Allow access to file URLs" setting, opened once.         |
 | `extension/epub/`                 | Library and EPUB reader page: vault documents, imports, books, highlights.  |
 | `extension/epub-routing.js`       | EPUB reader port registry and sender checks.                                |
+| `extension/feeds.js`              | Subscriptions: scheduled feed fetches and the library's feed messages.      |
 | `extension/reading-companion.js`  | Highlight and page conversations: reading context and saved turns.          |
 | `extension/reading.js`            | Reading context parts, turn records, and vault append parameters.           |
 | `extension/session-config.js`     | Browser tool schema and agent instructions.                                 |
@@ -39,6 +40,7 @@ flowchart LR
 | `extension/native/attachments.py` | Bounded uploads and text/PDF/DOCX reading.                                  |
 | `extension/native/vault.py`       | ReadingVault highlights, discussions, and Markdown files.                   |
 | `extension/native/epub_text.py`   | EPUB chapter text for the vault, using the standard library only.           |
+| `extension/native/feeds.py`       | Feed and OPML parsing, and the subscription index `.tabgent/feeds.db`.      |
 | `extension/native/pdf_text.py`    | Imported PDF page text for the vault, read with macOS PDFKit.               |
 
 Each webpage tab owns a session. Agent tabs share that session through runtime
@@ -399,6 +401,82 @@ in its address and opens them with `PDFViewerApplication.open({ data })`. There 
 web address, so **Open in Chrome viewer** is hidden and `pdfFallback` is refused. An
 imported PDF is not in the vault any more when the vault folder is changed; the viewer
 then reports that it cannot be opened.
+
+## Subscriptions
+
+The library's **Subscriptions** tab (`epub/feeds-ui.js`, `reader.html?view=feeds`)
+subscribes to RSS 2.0/0.9x, RSS 1.0 (RDF), Atom and JSON Feed. Network work stays in
+Chrome and parsing in the connector:
+
+```mermaid
+flowchart LR
+  A["chrome.alarms: feeds (15 min), feeds-next"] --> W[Service worker feeds.js]
+  W -->|"fetch: no cookies, no referrer, validators"| S[Feed server]
+  W -->|"vault/feeds/due, vault/feeds/ingest (raw bytes)"| H[host.py]
+  H -->|"FEED_POOL: parse"| H
+  H -->|"VAULT_POOL: one transaction"| D[(".tabgent/feeds.db")]
+  L[Library page] -->|feeds* messages| W
+```
+
+- **Adding.** The page sends `feedsProbe`; the worker fetches the address without cookies
+  (a feed up to 5 MiB, a page read up to 2 MiB, 20 s). A feed, by its first bytes or its
+  type, is previewed by `vault/feeds/preview`; a page comes back to the library, which
+  reads it with `DOMParser` (an inert document) for `<link rel="alternate">` feeds and
+  otherwise tries `/feed`, `/rss`, `/rss.xml`, `/atom.xml`, `/feed.xml` and `/index.xml`
+  on the same origin. `feedsSubscribe` fetches the feed again and passes its raw bytes to
+  `vault/feeds/subscribe`, so the first items arrive at once. OPML files go through
+  `vault/feeds/opml/parse` (the same parser) and `feedsImport` adds them without fetching;
+  they are first checked ten a minute. `vault/feeds/opml/export` writes OPML 2.0 with the
+  categories, saved by the page with a Blob link. An address is subscribed once; at most
+  500 subscriptions.
+- **Schedule.** A periodic `feeds` alarm (15 minutes) and a one-shot `feeds-next` alarm
+  for the next subscription due sooner run `vault/feeds/due` (at most 20), fetch three at
+  a time with `If-None-Match`/`If-Modified-Since`, `cache: 'no-store'`,
+  `credentials: 'omit'` and `referrerPolicy: 'no-referrer'`, and hand each response to
+  `vault/feeds/ingest` as base64 of the raw bytes: the connector picks the encoding (BOM,
+  HTTP charset, XML declaration; GBK and GB2312 through gb18030). A run starts no new
+  request after 60 s. The alarms exist only while there are subscriptions
+  (`feedsActive` in extension storage), so the connector is not woken otherwise; after a
+  browser start, an install or an update, `feeds-next` checks overdue subscriptions a
+  minute later. **Pause all subscriptions** (`feedsPaused`) skips scheduled runs.
+- **Intervals and failures.** The default is 60 minutes; the feed's `<ttl>` or
+  `sy:updatePeriod`, the response's `Cache-Control: max-age`, or the user's setting
+  change it within 30 minutes to 24 hours, doubled (up to 12 hours) after 14 days without
+  new items, with ±10% jitter. A failure (network, HTTP error, a feed that does not parse)
+  backs off from 30 minutes, doubling up to a day; `429`/`503` honour `Retry-After`; `410`,
+  and `404` for seven days, mark the subscription gone; `401`/`403` three times mark it
+  refused. Stopped subscriptions are not checked until the user retries or refreshes one.
+  A feed that answers from the same other address three fetches in a row has moved there.
+- **Parsing** (`feeds.py`, standard library). The system Python on macOS links expat
+  2.2.8, which predates expat's entity amplification limits, so the parser builds its own
+  tree with expat and refuses a DTD internal subset and every entity declaration; it sets
+  no external entity handler and never loads a DTD. RSS 0.91's external DOCTYPE is read
+  without loading it, its HTML entities through `SkippedEntityHandler`; a feed that uses
+  `&nbsp;` without any DTD is read again with numeric references. Input is at most 5 MiB,
+  100,000 elements and depth 100; at most the newest 200 entries are read, item HTML is
+  bounded to 512 Ki characters and summaries to 1,000. Item HTML is stored as the feed
+  sent it and is untrusted; this change does not render it.
+- **Threads.** `host.py` parses `preview`, `subscribe` and `ingest` on a single
+  `FEED_POOL` thread, outside the vault lock and queue, then writes on `VAULT_POOL` in one
+  `BEGIN IMMEDIATE` transaction under the vault lock. `preview` and `opml/parse` need no
+  vault.
+- **Index.** `.tabgent/feeds.db` (SQLite, `journal_mode=DELETE`, created by the first
+  subscription; reads never create it; a link at its place is refused) has `sources`
+  (address, title, category, settings, validators, schedule, failures, status), `items`
+  (identity, title, author, dates, summary, state), `item_content` (the feed's HTML) and
+  `seen`. Item keys are the guid, Atom `id` or JSON Feed `id`, else the link, else a hash
+  of the title, date and summary; an entry with a known key, or a new guid for a known
+  link, is the same item, and a changed entry is updated in place. The identity link drops
+  the fragment and `utm_*`, `fbclid`, `gclid`, `mc_cid` and `mc_eid`. A new subscription's
+  20 newest entries are unread; older ones are only recorded in `seen`, so they never come
+  back as new. Each subscription keeps at most 200 unread items (older ones are archived),
+  500 records and 2,000 seen keys. Unsubscribing deletes its items. Nothing in the index is
+  a vault document, and `reading_vault` does not read it.
+- **Senders.** Every `feeds*` message must come from the library page whose `epub` port is
+  registered (`isCurrentEpubSender`); content scripts and other pages are refused.
+
+Items open their page in a new tab, by the identity link. Reading items in Tabgent, their
+states and saving them as vault documents follow in a later change.
 
 ## Files from the computer
 
