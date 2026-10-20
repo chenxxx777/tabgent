@@ -38,6 +38,9 @@ They do not authenticate or call a real model. `CHROME_PATH` can override the
 headless binary too. Browser tests run headless by default, including the
 directly launched Chrome for Testing of `npm run test:epub`; set `EPUB_HEADED=1`
 to watch its window instead (the older `EPUB_HEADLESS=1` still forces headless).
+Tests that launch the browser directly (rather than through Playwright) pass
+`--use-mock-keychain`, avoiding the repeated macOS "no keychain to store Chromium"
+dialogs that a temporary `HOME` would otherwise trigger.
 
 JavaScript/HTML/CSS/JSON/Markdown use Prettier. Python uses Black and four-space indentation.
 To format Python, use a development virtual environment:
