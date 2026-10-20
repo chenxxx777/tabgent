@@ -1349,6 +1349,7 @@ export function saveScopePreference(){}
         // A web page can be clipped from the menu; once clipped, it offers to clip again.
         assert.equal(await page.locator('#readingClip').textContent(), 'Clip this page');
         assert.equal(await page.locator('#readingClipSelection').isVisible(), false);
+        assert.equal(await page.locator('#readingClipOpen').isVisible(), false);
         await page.locator('#readingClip').click();
         await page.waitForFunction(() =>
           setupTest.reading.some((r) => r.type === 'clipPage' && r.mode === 'article'),
@@ -1373,6 +1374,12 @@ export function saveScopePreference(){}
           setupTest.reading.some((r) => r.type === 'clipPage' && r.mode === 'selection'),
         );
         await page.locator('#selectionRemove').click();
+        // A clipped page's copy opens in Tabgent's reader.
+        await button.click();
+        assert(await page.locator('#readingClipOpen').isVisible());
+        assert.equal(await page.locator('#readingClipOpen').textContent(), 'Open clipped copy');
+        await page.locator('#readingClipOpen').click();
+        await page.waitForFunction(() => setupTest.reading.some((r) => r.type === 'clipOpenView'));
         await button.click();
         // The library opens in a tab beside the page; the menu closes.
         assert.equal(await page.locator('#readingLibrary').textContent(), 'Open library');

@@ -71,7 +71,9 @@ function point(value) {
 }
 
 // Page-supplied anchors are bounded and reshaped to the contract before reaching the host.
-export function cleanWebAnchor(anchor) {
+// An anchor made in the clipped-page reader is marked view 'clip' by the service worker,
+// never by the page: its offsets and DOM paths index the clipped copy, not the live page.
+export function cleanWebAnchor(anchor, { view } = {}) {
   const exact = text(anchor?.quote?.exact, 20000);
   const start = offset(anchor?.position?.start),
     end = offset(anchor?.position?.end);
@@ -85,6 +87,7 @@ export function cleanWebAnchor(anchor) {
       suffix: text(anchor.quote.suffix, 64),
     },
     position: { start, end },
+    ...(view === 'clip' ? { view: 'clip' } : {}),
   };
   const domStart = point(anchor.dom?.start),
     domEnd = point(anchor.dom?.end);

@@ -32,7 +32,8 @@ flowchart LR
 | `extension/epub-routing.js`       | EPUB reader port registry and sender checks.                                |
 | `extension/clipper.js`            | Clipping a page: injection, the replace prompt, bounds and the vault save.  |
 | `extension/clip-images.js`        | A clip's images: download, type and size checks, uploads, Markdown links.   |
-| `extension/clip/`                 | Clipping script injected on demand and the shared sanitizer settings.       |
+| `extension/clip/`                 | Clipping script, shared sanitizer settings, and the clipped-page reader.    |
+| `extension/clip-routing.js`       | Clipped-page reader address, port registry and sender checks.               |
 | `extension/reading-companion.js`  | Highlight and page conversations: reading context and saved turns.          |
 | `extension/reading.js`            | Reading context parts, turn records, and vault append parameters.           |
 | `extension/session-config.js`     | Browser tool schema and agent instructions.                                 |
@@ -358,6 +359,7 @@ PDF or EPUB), author or host, highlight count and the last update. Each entry is
 | Document     | Opens                                                        |
 | ------------ | ------------------------------------------------------------ |
 | Webpage      | Its HTTP(S) URL; the page restores its highlights.           |
+| Clipped page | `clip/reader.html?url=<page URL>`; a second link opens it.   |
 | Local file   | Its `file://` URL, opened with the tabs API.                 |
 | PDF (web)    | `pdf/viewer.html?url=<PDF URL>`, the bundled PDF.js viewer.  |
 | Imported PDF | `pdf/viewer.html?url=urn:sha256:<hex>`, from the vault copy. |
@@ -478,14 +480,56 @@ address for images that were not saved. `vault/clip/save` refuses (`missing_asse
 whose images are neither staged nor already in the folder before it writes anything, copies
 staged images into `assets/` (refusing a linked `assets` folder; the staged copy stays for
 other clips that share the image and is pruned after a day), records each image's file,
-hash, type and source in `article.json`, and removes images the previous clip recorded that
+hash, type and every address that returned it (`sources`) in `article.json`, and removes images the previous clip recorded that
 the new one does not use, unless a kept `article-edited-*.md` still links them;
 other files in `assets/` are kept. Images the size limits cut away are not downloaded, and if
 web addresses would make the Markdown too long, unsaved images keep only their description. Failed images are listed with
 the reason. `article.html` keeps every image's address in `data-remote-src`; the reader maps
-addresses to saved files through `article.json`.
+each of an image's addresses to its saved file through `article.json`.
 
 Clipping covers the top frame's light DOM, not frames or shadow DOM.
+
+### Clipped-page reader
+
+`clip/reader.html?url=<page URL>` shows a page's clipped copy from the vault, offline. It
+opens from the page's prompt after clipping (**Open clipped copy**), from the side panel's
+Reading notes menu, and from the library, where a clipped page opens its copy and a second
+link opens the live page. The page is not web-accessible, so websites cannot open or frame
+it. Like the PDF.js viewer, its address names the document: `clipSource()` gives the page
+URL, the reader registers a `clip` port, and `isCurrentClipSender` accepts only the tab's
+current top-frame reader document. `clipRead`, `clipAsset` and `clipDelete` resolve the
+document from that address, never from the request, and relay `vault/clip/read` (chunks of
+`article.html` with the record), `vault/clip/asset/read` (only images the record lists, at
+their exact path, no symlinks) and `vault/clip/delete` (which keeps an edited `article.md`
+as a copy, with the images it may link, and leaves highlights, notes and other files in
+`assets/`).
+
+The clipped HTML is untrusted, also from the vault: the reader checks it against the
+SHA-256 in `article.json` and refuses a changed copy, then cleans it again with the shared
+DOMPurify allowlist plus `SANITIZE_NAMED_PROPS` (ids get a `user-content-` prefix, so page
+markup cannot shadow Tabgent's globals; fragment links are rewritten to match). The page's
+policy is `default-src 'none'` with `script-src 'self'`, `style-src 'self'`,
+`img-src 'self' blob: data:`, `connect-src 'none'`, `frame-src 'none'`, `form-action 'none'`
+and `require-trusted-types-for 'script'` with only DOMPurify's policy, on top of the
+extension policy that forbids inline scripts. Nothing is loaded from the web: images
+recorded in `article.json` are read from the vault in chunks when they come into view and
+shown as `blob:` URLs; others show their description and a link to them online. Links open
+in a new tab with `noopener noreferrer`; other schemes lose their `href`.
+
+The reader loads the webpage reading layer (`selection-content.js`, `web-anchor.js`,
+`highlight-note.js` and `highlight-content.js`) after setting `globalThis.tabgentReadingView`
+to the page URL, the article element, its title and metadata, and the view name `clip`.
+`highlight-content.js` then indexes only the article, names the page in its messages, and
+resolves anchors for that view. The service worker accepts highlight and selection messages
+from the current reader as from the page, with `pageUrl` the page URL, and marks anchors made
+in the reader `view: 'clip'` (a page cannot set it). Offsets and DOM paths of an anchor are
+used only in the view it was made in; in the other view the quote and its context decide, so
+a passage repeated in identical context there is left unanchored rather than guessed. Ask
+AI binds the page's highlight, with `locator.view: 'clip'`. `pageDocument()`, page history,
+the per-message browser context (`viewer: 'clip'`) and `readingState` (`page.view`) map the
+reader tab to the page. The reader is not a browser tool target; the instructions tell Codex
+to read `article.md` instead. Reading positions and the text size stay in
+`chrome.storage.local`.
 
 ## Files from the computer
 

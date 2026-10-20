@@ -6,6 +6,7 @@ import * as epubAnchor from './anchor.js';
 import * as library from './library.js';
 import { pdfViewerUrl } from '../pdf-routing.js';
 import { isLocalFileUrl } from '../local-files.js';
+import { clipViewerUrl } from '../clip-routing.js';
 
 const $ = (selector) => document.querySelector(selector);
 const COLOR = 'rgb(255 200 60)';
@@ -100,12 +101,15 @@ const host = (url) => {
     return '';
   }
 };
-// Where a vault document opens: a webpage at its URL, a Markdown, text or HTML file from the
-// computer at its file:// URL, a PDF in the PDF.js viewer (from the web, or from the vault copy
-// of an imported or highlighted local file), and an EPUB in this reader.
+// Where a vault document opens: a webpage at its URL, or its clipped copy in Tabgent's
+// reader (with the live page as a second link), a Markdown, text or HTML file from the
+// computer at its file:// URL, a PDF in the PDF.js viewer (from the web, or from the vault
+// copy of an imported or highlighted local file), and an EPUB in this reader.
 function destination(item) {
   if (item.kind === 'web' && isLocalFileUrl(item.url))
     return { label: 'libraryKindFile', href: item.url };
+  if (item.kind === 'web' && web(item.url) && item.clip?.complete)
+    return { label: 'libraryKindClipped', href: clipViewerUrl(item.url), original: item.url };
   if (item.kind === 'web') return { label: 'libraryKindWeb', href: web(item.url) && item.url };
   if (item.kind === 'pdf' && LOCAL_PDF.test(item.url))
     return { label: 'libraryKindLocalPdf', href: item.source && pdfViewerUrl(item.url) };
@@ -119,7 +123,7 @@ function destination(item) {
 const dates = new Intl.DateTimeFormat(chrome.i18n.getUILanguage(), { dateStyle: 'medium' });
 
 function libraryItem(item, seen) {
-  const { label, href } = destination(item);
+  const { label, href, original } = destination(item);
   const li = document.createElement('li'),
     entry = document.createElement(href ? 'a' : 'div'),
     title = document.createElement('span'),
@@ -162,6 +166,13 @@ function libraryItem(item, seen) {
     .join(' · ');
   entry.append(title, meta);
   li.append(entry);
+  if (original) {
+    const link = document.createElement('a');
+    link.className = 'original';
+    link.href = original;
+    link.textContent = `${t('clipOriginal')} ↗`;
+    li.append(link);
+  }
   return li;
 }
 

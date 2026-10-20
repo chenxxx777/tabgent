@@ -195,6 +195,7 @@ with tempfile.TemporaryDirectory(prefix="tabgent-clip-assets-") as directory:
                 "size": len(PNG),
                 "mime": "image/png",
                 "source": "https://cdn.example.test/chart.png",
+                "sources": ["https://cdn.example.test/chart.png"],
             }
         ]
         summary = saved["clip"]
@@ -289,6 +290,12 @@ with tempfile.TemporaryDirectory(prefix="tabgent-clip-assets-") as directory:
         assert later["backup"] is None
         names = sorted(path.name for path in (folder / "assets").iterdir())
         assert names == sorted([name, photo, "my-sketch.png"]), names
+        # Back to the photo, which later checks read.
+        clip(
+            settings,
+            [asset(JPEG, "jpg", "https://cdn.example.test/photo.jpg")],
+            replace=True,
+        )
         print("PASS the images of an edited article.md are kept with it")
 
         # An assets/ that is a symbolic link is refused before anything is written.
@@ -323,6 +330,9 @@ with tempfile.TemporaryDirectory(prefix="tabgent-clip-assets-") as directory:
             [good, good],
             [{**good, "ext": "svg"}],
             [{**good, "source": "javascript:alert(1)"}],
+            [{**good, "sources": ["javascript:alert(1)"]}],
+            [{**good, "sources": "https://cdn.example.test/a.png"}],
+            [{**good, "sources": ["https://x.test/"] * (vault.CLIP_ASSET_COUNT + 1)}],
             [{**good, "size": 0}],
             [{**good, "size": vault.CLIP_ASSET_LIMIT + 1}],
             [
@@ -363,6 +373,115 @@ with tempfile.TemporaryDirectory(prefix="tabgent-clip-assets-") as directory:
             == "invalid_params"
         )
         print("PASS invalid image lists and a linked assets folder are refused")
+
+        # The reader reads article.html and the recorded images in chunks.
+        ident = again["document"]["id"]
+        html = (folder / "article.html").read_bytes()
+        parts, offset = [], 0
+        while True:
+            chunk = call(
+                settings,
+                "vault/clip/read",
+                {"documentId": ident, "offset": offset, "length": 100},
+            )
+            parts.append(base64.b64decode(chunk["data"]))
+            offset += 100
+            if chunk["eof"]:
+                break
+        assert b"".join(parts) == html and chunk["size"] == len(html)
+        assert chunk["clip"]["html"]["sha256"] == digest(html)
+        assert (
+            chunk["clip"]["assets"][0]["source"] == "https://cdn.example.test/photo.jpg"
+        )
+        assert chunk["clip"]["summary"]["complete"] is True
+        assert chunk["document"]["url"] == URL
+        jpg = f"assets/{digest(JPEG)[:16]}.jpg"
+        image = call(
+            settings,
+            "vault/clip/asset/read",
+            {"documentId": ident, "file": jpg, "length": vault.CHUNK_LIMIT},
+        )
+        assert base64.b64decode(image["data"]) == JPEG
+        assert image["mime"] == "image/jpeg" and image["eof"] is True
+        # Only images the clip recorded, at their exact place.
+        for file in ("assets/my-sketch.png", f"assets/{digest(PNG)[:16]}.png"):
+            assert code(
+                settings, "vault/clip/asset/read", {"documentId": ident, "file": file}
+            ) in ("invalid_params", "not_found"), file
+        for file in (
+            "article.md",
+            "../anchors.json",
+            f"assets/../{jpg}",
+            "assets/x.svg",
+        ):
+            assert (
+                code(
+                    settings,
+                    "vault/clip/asset/read",
+                    {"documentId": ident, "file": file},
+                )
+                == "invalid_params"
+            ), file
+        target = folder / jpg
+        os.rename(target, base / "outside.jpg")
+        os.symlink(base / "outside.jpg", target)
+        assert (
+            code(settings, "vault/clip/asset/read", {"documentId": ident, "file": jpg})
+            == "not_found"
+        )
+        os.unlink(target)
+        os.rename(base / "outside.jpg", target)
+        print("PASS the reader reads the clip and its recorded images in chunks")
+
+        # Deleting the clip keeps the page's notes, an edited article.md and the user's files.
+        call(
+            settings,
+            "vault/highlight/create",
+            {
+                "url": URL,
+                "title": "Images",
+                "kind": "web",
+                "text": "Text",
+                "anchor": {"kind": "web", "quote": {"exact": "Text"}},
+            },
+        )
+        (folder / "article.md").write_text("Edited by me.\n")
+        deleted = call(settings, "vault/clip/delete", {"documentId": ident})
+        assert deleted["ok"] is True and deleted["backup"].startswith("article-edited-")
+        remaining = sorted(
+            path.name
+            for path in folder.iterdir()
+            if not path.name.startswith("article-edited-")
+        )
+        assert remaining == ["anchors.json", "assets", "highlights.md"], remaining
+        assert (folder / deleted["backup"]).read_text() == "Edited by me.\n"
+        assert not (folder / "article.json").exists()
+        # The kept edited copy may link the clip's images, so they stay with it.
+        assert sorted(path.name for path in (folder / "assets").iterdir()) == sorted(
+            [f"{digest(JPEG)[:16]}.jpg", "my-sketch.png"]
+        )
+        assert (
+            call(
+                settings,
+                "vault/document/resolve",
+                {"url": URL, "title": "", "kind": "web"},
+            )["clip"]
+            is None
+        )
+        assert code(settings, "vault/clip/read", {"documentId": ident}) == "not_found"
+        assert call(settings, "vault/clip/delete", {"documentId": ident}) == {
+            "ok": True,
+            "backup": None,
+        }
+        assert (
+            code(
+                settings,
+                "vault/clip/delete",
+                {"documentId": "article-missing-00000000"},
+            )
+            == "not_found"
+        )
+        print("PASS deleting a clip keeps the page's notes and the user's files")
 
         # Staged images that were never saved are removed after a day.
         stale = uploads / f"asset-{'1' * 64}.ready"

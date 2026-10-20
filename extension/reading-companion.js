@@ -37,6 +37,7 @@ export function createReadingCompanion({
   event,
   vault,
   pdfSource,
+  clipSource = () => null,
   filePdfDocument = () => undefined,
   epubDocument = () => undefined,
   isEpubReaderUrl = () => false,
@@ -77,6 +78,15 @@ export function createReadingCompanion({
         }
       );
     const pdf = pdfSource(tab.url);
+    // The clipped-page reader shows a webpage's clipped copy: its document is the page.
+    const clipped = clipSource(tab.url);
+    if (clipped)
+      return {
+        url: clipped,
+        title: clip(page.title || tab.title || '', 500),
+        kind: 'web',
+        view: 'clip',
+      };
     const url = documentUrl(pdf || page.url || tab.url || '');
     // An imported PDF is named by its file hash, like a book. A Markdown, text or HTML file from
     // the computer is named by its file:// URL, as a webpage by its address.
@@ -486,17 +496,18 @@ export function createReadingCompanion({
           text: clip(highlight.text, 20000),
           truncated: false,
           // Books and PDFs named by their hash (imported, or opened from the computer), and
-          // a closed page's last known document.
+          // a closed page's last known document; a clipped page's reader names its page.
           url:
             document.kind === 'epub' || document.url.startsWith('urn:') || !tab
               ? document.url
-              : pdfSource(tab.url) || tab.url,
+              : pdfSource(tab.url) || clipSource(tab.url) || tab.url,
           title: document.title,
           frameId: 0,
           documentId: frame?.documentId,
           tabId,
           locator: {
             kind: document.kind,
+            ...(clipSource(tab?.url) ? { view: 'clip' } : {}),
             anchor: highlight.anchor || null,
             // The EPUB reader names the chapter file Codex reads instead of the reader tab.
             ...(/^chapters\/[^/\\]+\.md$/.test(context?.chapterFile || '')
