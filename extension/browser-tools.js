@@ -54,8 +54,14 @@ export async function browserTool(session, args, readPdf) {
 }
 async function operate(session, args, id, readPdf) {
   const tabs = await available(session);
-  if (!tabs.some((tab) => tab.id === id))
+  if (!tabs.some((tab) => tab.id === id)) {
+    // A conversation outlives its companion page, so a message may name a tab that is gone.
+    if (!(await chrome.tabs.get(id).catch(() => null)))
+      throw Error(
+        `Tab ${id} was closed and its page is no longer open. Ask the user to reopen it if the task needs that page.`,
+      );
     throw Error('Tab is outside the selected scope or is a protected page');
+  }
   if (args.action === 'context') return context({ ...session, tabId: id, noCompanion: false });
   if (args.action === 'tabs')
     return tabs.map(pdfTab).map(({ id, windowId, title, url, active }) => ({

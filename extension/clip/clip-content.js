@@ -61,6 +61,17 @@
     return copy;
   }
 
+  // The live selection, when it still holds the quote the user chose to clip (if any).
+  function selected(expected) {
+    const selection = getSelection();
+    const live = (selection?.toString() || '').replace(/\s+/g, ' ').trim();
+    const want = String(expected || '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!live || selection.isCollapsed) return false;
+    return !want || live.includes(want.slice(0, 200)) || want.includes(live.slice(0, 200));
+  }
+
   // { content (HTML), title, author, site, published, description, language, extractor }
   function extract(mode, url) {
     if (mode === 'selection') {
@@ -288,6 +299,36 @@
     return service;
   }
 
+  // The bytes the worker may add by putting web addresses in place of the placeholders,
+  // counted for every occurrence of each image.
+  function reserve(markdown, token, list) {
+    let total = 0;
+    for (const [, index] of markdown.matchAll(new RegExp(`tabgent-image-${token}-(\\d+)`, 'g')))
+      total += (list[Number(index)]?.url.length || 0) + 4;
+    return total;
+  }
+  // Cuts long Markdown at a paragraph break (else a line break) until it fits, never inside
+  // a surrogate pair, closes a code fence the cut left open, and ends with a note.
+  function cutMarkdown(markdown, cap) {
+    let truncated = false;
+    while (bytes(markdown) > cap) {
+      const size = Math.floor(
+        (markdown.length * (cap - Math.min(3072, cap / 4))) / bytes(markdown),
+      );
+      let at = markdown.lastIndexOf('\n\n', size);
+      if (at <= size / 2) at = markdown.lastIndexOf('\n', size);
+      if (at <= size / 2) at = size;
+      const code = markdown.charCodeAt(at - 1);
+      if (code >= 0xd800 && code <= 0xdbff) at--;
+      markdown = markdown.slice(0, at);
+      truncated = true;
+    }
+    if (!truncated) return { markdown, truncated };
+    const fences = markdown.match(/^ {0,3}(`{3,}|~{3,})/gm) || [];
+    if (fences.length % 2) markdown += `\n${/(`+|~+)/.exec(fences.at(-1))[1]}`;
+    return { markdown: `${markdown}\n\n*${t('clipTruncated')}*`, truncated };
+  }
+
   const CJK = /[぀-ヿ㐀-䶿一-鿿豈-﫿가-힯]/g;
   function count(text) {
     const cjk = (text.match(CJK) || []).length;
@@ -321,8 +362,13 @@
   }
 
   // Returns the clipped text, or { ok: false, reason } when there is nothing to clip.
-  function run({ mode = 'article', url = location.href } = {}) {
+  const address = (value) => String(value).split('#')[0];
+  function run({ mode = 'article', url = location.href, expected = '' } = {}) {
+    // A single-page app can change its address without a new document: the text would no
+    // longer be the page the clip is saved under.
+    if (address(url) !== address(location.href)) return { ok: false, reason: 'navigated' };
     if (mode !== 'selection' && xPage(url) === 'other') return { ok: false, reason: 'x-not-post' };
+    if (mode === 'selection' && !selected(expected)) return { ok: false, reason: 'no-selection' };
     let found;
     try {
       found = extract(mode, url);
@@ -346,17 +392,11 @@
       if (!remote(img.getAttribute('data-remote-src'))) img.remove();
     let truncated = fit(article);
     let markdown = converter(token, index).turndown(article).trim();
-    // Long text is cut at a paragraph break until it fits, leaving room for the image
-    // addresses the worker may put in place of the placeholders.
-    const cap = LIMIT.markdown - 1024 - list.reduce((sum, image) => sum + image.url.length + 4, 0);
-    while (bytes(markdown) > cap) {
-      const size = Math.floor((markdown.length * (cap - 3072)) / bytes(markdown));
-      const cut = markdown.lastIndexOf('\n\n', size);
-      markdown = markdown.slice(0, cut > size / 2 ? cut : size);
-      truncated = true;
-    }
-    if (truncated && !markdown.endsWith(`*${t('clipTruncated')}*`))
-      markdown += `\n\n*${t('clipTruncated')}*`;
+    // Long text is cut until it fits, leaving room for the image addresses the worker may put
+    // in place of the placeholders.
+    const cut = cutMarkdown(markdown, LIMIT.markdown - 1024 - reserve(markdown, token, list));
+    markdown = cut.markdown;
+    truncated ||= cut.truncated;
     const { words, chars, enough } = count(article.textContent);
     const selection = getSelection();
     return {
@@ -472,7 +512,18 @@
   function ask({ kind, clippedAt, hasSelection } = {}) {
     settle('cancel');
     return new Promise((resolve) => {
-      pending = resolve;
+      // A single-page app that moves to another address cancels the prompt.
+      const at = address(location.href);
+      const moved = () => {
+        if (address(location.href) !== at) settle('cancel');
+      };
+      const stop = new AbortController();
+      globalThis.navigation?.addEventListener('currententrychange', moved, { signal: stop.signal });
+      addEventListener('popstate', moved, { signal: stop.signal });
+      pending = (value) => {
+        stop.abort();
+        resolve(value);
+      };
       if (kind === 'replace') {
         const when = new Date(clippedAt);
         const date = Number.isNaN(when.getTime())
@@ -501,5 +552,6 @@
     show(String(text || '').slice(0, 1000), tone);
     if (!busy) timer = setTimeout(hide, tone === 'error' ? 10000 : 7000);
   }
-  globalThis.tabgentClip = { run, ask, notify };
+  // cutMarkdown is exposed for tests; the worker calls run, ask and notify.
+  globalThis.tabgentClip = { run, ask, notify, cutMarkdown };
 })();

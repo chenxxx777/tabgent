@@ -382,7 +382,42 @@ try {
   page.run.push(result({ html: 'x'.repeat(CLIP_LIMIT.html + 1) }));
   assert.deepEqual(await clip(1), { ok: false, reason: 'invalid' });
   assert.equal(vaultCalls('vault/clip/save').length, count);
+  // A single-page app that moves to another address while the prompt is open: the clip
+  // is not saved under the old address, and the page says why.
+  page.ask.push(() => {
+    tabs.set(1, { ...tabs.get(1), url: article + '/next-post' });
+    return 'replace';
+  });
+  assert.deepEqual(await clip(1), { ok: false, reason: 'navigated' });
+  assert.equal(vaultCalls('vault/clip/save').length, count);
+  assert.deepEqual(notes.at(-1), { text: 'clipNavigated', tone: 'error' });
+  tabs.set(1, { ...tabs.get(1), url: article + '#top' });
   console.log('PASS navigated, refused and oversized clips save nothing');
+
+  // A selection clip checks the page still selects the quote attached in the conversation.
+  const live = {
+    id: 'test',
+    tab: tabs.get(1),
+    frameId: 0,
+    documentId: documentId(1),
+    url: article,
+  };
+  await call(
+    { type: 'pageSelection', text: 'own actions', title: 'On Autonomy', selectionId: 's1' },
+    live,
+  );
+  page.ask.push('replace');
+  page.run.push((options) => {
+    assert.deepEqual(options, {
+      mode: 'selection',
+      url: article + '#top',
+      expected: 'own actions',
+    });
+    return result({ mode: 'selection' });
+  });
+  assert.equal((await clip(1, 'selection')).ok, true);
+  assert.equal(vaultCalls('vault/clip/save').at(-1).params.origin.method, 'selection');
+  console.log('PASS a selection clip is checked against the attached quote');
 
   // The worker reshapes what the page returns.
   assert.equal(cleanClip({ ...result(), ok: 'yes' }), null);

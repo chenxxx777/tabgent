@@ -25,6 +25,18 @@ await assert.rejects(
   browserTool({ tabId: 1, scope: 'window' }, { action: 'read', tabId: 2 }),
   /outside/,
 );
+// A message can name a companion page the user has closed: say so, not "out of scope".
+const getTab = chrome.tabs.get;
+chrome.tabs.get = async (id) => {
+  if (id === 7) throw Error('No tab with id: 7.');
+  return owner;
+};
+for (const action of ['read', 'context', 'click'])
+  await assert.rejects(
+    browserTool({ tabId: 1, scope: 'window' }, { action, tabId: 7 }),
+    /^Error: Tab 7 was closed and its page is no longer open\./,
+  );
+chrome.tabs.get = getTab;
 await assert.rejects(
   browserTool(
     { tabId: 1, scope: 'window' },

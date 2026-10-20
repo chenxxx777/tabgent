@@ -20,6 +20,9 @@
   "pageContext": {
     "message": "Page context"
   },
+  "pageClosedContext": {
+    "message": "$1 (closed)"
+  },
   "promptLabel": {
     "message": "Message Codex"
   },
@@ -988,6 +991,9 @@
   "highlightUnanchoredHint": {
     "message": "This highlight's text was not found on the current page. Its notes are kept."
   },
+  "highlightPageClosed": {
+    "message": "This page is closed. The highlight and its notes are kept."
+  },
   "highlightTurns": {
     "message": "$1 saved"
   },
@@ -1172,7 +1178,7 @@
     "message": "Open a single post to clip it, or select text to clip just that."
   },
   "clipNoSelection": {
-    "message": "Select some text on the page first."
+    "message": "Select the text on the page first, then clip it."
   },
   "clipFailed": {
     "message": "The page could not be clipped. $1"
@@ -1188,6 +1194,9 @@
   },
   "readingClipped": {
     "message": "Clipped $1"
+  },
+  "clipNavigated": {
+    "message": "The page changed while it was being clipped. Clip it again."
   },
   "clipSavingImages": {
     "message": "Clipping… images $1 of $2"

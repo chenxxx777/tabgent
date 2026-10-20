@@ -75,7 +75,7 @@ export function createClipper({ vault, changed = () => {}, fetch = globalThis.fe
   const say = (tabId, value) =>
     inject(tabId, (o) => globalThis.tabgentClip?.notify(o), [value]).catch(() => {});
 
-  async function clipTab(tabId, mode) {
+  async function clipTab(tabId, mode, expected) {
     const tab = await chrome.tabs.get(tabId).catch(() => null);
     // The frame record follows same-document navigation; sender-style checks use it too.
     const frame =
@@ -93,12 +93,25 @@ export function createClipper({ vault, changed = () => {}, fetch = globalThis.fe
         });
       return result?.result;
     };
-    const ask = async (options) =>
-      current(await inject(tabId, (o) => globalThis.tabgentClip.ask(o), [options])) || 'cancel';
+    // A prompt can stay open while a single-page app moves to another address (the same
+    // document): the clip would save that page under this one's URL.
+    const still = async () => {
+      const now = await chrome.webNavigation.getFrame({ tabId, frameId: 0 }).catch(() => null);
+      if (!now || now.documentId !== frame.documentId || documentUrl(now.url) !== url)
+        throw Object.assign(Error('The page changed while it was being clipped'), {
+          reason: 'navigated',
+        });
+    };
+    const ask = async (options) => {
+      const choice =
+        current(await inject(tabId, (o) => globalThis.tabgentClip.ask(o), [options])) || 'cancel';
+      await still();
+      return choice;
+    };
     const extract = async (method) =>
       current(
         await inject(tabId, (o) => globalThis.tabgentClip.run(o), [
-          { mode: method, url: frame.url },
+          { mode: method, url: frame.url, ...(method === 'selection' ? { expected } : {}) },
         ]),
       );
 
@@ -123,6 +136,7 @@ export function createClipper({ vault, changed = () => {}, fetch = globalThis.fe
       const message = {
         'x-not-post': t('clipXOpenPost'),
         'no-selection': t('clipNoSelection'),
+        navigated: t('clipNavigated'),
       }[reason];
       await say(tabId, { text: message || t('clipFailed', result?.message || ''), tone: 'error' });
       return { ok: false, reason };
@@ -215,13 +229,17 @@ export function createClipper({ vault, changed = () => {}, fetch = globalThis.fe
   }
 
   // One clip at a time per tab; a repeated shortcut while one runs does nothing.
-  async function clip(tabId, { mode = 'article' } = {}) {
+  // expected: for a selection, the quote the user chose; the page's selection must still hold it.
+  async function clip(tabId, { mode = 'article', expected = '' } = {}) {
     if (!Number.isInteger(tabId) || running.has(tabId)) return { ok: false, reason: 'busy' };
     running.add(tabId);
     try {
-      return await clipTab(tabId, METHODS.includes(mode) ? mode : 'article');
+      return await clipTab(tabId, METHODS.includes(mode) ? mode : 'article', text(expected, 20000));
     } catch (error) {
-      if (error?.reason) return { ok: false, reason: error.reason };
+      if (error?.reason) {
+        await say(tabId, { text: t('clipNavigated'), tone: 'error' });
+        return { ok: false, reason: error.reason };
+      }
       await say(tabId, { text: t('clipSaveFailed', error?.message || ''), tone: 'error' });
       return { ok: false, reason: 'error', message: error?.message || String(error) };
     } finally {
