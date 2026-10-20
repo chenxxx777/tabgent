@@ -95,7 +95,10 @@ the page address and clip time), `article.html` (the cleaned page, without scrip
 forms or frames), its images in `assets/`, and `article.json` (when and how it was clipped,
 and the address each image came from). Clipping the page again
 replaces them after asking; an `article.md` you edited is kept as
-`article-edited-<time>.md`. Delete the files to remove a clip; the page's highlights stay.
+`article-edited-<time>.md`. Tabgent's reader shows a clipped page from these files, in an extension page that runs no
+script from the page and loads nothing from the web; links open in a new tab. Choose
+**Delete clipped copy** there, or delete the files, to remove a clip; the page's highlights
+stay. Reading positions in the reader stay in Chrome extension storage.
 
 Removing an attachment from the composer removes its draft reference. It does not
 delete the saved file. Sent attachments remain available for conversation history.
