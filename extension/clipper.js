@@ -4,6 +4,7 @@
 // vault/clip/save. The page and its clipped copy are one vault document, named by its URL.
 import { cleanPageMeta, documentUrl } from './vault-client.js';
 import { fetchImages, localizeMarkdown, uploadImages } from './clip-images.js';
+import { refererFetch } from './referer.js';
 
 const FILES = [
   'vendor/defuddle/defuddle.js',
@@ -61,15 +62,19 @@ export function cleanClip(result) {
 }
 
 // Saves a cleaned clip: its images are downloaded (cookies only for imagesFrom's own site;
-// none when it is empty) and uploaded first, then vault/clip/save writes the clip.
+// none when it is empty; with the Referer of the page they are on, referer, as the browser
+// sends it) and uploaded first, then vault/clip/save writes the clip.
 // Returns { ok, saved, kept, failed }; ok is false when the Markdown cannot fit.
 export async function storeClip(
   vault,
-  { url, title, clip, imagesFrom = '', origin, existing = null, fetch, onProgress },
+  { url, title, clip, imagesFrom = '', referer = '', origin, existing = null, fetch, onProgress },
 ) {
   const images = clip.images.filter((image) => image.url);
   const downloaded = images.length
-    ? await fetchImages(clip.images, imagesFrom, { fetch, onProgress })
+    ? await fetchImages(clip.images, imagesFrom, {
+        fetch: referer ? refererFetch(referer, fetch) : fetch,
+        onProgress,
+      })
     : { assets: [], files: new Map(), failed: [] };
   await uploadImages(vault, downloaded.assets);
   // Web addresses replace the placeholders of unsaved images, unless that makes the
@@ -194,6 +199,7 @@ export function createClipper({ vault, changed = () => {}, fetch = globalThis.fe
       const reason = result?.reason || 'error';
       const message = {
         'x-not-post': t('clipXOpenPost'),
+        'x-layout': t('clipXLayout'),
         'no-selection': t('clipNoSelection'),
         navigated: t('clipNavigated'),
       }[reason];
@@ -212,6 +218,7 @@ export function createClipper({ vault, changed = () => {}, fetch = globalThis.fe
       title: clip.title || text(tab.title, 500),
       clip,
       imagesFrom: frame.url,
+      referer: frame.url,
       origin: { method: clip.method, extractor: clip.extractor, pageUrl: frame.url },
       existing,
       fetch,

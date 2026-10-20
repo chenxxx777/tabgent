@@ -20,6 +20,138 @@
     if (!/^(?:www\.|mobile\.)?(?:x|twitter)\.com$/.test(hostname)) return null;
     return /^\/(?:[^/]+\/status\/\d+|(?:i|[^/]+)\/article\/\d+)/.test(pathname) ? 'post' : 'other';
   }
+  // The id of the post an X address names (/<handle>/status/<id>), or ''.
+  function xStatus(url) {
+    if (xPage(url) !== 'post') return '';
+    return /^\/[^/]+\/status\/(\d+)/.exec(new URL(url).pathname)?.[1] || '';
+  }
+  // A short title for a post: who wrote it and how it starts, never the whole post. The start
+  // is cut at 80 characters (graphemes, so no emoji or accent is split). Only a cut inside a
+  // word of a space-separated script moves back to the space before that word, and by at
+  // most 20 characters: Chinese and Japanese text, which has no spaces between words, is cut
+  // by characters even when a space appears early.
+  const unspaced = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u;
+  const wordChar = (c) => /[\p{L}\p{N}\p{M}]/u.test(c || '') && !unspaced.test(c || '');
+  function xTitle(name, text) {
+    const chars = [
+      ...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(label(text, 4000)),
+    ].map((part) => part.segment);
+    let start = chars.join('');
+    if (chars.length > 80) {
+      let cut = 80;
+      if (wordChar(chars[cut - 1]) && wordChar(chars[cut])) {
+        let back = cut;
+        while (back > cut - 20 && !/\s/.test(chars[back - 1])) back--;
+        if (back > cut - 20) cut = back;
+      }
+      start = `${chars.slice(0, cut).join('').trimEnd()}…`;
+    }
+    return label(start ? `${name || 'Post'} on X: "${start}"` : `${name || 'Post'} on X`);
+  }
+  const escapeHtml = (value) =>
+    String(value).replace(
+      /[&<>"]/g,
+      (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c],
+    );
+  // X shows visitors who are not logged in another layout, without data-testid: the
+  // conversation is a list of plain <article>s. The post at the address and its author's
+  // consecutive replies are kept, each once; other people's replies, counts, buttons and
+  // the page's screen-reader heading (the whole post again) are not. null for other layouts.
+  function xVisitorPost(url, id) {
+    const list = document.querySelector(`[id^="urt:conversation:${id}:"]`);
+    if (!list) return null;
+    const posts = [...list.querySelectorAll('article')].filter(
+      (article) => !article.parentElement?.closest('article'),
+    );
+    // Parts of a quoted post inside an article are not the article's own.
+    const own = (article, node) => {
+      const quote = node.closest('[role="link"]');
+      return !quote || !article.contains(quote);
+    };
+    const handleOf = (article) => {
+      for (const link of article.querySelectorAll('a[href^="/"]')) {
+        const text = link.textContent.trim();
+        if (/^@\w{1,15}$/.test(text) && own(article, link) && !link.closest('[dir="auto"]'))
+          return text;
+      }
+      return '';
+    };
+    const status = new RegExp(`^/\\w{1,15}/status/${id}$`);
+    const main = posts.findIndex((article) =>
+      [...article.querySelectorAll('a[href]')].some(
+        (link) => own(article, link) && status.test(link.getAttribute('href') || ''),
+      ),
+    );
+    if (main < 0) return null;
+    const handle = handleOf(posts[main]);
+    const thread = [posts[main]];
+    for (const article of posts.slice(main + 1)) {
+      if (!handle || handleOf(article) !== handle) break;
+      thread.push(article);
+    }
+    const name = handle
+      ? [...posts[main].querySelectorAll(`a[href="/${handle.slice(1)}"]`)]
+          .map((link) => link.textContent.trim())
+          .find((text) => text && !text.startsWith('@')) || ''
+      : '';
+    // The text as paragraphs: links stay links, emoji images become their text, buttons
+    // ("Show more", "Show translation") go.
+    const text = (article) => {
+      const element = [...article.querySelectorAll('[dir="auto"]')].find((node) =>
+        own(article, node),
+      );
+      if (!element) return { html: '', plain: '' };
+      const parts = [];
+      (function walk(node) {
+        for (const child of node.childNodes) {
+          if (child.nodeType === 3) parts.push(escapeHtml(child.data));
+          else if (child.nodeType !== 1 || child.localName === 'button') continue;
+          else if (child.localName === 'br') parts.push('\n');
+          else if (child.localName === 'img')
+            parts.push(escapeHtml(child.getAttribute('alt') || ''));
+          else if (child.localName === 'a' && child.getAttribute('href'))
+            parts.push(
+              `<a href="${escapeHtml(child.getAttribute('href'))}">${escapeHtml(child.textContent)}</a>`,
+            );
+          else walk(child);
+        }
+      })(element);
+      const html = parts
+        .join('')
+        .split(/\n\s*\n/)
+        .map((paragraph) => paragraph.trim())
+        .filter(Boolean)
+        .map((paragraph) => `<p>${paragraph.replace(/\n/g, '<br>')}</p>`)
+        .join('\n');
+      return { html, plain: element.textContent };
+    };
+    // Photos and video posters of the post itself (not of a quoted post or an avatar).
+    const media = (article) =>
+      [
+        ...article.querySelectorAll(
+          'img[src*="pbs.twimg.com/media/"], img[src*="pbs.twimg.com/ext_tw_video_thumb/"], img[src*="pbs.twimg.com/amplify_video_thumb/"], img[src*="pbs.twimg.com/tweet_video_thumb/"]',
+        ),
+      ]
+        .filter((img) => own(article, img))
+        .map(
+          (img) =>
+            `<p><img src="${escapeHtml(img.getAttribute('src'))}" alt="${escapeHtml(img.getAttribute('alt') || '')}"></p>`,
+        )
+        .join('\n');
+    const texts = thread.map(text);
+    return {
+      content: thread
+        .map((article, index) => [texts[index].html, media(article)].filter(Boolean).join('\n'))
+        .join('\n<hr>\n'),
+      title: xTitle(name || handle, texts[0].plain),
+      author: name && handle ? `${name} (${handle})` : name || handle,
+      site: 'X',
+      published: '',
+      description: texts[0].plain,
+      language: document.documentElement.lang,
+      extractor: 'x',
+    };
+  }
   function meta(name) {
     const element = document.querySelector(
       `meta[name="${name}"],meta[property="${name}"],meta[itemprop="${name}"]`,
@@ -94,6 +226,12 @@
         extractor: 'selection',
       };
     }
+    // An X post: the logged-in layout is Defuddle's X extractor's; the visitors' layout is
+    // read here. Any other layout is refused: generic extraction would mix other people's
+    // replies into the post.
+    const status = mode === 'article' ? xStatus(url) : '';
+    const loggedIn = !!document.querySelector('article[data-testid="tweet"]');
+    if (status && !loggedIn) return xVisitorPost(url, status) || { unknownX: true };
     const result = new Defuddle(snapshot(), {
       url,
       useAsync: false,
@@ -101,8 +239,21 @@
       fetch: refuse,
       ...(mode === 'page' ? { contentSelector: 'body', removeLowScoring: false } : {}),
     }).parse();
+    if (status) {
+      const name = document
+        .querySelector('article[data-testid="tweet"] [data-testid="User-Name"] a')
+        ?.textContent.trim();
+      return {
+        ...result,
+        title: xTitle(name || result.author, result.description),
+        extractor: 'x',
+      };
+    }
     // Defuddle's extractorType is a minified class name in its bundle; name X by address.
-    return { ...result, extractor: xPage(url) === 'post' ? 'x' : 'defuddle' };
+    return {
+      ...result,
+      extractor: mode === 'article' && xPage(url) === 'post' ? 'x' : 'defuddle',
+    };
   }
 
   // The largest srcset candidate up to 2048 pixels wide (or 2x), else the smallest above.
@@ -380,6 +531,7 @@
       return { ok: false, reason: 'error', message: String(error?.message || error).slice(0, 300) };
     }
     if (!found) return { ok: false, reason: 'no-selection' };
+    if (found.unknownX) return { ok: false, reason: 'x-layout' };
     const selection = getSelection();
     return finish(found, url, {
       mode,
@@ -454,7 +606,8 @@
       chars,
       truncated,
       posts,
-      tooLittle: mode === 'article' && !enough,
+      // A short post is still the whole post: no "save whole page" offer for X.
+      tooLittle: mode === 'article' && !enough && found.extractor !== 'x',
       hasSelection,
     };
   }
@@ -643,6 +796,6 @@
     );
     if (!busy) timer = setTimeout(hide, open ? 12000 : tone === 'error' ? 10000 : 7000);
   }
-  // cutMarkdown is exposed for tests; the worker calls run, ask and notify.
-  globalThis.tabgentClip = { run, ask, notify, cutMarkdown, clean };
+  // cutMarkdown and xTitle are exposed for tests; the worker calls run, ask and notify.
+  globalThis.tabgentClip = { run, ask, notify, cutMarkdown, clean, xTitle };
 })();

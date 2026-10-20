@@ -17,6 +17,7 @@ for (const file of [
   'library-routing.mjs',
   'clip-routing.mjs',
   'clip-images.mjs',
+  'referer.mjs',
   'feeds-routing.mjs',
   'local-file-routing.mjs',
   'attachments.py',

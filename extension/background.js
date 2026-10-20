@@ -32,6 +32,7 @@ import {
 } from './vault-client.js';
 import { createReadingCompanion } from './reading-companion.js';
 import { createClipper } from './clipper.js';
+import { clearRefererRules } from './referer.js';
 import {
   registerClipPort,
   clipSource,
@@ -40,6 +41,8 @@ import {
 } from './clip-routing.js';
 import { createFeeds, feedMessages, feedReaderMessages } from './feeds.js';
 startPdfRouting();
+// Image Referer rules of a worker that stopped mid-request.
+clearRefererRules().catch(() => {});
 // The page a tab shows: a PDF viewer's PDF, a clipped-page reader's page, or its own URL.
 const pageAddress = (url) => pdfSource(url) || clipSource(url) || url;
 const sessions = new Map(),
