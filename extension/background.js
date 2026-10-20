@@ -1225,7 +1225,12 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
       const tabId = sender.tab
         ? (agentCompanions.get(sender.tab.id) ?? source.tabId)
         : (msg.companionTabId ?? source.tabId);
-      return clipper.clip(tabId, { mode: msg.mode === 'selection' ? 'selection' : 'article' });
+      // A selection clip must still be the quote attached in this conversation.
+      const selection = msg.mode === 'selection';
+      return clipper.clip(tabId, {
+        mode: selection ? 'selection' : 'article',
+        expected: selection ? source.selection?.text || '' : '',
+      });
     }
     if (msg.type === 'openLibrary') {
       // From the side panel: the library opens next to the page it is beside.

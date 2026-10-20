@@ -1178,7 +1178,7 @@
     "message": "Open a single post to clip it, or select text to clip just that."
   },
   "clipNoSelection": {
-    "message": "Select some text on the page first."
+    "message": "Select the text on the page first, then clip it."
   },
   "clipFailed": {
     "message": "The page could not be clipped. $1"
@@ -1194,5 +1194,8 @@
   },
   "readingClipped": {
     "message": "Clipped $1"
+  },
+  "clipNavigated": {
+    "message": "The page changed while it was being clipped. Clip it again."
   }
 }

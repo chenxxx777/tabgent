@@ -409,9 +409,14 @@ by the URL, as for highlights, so highlights, notes and discussions belong to bo
 `clip/sanitize-config.js` and `clip/clip-content.js` into frame 0 with
 `chrome.scripting.executeScript`. Nothing is loaded into pages that are not clipped. Each
 later call checks that the injection result's `documentId` is still the frame's, so a page
-that navigated mid-clip saves nothing. If the document already has a clip, the page shows
-a prompt (a closed shadow root on a top-layer popover, like the reading toolbar) and only
-**Replace** continues.
+that navigated mid-clip saves nothing. A single-page app can change its address without a
+new document, so the worker also reads the frame again after each prompt and the clipping
+script compares `location` with the address it was asked to clip; a page that moved stops
+the clip and says so, and a prompt closes when the page's address changes. If the document
+already has a clip, the page shows a prompt (a closed shadow root on a top-layer popover,
+like the reading toolbar) and only **Replace** continues. **Clip selected text** from the
+side panel checks that the page still selects the quote attached in the conversation. An
+address whose vault document is a PDF (Chrome's own viewer) is refused.
 
 `clip-content.js` runs Defuddle's synchronous `parse()` with `useAsync: false` and a
 `fetch` that always rejects, so no extractor contacts a third party. Defuddle normalizes
@@ -429,7 +434,8 @@ allowlist in `sanitize-config.js` (no scripts, styles, `style` or `class` attrib
 frames, SVG or media). Turndown converts the cleaned HTML with Tabgent's rules for images,
 fenced code with its language, strikethrough, MathML with LaTeX, and GFM tables (tables with
 merged cells become lines of text). The HTML is cut at a block boundary to 4 MiB and the
-Markdown at a paragraph break to 3 MiB (UTF-8), each ending with a note. When little text
+Markdown at a paragraph break (else a line break, never inside a surrogate pair) to 3 MiB
+(UTF-8); a code fence the cut left open is closed, and each ends with a note. When little text
 is found, the page offers **Save whole page** (Defuddle on `body` without low-score
 removal) or, with a selection, the selected text only.
 

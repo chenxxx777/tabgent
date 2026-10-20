@@ -751,12 +751,14 @@ def save_clip(settings, params):
     root = _root(settings)
     # A clip that would conflict writes nothing, not even the vault folder.
     existing = _find(root, None, source)
+    _clip_web(existing)
     if existing is not None and not replace:
         conflict = _clip_conflict(root, existing)
         if conflict:
             return conflict
     with _locked(root):
         _scaffold(root)
+        _clip_web(_find(root, None, source))
         data = _ensure_document(root, *source)
         folder = _folder(root, data["document"]["id"])
         try:
@@ -1581,6 +1583,13 @@ def _clip_images(value):
     }
 
 
+def _clip_web(data):
+    """Refuses a clip for an address whose document is not a webpage (an online PDF shown
+    in Chrome's own viewer has a paper-* document at the same URL)."""
+    if data is not None and data["document"]["kind"] != "web":
+        raise VaultError("invalid_params", "This address belongs to a PDF or book")
+
+
 def _clip_record(root, data):
     """A webpage document's article.json, or None. Raises io_error when it is invalid."""
     if data["document"]["kind"] != "web":
@@ -2129,8 +2138,8 @@ def _tool_list(root, only=None):
             }
         article = _tool_article(root, document)
         if article:
-            # A clipped webpage: its full text, with the title in front matter.
-            lines = _tool_lines(article)
+            # A clipped webpage: its title and clip time are in its front matter.
+            lines = _tool_head(article)
             entry.setdefault("title", _tool_front(lines, "title"))
             entry["article"] = article.relative_to(root).as_posix()
             entry["clipped"] = _tool_front(lines, "clipped")
@@ -2157,6 +2166,13 @@ def _tool_canonical(root, path):
     except ValueError:
         return False
     return path.is_file() and path.resolve() == root.resolve().joinpath(*relative.parts)
+
+
+def _tool_head(path, size=8192):
+    """The first lines of a file, enough for its front matter."""
+    with open(path, "rb") as file:
+        head = file.read(size).decode("utf-8", errors="replace")
+    return head.replace("\r\n", "\n").split("\n")[:40]
 
 
 def _tool_lines(path):

@@ -264,6 +264,40 @@ with tempfile.TemporaryDirectory(prefix="tabgent-clip-vault-") as directory:
             "invalid" in path.name for path in (root / "Articles").iterdir()
         ), "invalid clips create no document"
 
+        # A clip is refused for an address whose document is a PDF (Chrome's own viewer).
+        pdf = "https://example.test/papers/fallback.pdf"
+        call(
+            settings,
+            "vault/highlight/create",
+            {
+                "url": pdf,
+                "title": "Paper",
+                "kind": "pdf",
+                "text": "words",
+                "anchor": {"kind": "pdf", "page": 1, "quote": {"exact": "words"}},
+            },
+        )
+        papers = sorted(path.name for path in (root / "Books").iterdir())
+        assert (
+            code(
+                settings,
+                "vault/clip/save",
+                {
+                    "url": pdf,
+                    "title": "Paper",
+                    "kind": "web",
+                    "markdown": "Text.",
+                    "html": "<p>Text.</p>",
+                    "origin": {"method": "article"},
+                },
+            )
+            == "invalid_params"
+        )
+        assert sorted(path.name for path in (root / "Books").iterdir()) == papers
+        assert not any(
+            (root / "Books" / name / "article.md").exists() for name in papers
+        )
+
         # AGENTS.md tells Codex about article.md.
         assert "`Articles/article-.../article.md`" in (root / "AGENTS.md").read_text()
 
