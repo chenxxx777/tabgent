@@ -185,7 +185,8 @@ with tempfile.TemporaryDirectory(prefix="tabgent-clip-assets-") as directory:
         folder = Path(saved["document"]["folder"])
         name = f"{digest(PNG)[:16]}.png"
         assert (folder / "assets" / name).read_bytes() == PNG
-        assert not (uploads / f"asset-{digest(PNG)}.ready").exists()
+        # The staged copy stays for other clips that use the same image; it is pruned later.
+        assert (uploads / f"asset-{digest(PNG)}.ready").read_bytes() == PNG
         record = json.loads((folder / "article.json").read_text())
         assert record["assets"] == [
             {
@@ -229,6 +230,59 @@ with tempfile.TemporaryDirectory(prefix="tabgent-clip-assets-") as directory:
         names = sorted(path.name for path in (folder / "assets").iterdir())
         assert names == sorted([f"{digest(JPEG)[:16]}.jpg", "my-sketch.png"]), names
         print("PASS a new clip reuses, adds and removes its images; other files stay")
+
+        # Two pages that share an image, clipped at the same time: the image is uploaded once
+        # (the second upload finds it staged) and both clips save it.
+        shared = b"GIF89a shared logo " * 20
+        upload(settings, shared)
+        logo = asset(shared, "gif", "https://cdn.example.test/logo.gif")
+        assert call(
+            settings,
+            "vault/clip/asset",
+            {"sha256": digest(shared), "size": len(shared), "offset": 0, "data": ""},
+        ) == {"complete": True, "received": len(shared)}
+        pages = []
+        for path in ("/first", "/second"):
+            pages.append(
+                call(
+                    settings,
+                    "vault/clip/save",
+                    {
+                        "url": URL + path,
+                        "title": "Shared " + path,
+                        "kind": "web",
+                        "markdown": "Logo.",
+                        "html": "<p>Logo.</p>",
+                        "origin": {"method": "article"},
+                        "assets": [logo],
+                    },
+                )
+            )
+        for saved_page in pages:
+            files = Path(saved_page["document"]["folder"]) / "assets"
+            assert (files / f"{digest(shared)[:16]}.gif").read_bytes() == shared
+        print("PASS clips that share an image both save it")
+
+        # When the user edited article.md, its kept copy still links the earlier images:
+        # they stay in assets/.
+        (folder / "article.md").write_text("Edited, with ![photo](assets/x.jpg).\n")
+        upload(settings, PNG)
+        edited = clip(settings, [chart], replace=True)
+        assert edited["backup"].startswith("article-edited-")
+        names = sorted(path.name for path in (folder / "assets").iterdir())
+        assert names == sorted(
+            [name, f"{digest(JPEG)[:16]}.jpg", "my-sketch.png"]
+        ), names
+        # The next clip without an edited copy removes what neither clip uses.
+        again = clip(
+            settings,
+            [asset(JPEG, "jpg", "https://cdn.example.test/photo.jpg")],
+            replace=True,
+        )
+        assert again["backup"] is None
+        names = sorted(path.name for path in (folder / "assets").iterdir())
+        assert names == sorted([f"{digest(JPEG)[:16]}.jpg", "my-sketch.png"]), names
+        print("PASS the images of an edited article.md are kept with it")
 
         # An assets/ that is a symbolic link is refused before anything is written.
         os.rename(folder / "assets", base / "elsewhere")

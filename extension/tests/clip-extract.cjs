@@ -57,8 +57,11 @@ const pages = {
     (_, i) =>
       `<p>第 ${i} 段：自主是对自己行动的认同，而不是独立于他人。读者会反复回到困难的段落，记下自己的理解。认同的目标能坚持得更久。</p>`,
   ).join('')}</article></main></body></html>`,
-  '/author/status/100': xThread(),
-  '/home': xThread(),
+};
+// X fixtures are served at their x.com addresses (nothing reaches the network).
+const xPages = {
+  'https://x.com/author/status/100': xThread(),
+  'https://x.com/home': xThread(),
 };
 // A synthetic X conversation page: the structure X renders, with generated text.
 function xThread() {
@@ -102,9 +105,14 @@ function xThread() {
         });
       return route.fulfill({ status: 404, body: '' });
     });
-    await page.route(/^(?!https:\/\/clip\.test\/)/, (route) => route.abort());
+    await page.route('https://x.com/**', (route) => {
+      const body = xPages[route.request().url()];
+      if (body) return route.fulfill({ contentType: 'text/html; charset=utf-8', body });
+      return route.abort();
+    });
+    await page.route(/^(?!https:\/\/(?:clip\.test|x\.com)\/)/, (route) => route.abort());
     async function open(pathname) {
-      await page.goto('https://clip.test' + pathname);
+      await page.goto(pathname.startsWith('https://') ? pathname : 'https://clip.test' + pathname);
       await page.evaluate(() => {
         globalThis.chrome = {
           i18n: {
@@ -228,7 +236,7 @@ function xThread() {
     assert.match(huge.html, /<em>clipTruncated<\/em><\/p>$/);
 
     // An X conversation: the author's thread, not other replies; large images; emoji as text.
-    await open('/author/status/100');
+    await open('https://x.com/author/status/100');
     const thread = await run({ mode: 'article', url: 'https://x.com/author/status/100' });
     assert.equal(thread.ok, true, JSON.stringify(thread));
     assert.equal(thread.extractor, 'x');
@@ -249,10 +257,54 @@ function xThread() {
     assert.equal(thread.posts, 3);
     assert.deepEqual(requests, []);
     // Timelines and profiles are not clipped as articles.
+    await open('https://x.com/home');
     assert.deepEqual(await run({ mode: 'article', url: 'https://x.com/home' }), {
       ok: false,
       reason: 'x-not-post',
     });
+
+    // A page that moved to another address (a single-page app) is not clipped under the old
+    // one; the fragment does not count.
+    assert.deepEqual(await run({ mode: 'article', url: 'https://x.com/author/status/100' }), {
+      ok: false,
+      reason: 'navigated',
+    });
+    assert.equal(
+      (await run({ mode: 'article', url: 'https://x.com/home#top' })).reason,
+      'x-not-post',
+    );
+    // A selection clip needs the quote the user chose to be selected still.
+    await open('/blog/autonomy');
+    await page.evaluate(() => {
+      const paragraph = [...document.querySelectorAll('article p')].find((p) =>
+        p.textContent.includes('Body paragraph 2'),
+      );
+      getSelection().selectAllChildren(paragraph);
+    });
+    const url = 'https://clip.test/blog/autonomy';
+    assert.equal(
+      (await run({ mode: 'selection', url, expected: 'Body paragraph 2 explains why' })).ok,
+      true,
+    );
+    assert.deepEqual(await run({ mode: 'selection', url, expected: 'Body paragraph 5 explains' }), {
+      ok: false,
+      reason: 'no-selection',
+    });
+    // The Markdown cut: at a paragraph, else a line; never inside a surrogate pair; an open
+    // code fence is closed before the note.
+    const cut = (markdown, cap) =>
+      page.evaluate(([m, c]) => globalThis.tabgentClip.cutMarkdown(m, c), [markdown, cap]);
+    const paragraphsCut = await cut(
+      `${'First paragraph. '.repeat(150)}\n\n${'Second. '.repeat(500)}`,
+      4000,
+    );
+    assert.equal(paragraphsCut.truncated, true);
+    assert.match(paragraphsCut.markdown, /^First paragraph\.[\s\S]*\n\n\*clipTruncated\*$/);
+    const emoji = await cut('🔥'.repeat(3000), 5000);
+    assert(!/[\ud800-\udbff](?![\udc00-\udfff])/.test(emoji.markdown), 'No lone surrogate');
+    const fenced = await cut(`Intro.\n\n\`\`\`js\n${'const line = 1;\n'.repeat(2000)}`, 6000);
+    assert.match(fenced.markdown, /\nconst line = 1;\n?\n\`\`\`\n\n\*clipTruncated\*$/);
+    assert.deepEqual(await cut('Short.', 6000), { markdown: 'Short.', truncated: false });
 
     // The prompt resolves with the chosen action; Escape cancels.
     const choice = page.evaluate(() =>

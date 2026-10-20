@@ -25,6 +25,8 @@ export function sniff(bytes) {
 
 // Same site, roughly the registrable domain: the last two labels, or three under a short
 // second-level label such as co.uk or com.cn. Cookies are sent only to the page's own site.
+// Without the Public Suffix List this is an approximation: hosts under a shared suffix (for
+// example *.github.io) count as one site, and IP addresses compare their last two numbers.
 export function sameSite(url, pageUrl) {
   const site = (value) => {
     try {
@@ -99,12 +101,17 @@ export async function fetchImages(
       Math.min(limit.timeout, remaining),
     );
     try {
-      const response = await fetch(url, {
-        credentials: sameSite(url, pageUrl) ? 'include' : 'omit',
-        referrerPolicy: 'no-referrer',
-        redirect: 'follow',
-        signal: controller.signal,
+      const options = { referrerPolicy: 'no-referrer', signal: controller.signal };
+      // Cookies only on the first request: a redirect from the page's site is followed again
+      // without them, so another site never receives its cookies.
+      const include = sameSite(url, pageUrl);
+      let response = await fetch(url, {
+        ...options,
+        credentials: include ? 'include' : 'omit',
+        redirect: include ? 'manual' : 'follow',
       });
+      if (response.type === 'opaqueredirect')
+        response = await fetch(url, { ...options, credentials: 'omit', redirect: 'follow' });
       if (!response.ok) return { reason: `http_${response.status}` };
       const bytes = await body(response, limit.size, controller.signal);
       if (!bytes) return { reason: 'too_large' };
@@ -120,7 +127,7 @@ export async function fetchImages(
   async function work() {
     for (let url = queue.shift(); url; url = queue.shift()) {
       const result = await download(url);
-      onProgress(++done, wanted.length);
+      onProgress(++done, Math.min(wanted.length, limit.count));
       if (result.reason) {
         failed.push({ source: url, reason: result.reason });
         continue;
@@ -171,11 +178,13 @@ export const destination = (url) => (/[\s()<>]/.test(url) ? `<${url.replace(/>/g
 
 // The clipping script writes each image as a placeholder named by a token only it and the
 // worker know; saved images point to assets/, others to their web address.
-export function localizeMarkdown(markdown, token, images, files) {
+// With remote false, images that were not saved lose their link (when the addresses would
+// make the Markdown too long).
+export function localizeMarkdown(markdown, token, images, files, { remote = true } = {}) {
   if (!/^[0-9a-f]{32}$/.test(token || '')) return markdown;
   return markdown.replace(new RegExp(`tabgent-image-${token}-(\\d+)`, 'g'), (_, index) => {
     const file = files.get(Number(index));
     const url = images[Number(index)]?.url;
-    return file ? `assets/${file}` : url ? destination(url) : '';
+    return file ? `assets/${file}` : url && remote ? destination(url) : '';
   });
 }

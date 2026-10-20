@@ -29,7 +29,8 @@ your browser, including text you see only when signed in and personal informatio
 page (for example names and replies on X), and saves it in the ReadingVault. The text is
 extracted in the page by scripts bundled with Tabgent; no other service is involved. Then
 the extension downloads the page's images directly from their servers: without a referrer,
-and with cookies only for images on the page's own site. Up to 50 JPEG, PNG, GIF, WebP or
+and with cookies only for images on the page's own site (a redirect to another site is
+followed without them). Up to 50 JPEG, PNG, GIF, WebP or
 AVIF images per page are saved, each up to 5 MB and 30 MB together; others (SVG, larger
 images, failed downloads) stay linked at their web addresses.
 Clipping does not send anything to Codex. A message about the page names the clipped text

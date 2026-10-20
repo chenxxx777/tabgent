@@ -110,10 +110,17 @@ globalThis.chrome = {
       return tabs.get(id);
     },
     sendMessage: async (tabId, message, options) => {
+      if (!tabs.has(tabId)) throw Error('No tab');
       contentMessages.push({ tabId, message, options });
       if (message.action === 'jump') return { found: message.highlightId === 'h001' };
       if (message.action === 'context') return { before: 'Before text', after: 'After text' };
     },
+    create: async (options) => {
+      const tab = { id: Math.max(...tabs.keys()) + 1, windowId: 1, ...options };
+      tabs.set(tab.id, tab);
+      return tab;
+    },
+    update: async (id, value) => Object.assign(tabs.get(id), value),
     onRemoved: event(),
   },
   webNavigation: {
@@ -126,11 +133,11 @@ await direct('vault/configure', { path: vaultPath });
 await import('../background.js');
 await wait();
 
-async function attach(tabId) {
+async function attach(tabId, sender = { url: 'chrome-extension://test/ui/chat.html', id: 'test' }) {
   const messages = [],
     port = {
       name: 'chat',
-      sender: { url: 'chrome-extension://test/ui/chat.html', id: 'test' },
+      sender,
       onMessage: event(),
       onDisconnect: event(),
       postMessage: (m) => messages.push(m),
@@ -660,6 +667,161 @@ try {
   );
   assert.equal(restored.events('codex-selection').at(-1).url, 'https://example.test/next?page=2');
   console.log('PASS page selections use the current frame URL after pushState');
+
+  // An Agent tab of a highlight discussion outlives the page (B2): with the page closed,
+  // follow-ups still bind to the highlight and save to the same document and thread.
+  tabs.set(3, {
+    id: 3,
+    windowId: 1,
+    url: 'https://example.test/closing#end',
+    title: 'Closing page',
+  });
+  const closing = await attach(3);
+  const closingAsk = await call(
+    {
+      type: 'highlightCreate',
+      ask: true,
+      text: 'Last words',
+      anchor: anchor('Last words', 4),
+      title: 'Closing page',
+      location: 'Epilogue',
+      context: { before: '', after: '' },
+    },
+    page(3),
+  );
+  const closingDocument = closingAsk.document.id;
+  await closing.port.onMessage.listeners[0]({ type: 'bind', threadId: 'thread-z' });
+  const z1 = await sendMessage(
+    closing,
+    'thread-z',
+    'What ends here?',
+    closing.events('codex-selection').at(-1),
+  );
+  await completeTurn(closing.session, 'thread-z', z1, 'The story ends.');
+  await until(() => appends().some((m) => m.params.threadId === 'thread-z'));
+  const agentTab = await call(
+    {
+      type: 'openAgent',
+      conversationKey: closing.state.conversationKey,
+      companionTabId: 3,
+      windowId: 1,
+    },
+    panel,
+  );
+  const agentSender = {
+    id: 'test',
+    url: 'chrome-extension://test/ui/chat.html',
+    tab: tabs.get(agentTab.tabId),
+    frameId: 0,
+  };
+  const agentView = await attach(agentTab.tabId, agentSender);
+  assert.equal(agentView.session, closing.session, 'The Agent tab shares the conversation');
+  assert.equal(agentView.state.conversationKey, closing.state.conversationKey);
+  assert.equal(agentView.state.companionTabId, 3);
+  tabs.delete(3);
+  for (const listen of chrome.tabs.onRemoved.listeners) await listen(3);
+  assert(agentView.events('codex-reading-changed').length, 'The Agent view refreshes');
+  const z2 = await sendMessage(agentView, 'thread-z', 'Search my notes only.');
+  const closedPage = JSON.parse(z2[0].text.slice(z2[0].text.indexOf('{')));
+  assert.deepEqual(closedPage, {
+    tabId: 3,
+    windowId: 1,
+    url: 'https://example.test/closing#end',
+    title: 'Closing page',
+    closed: true,
+  });
+  assert.equal(readingPart(z2).saving, 'highlight');
+  assert.deepEqual(readingPart(z2).highlight, {
+    id: 'h001',
+    location: 'Epilogue',
+    text: 'Last words',
+  });
+  assert.equal(readingPart(z2).document.id, closingDocument);
+  await completeTurn(closing.session, 'thread-z', z2, 'Found it in the vault.');
+  await until(() => appends().filter((m) => m.params.threadId === 'thread-z').length === 2);
+  const closedSave = appends().at(-1).params;
+  assert.deepEqual(
+    [closedSave.documentId, closedSave.highlightId, closedSave.threadId],
+    [closingDocument, 'h001', 'thread-z'],
+  );
+  await until(() =>
+    agentView.events('codex-reading-saved').some((value) => value.ok && !value.queued),
+  );
+  // The reading panel shows the closed page's document, highlight and save target.
+  const closedState = await call(
+    { type: 'readingState', conversationKey: closing.state.conversationKey, companionTabId: 3 },
+    agentSender,
+  );
+  assert.deepEqual(closedState.page, {
+    url: 'https://example.test/closing',
+    title: 'Closing page',
+    kind: 'web',
+    closed: true,
+  });
+  assert.equal(closedState.binding.highlightId, 'h001');
+  assert.equal(closedState.save.target, 'highlight');
+  assert.deepEqual(
+    closedState.highlights.map(({ id, turnCount, anchored }) => ({ id, turnCount, anchored })),
+    [{ id: 'h001', turnCount: 2, anchored: null }],
+  );
+  const closedNote = await call(
+    {
+      type: 'readingNote',
+      conversationKey: closing.state.conversationKey,
+      documentId: closingDocument,
+      highlightId: 'h001',
+      note: 'Written after closing the page.',
+    },
+    agentSender,
+  );
+  assert.equal(closedNote.highlights[0].note, 'Written after closing the page.');
+  assert.deepEqual(
+    await call(
+      {
+        type: 'readingJump',
+        conversationKey: closing.state.conversationKey,
+        highlightId: 'h001',
+      },
+      agentSender,
+    ),
+    { found: false },
+  );
+  assert.deepEqual(
+    await call(
+      {
+        type: 'readingOpen',
+        conversationKey: closing.state.conversationKey,
+        documentId: closingDocument,
+        highlightId: 'h001',
+      },
+      agentSender,
+    ),
+    { switched: false, threadId: 'thread-z' },
+  );
+  // A page that navigated away before closing is not mistaken for the document it left.
+  tabs.set(5, { id: 5, windowId: 1, url: 'https://example.test/moving', title: 'Moving' });
+  const moving = await attach(5);
+  await moving.port.onMessage.listeners[0]({ type: 'bind', threadId: 'thread-m' });
+  const onFirst = await sendMessage(moving, 'thread-m', 'On the first page');
+  assert.equal(readingPart(onFirst).document.url, 'https://example.test/moving');
+  await completeTurn(moving.session, 'thread-m', onFirst, 'Stopped', { status: 'interrupted' });
+  const movingTab = await call(
+    { type: 'openAgent', conversationKey: moving.state.conversationKey, companionTabId: 5 },
+    panel,
+  );
+  const movingAgent = await attach(movingTab.tabId, {
+    ...agentSender,
+    tab: tabs.get(movingTab.tabId),
+  });
+  tabs.get(5).url = 'chrome://newtab/';
+  for (const listen of chrome.webNavigation.onCommitted.listeners)
+    await listen({ tabId: 5, frameId: 0, url: 'chrome://newtab/' });
+  tabs.delete(5);
+  for (const listen of chrome.tabs.onRemoved.listeners) await listen(5);
+  const left = readingPart(await sendMessage(movingAgent, 'thread-m', 'After it closed'));
+  assert.equal(left.document, undefined);
+  assert.equal(left.saving, 'off');
+  console.log('PASS an Agent tab keeps saving a highlight discussion after its page closes');
 } finally {
   python.stdin.end();
   fs.rmSync(temp, { recursive: true, force: true });
