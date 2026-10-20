@@ -75,6 +75,13 @@ export function registerClipPort(port) {
   return true;
 }
 
+// Tells a tab's current reader something (a feed item it showed was saved).
+export function clipNotify(tabId, message) {
+  try {
+    views.get(tabId)?.port.postMessage(message);
+  } catch {}
+}
+
 // Asks a tab's current reader for something only it has (a feed item's cleaned text).
 let commands = 0;
 export function clipCommand(tabId, command, timeout = 30000) {

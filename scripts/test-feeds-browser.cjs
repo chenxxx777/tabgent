@@ -488,7 +488,10 @@ const big = rss('Big', [...Array(200).keys()], { content: '<p>' + 'x'.repeat(220
       'The full text is shown',
     );
     assert.doesNotMatch(await page.textContent('#content'), /Footer|Home/);
-    const pageHit = hits.find((hit) => hit.url === '/article/summary?utm_source=rss');
+    // Fetched at its address without tracking parameters, with the cookies of the item's own
+    // site (the subscription's).
+    assert(!hits.some((hit) => hit.url === '/article/summary?utm_source=rss'));
+    const pageHit = hits.find((hit) => hit.url === '/article/summary');
     assert.match(pageHit.headers.cookie || '', /session=secret/);
     assert.equal(pageHit.headers.referer, undefined);
     assert.deepEqual(

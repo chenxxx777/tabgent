@@ -371,7 +371,11 @@ try {
         '<channel><title>Reader</title><link>https://read.test/</link>' +
         '<item><title>Short one</title><guid>r1</guid>' +
         '<link>https://read.test/short?utm_source=rss</link>' +
-        '<description>Just a summary.</description></item></channel></rss>',
+        '<description>Just a summary.</description></item>' +
+        '<item><title>Bounce</title><guid>r2</guid><link>https://read.test/bounce</link>' +
+        '<description>Moved.</description></item>' +
+        '<item><title>Elsewhere</title><guid>r3</guid><link>https://other.test/story</link>' +
+        '<description>On another site.</description></item></channel></rss>',
       { 'content-type': 'application/rss+xml' },
     ),
   );
@@ -428,22 +432,70 @@ try {
   );
   assert.equal(requests.length, 0);
 
-  // Full text: the item's own link, with the site's cookies (R3), never another address.
-  routes.set('https://read.test/short?utm_source=rss', () =>
-    respond('<html><body><article><p>Whole text.</p></article></body></html>', {
-      'content-type': 'text/html; charset=utf-8',
-    }),
+  // Full text: the item's address without tracking parameters, never one from the request.
+  // An item on the subscription's own site is fetched with its cookies (R3); a redirect is
+  // followed again without them, and they are sent once more only to the item's own site.
+  const pageAt = (url) =>
+    respond(
+      '<html><body><article><p>Whole text.</p></article></body></html>',
+      {
+        'content-type': 'text/html; charset=utf-8',
+      },
+      200,
+      url,
+    );
+  const opaque = {
+    type: 'opaqueredirect',
+    status: 0,
+    ok: false,
+    headers: new Headers(),
+    body: null,
+  };
+  routes.set('https://read.test/short', (options) =>
+    options.redirect === 'manual' ? opaque : pageAt('https://www.read.test/short'),
   );
+  routes.set('https://www.read.test/short', () => pageAt('https://www.read.test/short'));
   requests.length = 0;
   const fullPage = await feeds.reader(
     { type: 'feedFullText', url: 'https://evil.test/' },
     readerSender,
   );
   assert.match(fullPage.html, /Whole text/);
-  assert.equal(requests.length, 1);
-  assert.equal(requests[0].url, 'https://read.test/short?utm_source=rss');
-  assert.equal(requests[0].options.credentials, 'include');
-  assert.equal(requests[0].options.referrerPolicy, 'no-referrer');
+  assert.deepEqual(
+    requests.map(({ url, options }) => [url, options.credentials, options.redirect]),
+    [
+      ['https://read.test/short', 'include', 'manual'],
+      ['https://read.test/short', 'omit', 'follow'],
+      // The same site (www): its cookies are sent again.
+      ['https://www.read.test/short', 'include', 'manual'],
+    ],
+  );
+  assert(requests.every(({ options }) => options.referrerPolicy === 'no-referrer'));
+  // A redirect to another site: that site gets no cookies.
+  const bounce = { ...readerSender, url: clipViewerUrl('https://read.test/bounce') };
+  await feeds.reader({ type: 'feedOpen' }, bounce);
+  routes.set('https://read.test/bounce', (options) =>
+    options.redirect === 'manual' ? opaque : pageAt('https://tracker.test/landing'),
+  );
+  requests.length = 0;
+  assert.match((await feeds.reader({ type: 'feedFullText' }, bounce)).html, /Whole text/);
+  assert.deepEqual(
+    requests.map(({ url, options }) => [url, options.credentials, options.redirect]),
+    [
+      ['https://read.test/bounce', 'include', 'manual'],
+      ['https://read.test/bounce', 'omit', 'follow'],
+    ],
+  );
+  // An item on another site than the subscription's (an aggregator's link): no cookies.
+  const elsewhere = { ...readerSender, url: clipViewerUrl('https://other.test/story') };
+  await feeds.reader({ type: 'feedOpen' }, elsewhere);
+  routes.set('https://other.test/story', () => pageAt('https://other.test/story'));
+  requests.length = 0;
+  await feeds.reader({ type: 'feedFullText' }, elsewhere);
+  assert.deepEqual(
+    requests.map(({ url, options }) => [url, options.credentials, options.redirect]),
+    [['https://other.test/story', 'omit', 'follow']],
+  );
   await feeds.reader({ type: 'feedContent', html: '<p>Whole text.</p>' }, readerSender);
   assert.equal((await request('vault/feeds/open', { url: itemUrl })).content.kind, 'fulltext');
 
@@ -495,7 +547,11 @@ try {
   assert.equal(registerClipPort(port), true);
   const committed = await feeds.commit(77, itemUrl);
   assert.equal(committed.saved, true);
-  assert.equal(replies.at(-1).command.type, 'feedCommit');
+  // The reader is asked for its text, then told the item is saved (not before).
+  assert.deepEqual(
+    replies.map((message) => message.command?.type || message.type),
+    ['ready', 'feedCommit', 'feedSaved'],
+  );
   const resolved = await request('vault/document/resolve', {
     url: itemUrl,
     title: '',
@@ -529,6 +585,26 @@ try {
       queueMicrotask(() => portListeners.forEach((fn) => fn({ type: 'reply', id: message.id })));
   };
   assert.equal(await feeds.commit(77, itemUrl), null);
+  // A save that fails tells the reader why, and it is not shown as saved.
+  const told = [];
+  port.postMessage = (message) => {
+    told.push(message);
+    if (message.type === 'command')
+      queueMicrotask(() =>
+        portListeners.forEach((fn) =>
+          fn({
+            type: 'reply',
+            id: message.id,
+            result: { method: 'feed', result: { ok: true, markdown: '', html: '' } },
+          }),
+        ),
+      );
+  };
+  await assert.rejects(feeds.commit(77, 'https://other.test/story'), /no text to save/);
+  assert.deepEqual(
+    told.filter((message) => message.type !== 'command').map((message) => message.type),
+    ['feedSaveFailed'],
+  );
   console.log('PASS the reader opens, fetches images and full text, and saves feed items');
 
   // Unsubscribing everything removes the alarms.

@@ -1,6 +1,6 @@
 import { cleanClip, storeClip } from './clipper.js';
-import { clipCommand, clipSource } from './clip-routing.js';
-import { sniff } from './clip-images.js';
+import { clipCommand, clipNotify, clipSource } from './clip-routing.js';
+import { sameSite, sniff } from './clip-images.js';
 
 // Subscriptions: the service worker fetches feeds on a schedule (chrome.alarms) and hands
 // the raw bytes to the connector, which parses them outside the vault queue and keeps
@@ -479,10 +479,16 @@ export function createFeeds({
   }
 
   // A reader tab's item: the subscription settings and link, kept while the worker runs.
+  // A reader tab's item: the subscription settings and link, kept while the worker runs, for
+  // the most recently used items only.
   const opened = new Map();
+  const OPENED = 50;
   async function item(url) {
-    if (!opened.has(url)) opened.set(url, await request('vault/feeds/open', { url }));
-    return opened.get(url);
+    const value = opened.get(url) || (await request('vault/feeds/open', { url }));
+    opened.delete(url);
+    opened.set(url, value);
+    while (opened.size > OPENED) opened.delete(opened.keys().next().value);
+    return value;
   }
   async function changedNow() {
     await storage.set({ [CHANGED]: now() });
@@ -532,10 +538,18 @@ export function createFeeds({
 
   // Before the first highlight on an item that is not saved yet, the reader hands over its
   // text and the item becomes a vault document, so the highlight has its article.
+  // The reader is told how it went: it shows the item as saved only once it is.
   async function commit(tabId, url) {
     const value = await clipCommand(tabId, { type: 'feedCommit' }).catch(() => null);
     if (!value?.result) return null;
-    return saveItem(url, value);
+    try {
+      const saved = await saveItem(url, value);
+      clipNotify(tabId, { type: 'feedSaved' });
+      return saved;
+    } catch (error) {
+      clipNotify(tabId, { type: 'feedSaveFailed', message: error?.message || String(error) });
+      throw error;
+    }
   }
 
   // Messages from the reader at an item's address (the sender is checked by the caller).
@@ -559,23 +573,43 @@ export function createFeeds({
     }
     const { item: entry, source } = await item(url);
     if (msg.type === 'feedFullText') {
-      // As if the user opened the page: with the site's cookies (paywalled text the user can
-      // read), without a referrer. Only the item's own link is fetched.
-      if (!/^https?:/i.test(entry.link || '')) throw Error('The item has no page');
+      // The item's address without tracking parameters; never an address from the request.
+      const address = /^https?:/i.test(entry.url || '') ? entry.url : '';
+      if (!address) throw Error('The item has no page');
+      // As if the user opened the page, with that site's cookies (subscriber-only text the
+      // user can read), but only for an item on the subscription's own site: an aggregator's
+      // links (Hacker News, Reddit, news digests) are chosen by others. The cookies go to that
+      // site only: a redirect elsewhere is followed without them. No referrer.
+      const own = sameSite(address, source.url) || sameSite(address, source.siteUrl || '');
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), FEED_LIMIT.timeout);
-      try {
-        const response = await fetchImpl(entry.link, {
-          credentials: 'include',
+      const get = (target, cookies) =>
+        fetchImpl(target, {
+          credentials: cookies ? 'include' : 'omit',
+          redirect: cookies ? 'manual' : 'follow',
           referrerPolicy: 'no-referrer',
-          redirect: 'follow',
           signal: controller.signal,
         });
+      try {
+        let response = await get(address, own);
+        if (own && response.type === 'opaqueredirect') {
+          // Where the redirects lead, learned without cookies; the cookies are sent again
+          // only when that is still the item's own site (http to https, www, a slash).
+          response = await get(address, false);
+          const final = response.url || address;
+          if (sameSite(final, address)) {
+            const again = await get(final, true);
+            if (again.type !== 'opaqueredirect') {
+              void response.body?.cancel().catch(() => {});
+              response = again;
+            }
+          }
+        }
         if (!response.ok) throw Error(`HTTP ${response.status}`);
         const type = response.headers.get('content-type') || '';
         if (type && !/html|xml/i.test(type)) throw Error('The page is not HTML');
         const { bytes } = await readBody(response, FEED_LIMIT.size, false);
-        return { html: decodePage(bytes, type), url: response.url || entry.link };
+        return { html: decodePage(bytes, type), url: response.url || address };
       } catch (error) {
         throw Error(
           controller.signal.aborted ? 'The page did not answer within 20 seconds' : error.message,

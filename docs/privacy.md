@@ -180,9 +180,13 @@ subscription (export OPML first to keep the list). Nothing is uploaded or sent t
 like a clip, with no scripts, forms or remote loads. Its images are fetched by the service
 worker without cookies or a referrer (known tracking pixels and counters are skipped), and
 can be turned off per subscription. When a subscription sends only a summary (or always, if
-you choose), Tabgent fetches the item's page for its full text **with that site's cookies**,
-as if you opened it, so subscriber-only text you can read is included; the page is read
-without running it, and the cleaned text is kept in `feeds.db`. Opening, marking read, later
+you choose), Tabgent fetches the item's page for its full text, at its address without
+tracking parameters. When the item is on the subscription's own site (the feed's or its
+website's), the request carries **that site's cookies**, as if you opened the page, so
+subscriber-only text you can read is included. Cookies are sent to that site only: if the
+page redirects to another site, it is fetched again without cookies. Items an aggregator
+links to on other sites (Hacker News, Reddit, news digests) are fetched without cookies.
+No referrer is sent. The page is read without running it, and the cleaned text is kept in `feeds.db`. Opening, marking read, later
 or archive writes only to `feeds.db`. Your first highlight, note or question about an item,
 or **Save to library**, saves it as a vault document like a clipped page (`article.md`,
 `article.html`, its images, fetched without cookies, and `article.json` naming the feed);

@@ -46,6 +46,12 @@ function connect() {
     current.onMessage.addListener((message) => {
       if (message?.type === 'ready') resolve();
       else if (message?.type === 'command') answer(current, message);
+      // The worker saved this item for a highlight or question, or could not.
+      else if (message?.type === 'feedSaved' && feed) {
+        savedNow();
+        notice(t('feedsSavedNotice'));
+      } else if (message?.type === 'feedSaveFailed' && feed)
+        notice(loadTimeData.getStringF('feedsSaveFailed', String(message.message || '')));
     }),
   );
   current.onDisconnect.addListener(() => {
@@ -55,10 +61,9 @@ function connect() {
 }
 function answer(target, { id, command }) {
   let result = null;
-  if (command?.type === 'feedCommit' && feed?.current && !feed.saved) {
+  // Shown as saved only when the worker says so (feedSaved).
+  if (command?.type === 'feedCommit' && feed?.current && !feed.saved)
     result = { result: feed.current.result, method: feed.current.method };
-    savedNow();
-  }
   target.postMessage({ type: 'reply', id, result });
 }
 async function send(message, retry = true) {
@@ -359,7 +364,7 @@ async function showItem({ item, source, content }) {
     result = await clean({ kind: 'feed', html: content.html, ...described });
     method = 'fulltext';
   } else if (
-    web(item.link) &&
+    web(item.url) &&
     (mode === 'always' || (mode === 'auto' && item.contentKind === 'summary'))
   ) {
     $('status').textContent = t('feedsLoadingFullText');
@@ -374,7 +379,8 @@ async function showItem({ item, source, content }) {
   }
   if (!result.ok) return fail(result.message || t('clipNotFound'));
   feed.current = { result, method };
-  $('fullText').hidden = method === 'fulltext' || !web(item.link);
+  // Full text comes from the item's address without tracking parameters.
+  $('fullText').hidden = method === 'fulltext' || !web(item.url);
   const published = Date.parse(item.publishedAt);
   await present({
     html: result.html,

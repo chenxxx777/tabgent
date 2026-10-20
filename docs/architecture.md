@@ -624,8 +624,13 @@ checked by `isCurrentClipSender`) relays `vault/feeds/open`, which marks the add
 and returns the item, its subscription's settings and its content. A saved item shows its
 vault copy as a clip does; otherwise the reader shows the feed's HTML, or full text:
 
-- `feedFullText` fetches the item's own link (never an address from the request) with
-  `credentials: 'include'` and `no-referrer`, at most 5 MiB in 20 s, decoded by its HTTP or
+- `feedFullText` fetches the item's identity address (without tracking parameters; never an
+  address from the request) with `no-referrer`, at most 5 MiB in 20 s. When the item is on
+  the subscription's own site (`sameSite()` from `clip-images.js` against the feed address
+  or its site address), it sends cookies with `redirect: 'manual'`. On an `opaqueredirect`,
+  it fetches again with `credentials: 'omit'` and `redirect: 'follow'` to learn the final
+  address, and with cookies once more only if that address is still the item's own site.
+  Other items (an aggregator's links) are fetched without cookies. The page is decoded by its HTTP or
   `<meta>` charset. The reader extracts the article with Defuddle and caches the cleaned
   HTML with `vault/feeds/content`. Automatic when the subscription's full text setting is
   **Always**, or **When the feed has only a summary** (an item without `content:encoded` or

@@ -1380,7 +1380,8 @@ def open_item(settings, params):
     with _writing(root) as db:
         rows = db.execute(
             "SELECT items.*, sources.title AS source_title, sources.url AS source_url, "
-            "sources.settings AS source_settings FROM items JOIN sources "
+            "sources.site_url AS source_site_url, sources.settings AS source_settings "
+            "FROM items JOIN sources "
             "ON sources.id = items.source_id WHERE items.url = ? ORDER BY items.sort_at DESC",
             (url,),
         ).fetchall()
@@ -1416,6 +1417,7 @@ def open_item(settings, params):
                 "id": row["source_id"],
                 "title": row["source_title"] or "",
                 "url": row["source_url"],
+                "siteUrl": row["source_site_url"] or "",
                 "settings": settings_value if isinstance(settings_value, dict) else {},
             },
             "content": (
@@ -1535,7 +1537,8 @@ def saved(settings, params):
 def library(settings, params):
     """The inbox list: items not saved yet in a view (unread, later, archive or all), and,
     for later and archive, saved documents marked so, newest first. One entry per address;
-    a saved document wins over the items at its address."""
+    a saved document wins over the items at its address. Pages are counted in addresses,
+    so an article in several feeds never pushes another off a page."""
     view = params.get("view", "unread")
     if view not in VIEWS:
         raise VaultError("invalid_params", "view must be unread, later, archive or all")
@@ -1545,7 +1548,22 @@ def library(settings, params):
         _source_id(params["sourceId"]) if params.get("sourceId") is not None else None
     )
     root = vault._root(settings)
-    entries, total = [], 0
+    documents = (
+        vault.library_documents(root, (view,))
+        if view in ("later", "archive") and not source
+        else []
+    )
+    # (newest first, then by address): items by their newest entry, documents by their mark.
+    candidates = [
+        (
+            -vault._instant(found["document"]["library"]["updatedAt"]),
+            found["document"]["url"],
+            found,
+        )
+        for found in documents
+    ]
+    total = len(documents)
+    details = {}
     with _reading(root) as db:
         if db is not None:
             clause = {
@@ -1559,67 +1577,82 @@ def library(settings, params):
             if source:
                 clause += " AND items.source_id = ?"
                 args.append(source)
-            total = db.execute(
+            if documents:
+                # A saved document at an address wins over the items there.
+                db.execute("CREATE TEMP TABLE shown (url TEXT PRIMARY KEY)")
+                db.executemany(
+                    "INSERT OR IGNORE INTO shown (url) VALUES (?)",
+                    [(found["document"]["url"],) for found in documents],
+                )
+                clause += " AND items.url NOT IN (SELECT url FROM shown)"
+            total += db.execute(
                 f"SELECT COUNT(DISTINCT items.url) FROM items WHERE {clause}", args
             ).fetchone()[0]
-            rows = db.execute(
-                "SELECT items.*, sources.title AS source_title FROM items JOIN sources "
-                f"ON sources.id = items.source_id WHERE {clause} "
-                "ORDER BY items.sort_at DESC LIMIT ?",
-                (*args, (offset + limit) * 2 + 20),
+            # One row per address. Without documents to merge this is the page itself;
+            # with them, the first offset + limit addresses are enough to merge.
+            heads = db.execute(
+                f"SELECT items.url, MAX(items.sort_at) AS top FROM items WHERE {clause} "
+                "GROUP BY items.url ORDER BY top DESC, items.url LIMIT ? OFFSET ?",
+                (
+                    *args,
+                    offset + limit if documents else limit,
+                    0 if documents else offset,
+                ),
             ).fetchall()
-            by_url = {}
-            for row in rows:
-                entry = by_url.get(row["url"])
-                if entry is not None:
-                    if row["source_title"] not in entry["sources"]:
+            candidates += [(-head["top"], head["url"], None) for head in heads]
+            candidates.sort(key=lambda candidate: candidate[:2])
+            page = candidates[offset : offset + limit] if documents else candidates
+            wanted = [url for _, url, found in page if found is None]
+            if wanted:
+                marks = ",".join("?" * len(wanted))
+                for row in db.execute(
+                    "SELECT items.*, sources.title AS source_title FROM items JOIN sources "
+                    f"ON sources.id = items.source_id WHERE {clause} AND items.url IN ({marks}) "
+                    "ORDER BY items.sort_at DESC",
+                    (*args, *wanted),
+                ):
+                    entry = details.get(row["url"])
+                    if entry is None:
+                        details[row["url"]] = {
+                            "kind": "item",
+                            **_public_item(row),
+                            "sources": [row["source_title"] or ""],
+                            "read": row["read_at"] is not None,
+                            "saved": row["document_id"] is not None,
+                        }
+                    elif (row["source_title"] or "") not in entry["sources"]:
                         entry["sources"].append(row["source_title"] or "")
-                    continue
-                by_url[row["url"]] = entry = {
-                    "kind": "item",
-                    **_public_item(row),
-                    "sources": [row["source_title"] or ""],
-                    "read": row["read_at"] is not None,
-                    "saved": row["document_id"] is not None,
-                    "sortAt": row["sort_at"],
-                }
-                entries.append(entry)
-    if view in ("later", "archive") and not source:
-        documents = vault.library_documents(root, (view,))
-        addresses = {entry["document"]["url"] for entry in documents}
-        entries = [entry for entry in entries if entry["url"] not in addresses]
-        total += len(documents)
-        for found in documents:
-            document = found["document"]
-            entries.append(
-                {
-                    "kind": "document",
-                    "id": document["id"],
-                    "documentId": document["id"],
-                    "url": document["url"],
-                    "link": (
-                        document["url"]
-                        if re.match(r"https?://", document["url"])
-                        else ""
-                    ),
-                    "title": document["title"],
-                    "author": document.get("author", ""),
-                    "documentKind": document["kind"],
-                    "publishedAt": None,
-                    "summary": "",
-                    "sources": [],
-                    "state": document["library"]["state"],
-                    "read": True,
-                    "saved": True,
-                    "clip": bool(found["clip"] and found["clip"].get("complete")),
-                    "sortAt": vault._instant(document["library"]["updatedAt"]),
-                }
-            )
-    entries.sort(key=lambda entry: entry["sortAt"], reverse=True)
-    page = entries[offset : offset + limit]
-    for entry in page:
-        entry.pop("sortAt", None)
-    return {"items": page, "total": total}
+        else:
+            candidates.sort(key=lambda candidate: candidate[:2])
+            page = candidates[offset : offset + limit]
+    entries = []
+    for _, url, found in page:
+        if found is None:
+            entries.append(details[url])
+            continue
+        document = found["document"]
+        entries.append(
+            {
+                "kind": "document",
+                "id": document["id"],
+                "documentId": document["id"],
+                "url": document["url"],
+                "link": (
+                    document["url"] if re.match(r"https?://", document["url"]) else ""
+                ),
+                "title": document["title"],
+                "author": document.get("author", ""),
+                "documentKind": document["kind"],
+                "publishedAt": None,
+                "summary": "",
+                "sources": [],
+                "state": document["library"]["state"],
+                "read": True,
+                "saved": True,
+                "clip": bool(found["clip"] and found["clip"].get("complete")),
+            }
+        )
+    return {"items": entries, "total": total}
 
 
 def opml_parse(settings, params, prepared=None):

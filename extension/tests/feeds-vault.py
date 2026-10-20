@@ -559,6 +559,90 @@ with tempfile.TemporaryDirectory(prefix="tabgent-feeds-inbox-") as directory:
             == "invalid_params"
         )
 
+# Paging counts addresses: the same 30 articles in three feeds page as 30 entries, each
+# once; later and archive mix items and saved documents without skipping either.
+with tempfile.TemporaryDirectory(prefix="tabgent-feeds-pages-") as directory:
+    base = Path(directory)
+    settings = base / "codex/projects/tabgent/vault.json"
+    root = base / "ReadingVault"
+    with patch.object(vault, "default_path", lambda: root):
+        for name in ("a", "b", "c"):
+            source = call(
+                settings,
+                "vault/feeds/subscribe",
+                {"url": f"https://{name}.example/rss", "data": rss(entries([]), name)},
+            )["source"]["id"]
+            # The newest 20 of a first fetch are unread; a second fetch adds the rest.
+            fetch(settings, source, range(30))
+
+        def pages(view, size):
+            found, offset = [], 0
+            while True:
+                page = call(
+                    settings,
+                    "vault/feeds/library",
+                    {"view": view, "limit": size, "offset": offset},
+                )
+                found += [item["url"] for item in page["items"]]
+                offset += size
+                if offset >= page["total"]:
+                    return found, page["total"]
+
+        urls, total = pages("unread", 7)
+        assert total == 30 and len(urls) == 30 and len(set(urls)) == 30, (
+            total,
+            len(urls),
+        )
+        assert urls[0].endswith("/post-29") and urls[-1].endswith("/post-0")
+
+        # Later: 12 items, and 5 saved documents marked later in between.
+        later = [f"https://site.example/post-{n}" for n in range(0, 24, 2)]
+        call(settings, "vault/feeds/mark", {"urls": later, "state": "later"})
+        for n in range(5):
+            page_url = f"https://saved.example/doc-{n}"
+            vault_call(
+                settings,
+                "vault/highlight/create",
+                {
+                    "url": page_url,
+                    "title": f"Doc {n}",
+                    "kind": "web",
+                    "text": "quote",
+                    "anchor": {"kind": "web", "quote": {"exact": "quote"}},
+                },
+            )
+            vault_call(
+                settings,
+                "vault/document/state",
+                {"url": page_url, "title": "", "kind": "web", "state": "later"},
+            )
+        urls, total = pages("later", 2)
+        assert total == 17 and len(urls) == 17 and len(set(urls)) == 17, (total, urls)
+        assert sum(url.startswith("https://saved.example/") for url in urls) == 5
+        # A saved document at an item's address is listed once, as the document.
+        vault_call(
+            settings,
+            "vault/highlight/create",
+            {
+                "url": later[0],
+                "title": "Post 0",
+                "kind": "web",
+                "text": "quote",
+                "anchor": {"kind": "web", "quote": {"exact": "quote"}},
+            },
+        )
+        vault_call(
+            settings,
+            "vault/document/state",
+            {"url": later[0], "title": "", "kind": "web", "state": "later"},
+        )
+        urls, total = pages("later", 3)
+        assert total == 17 and urls.count(later[0]) == 1, (total, urls)
+        listed = call(settings, "vault/feeds/library", {"view": "later", "limit": 50})
+        assert [i["kind"] for i in listed["items"] if i["url"] == later[0]] == [
+            "document"
+        ]
+
 # The host parses feeds on its feed thread, then writes on the vault queue in order.
 sys.path.insert(0, str(TESTS.parent / "native"))
 import host
