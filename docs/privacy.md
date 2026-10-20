@@ -86,7 +86,7 @@ symlink so existing attachment paths remain valid.
 | `Books/book-*/` in the vault                | Imported EPUB files, their SHA-256 record, and chapter text.            |
 | `Books/paper-*/` in the vault               | PDF highlights; imported or highlighted local PDFs, SHA-256, page text. |
 | `Articles/article-*/` in the vault          | Webpage highlights; a clipped page's text, HTML, images and record.     |
-| `.tabgent/feeds.db` in the vault            | Subscriptions, their items' titles, summaries and content, read state.  |
+| `.tabgent/feeds.db` in the vault            | Subscriptions; items' text, full text read, later and archive state.    |
 | Chrome extension local storage              | Note saves awaiting retry (at most 100), EPUB positions, file prompt.   |
 | `$CODEX_HOME/projects/tabgent/vault.json`   | The configured ReadingVault folder.                                     |
 | Shared Codex session storage and index      | Conversation history and project association.                           |
@@ -175,6 +175,19 @@ and the feed's own content) are kept in `.tabgent/feeds.db` in the vault, which 
 does not show and `reading_vault` does not read; subscribing adds no folders to the vault.
 Unsubscribing deletes that subscription's items; deleting `feeds.db` removes every
 subscription (export OPML first to keep the list). Nothing is uploaded or sent to Codex.
+
+**Reading items.** An item opens in Tabgent's reader, which shows the feed's content cleaned
+like a clip, with no scripts, forms or remote loads. Its images are fetched by the service
+worker without cookies or a referrer (known tracking pixels and counters are skipped), and
+can be turned off per subscription. When a subscription sends only a summary (or always, if
+you choose), Tabgent fetches the item's page for its full text **with that site's cookies**,
+as if you opened it, so subscriber-only text you can read is included; the page is read
+without running it, and the cleaned text is kept in `feeds.db`. Opening, marking read, later
+or archive writes only to `feeds.db`. Your first highlight, note or question about an item,
+or **Save to library**, saves it as a vault document like a clipped page (`article.md`,
+`article.html`, its images, fetched without cookies, and `article.json` naming the feed);
+Codex can then read it like other notes. Later and archive of a saved item are kept in its
+`anchors.json`.
 
 The EPUB reader renders books locally in an extension page with book scripts and
 remote resources blocked. Opening a book copies it into the reading vault, with its

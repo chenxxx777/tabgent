@@ -511,7 +511,7 @@ SHA-256 in `article.json` and refuses a changed copy, then cleans it again with 
 DOMPurify allowlist plus `SANITIZE_NAMED_PROPS` (ids get a `user-content-` prefix, so page
 markup cannot shadow Tabgent's globals; fragment links are rewritten to match). The page's
 policy is `default-src 'none'` with `script-src 'self'`, `style-src 'self'`,
-`img-src 'self' blob: data:`, `connect-src 'none'`, `frame-src 'none'`, `form-action 'none'`
+`img-src 'self' blob: data:`, `connect-src 'none'`, `frame-src 'self'` (only Tabgent's cleaning page), `form-action 'none'`
 and `require-trusted-types-for 'script'` with only DOMPurify's policy, on top of the
 extension policy that forbids inline scripts. Nothing is loaded from the web: images
 recorded in `article.json` are read from the vault in chunks when they come into view and
@@ -586,7 +586,7 @@ flowchart LR
   `&nbsp;` without any DTD is read again with numeric references. Input is at most 5 MiB,
   100,000 elements and depth 100; at most the newest 200 entries are read, item HTML is
   bounded to 512 Ki characters and summaries to 1,000. Item HTML is stored as the feed
-  sent it and is untrusted; this change does not render it.
+  sent it and is untrusted; the reader cleans it before showing it.
 - **Threads.** `host.py` parses `preview`, `subscribe` and `ingest` on a single
   `FEED_POOL` thread, outside the vault lock and queue, then writes on `VAULT_POOL` in one
   `BEGIN IMMEDIATE` transaction under the vault lock. `preview` and `opml/parse` need no
@@ -594,7 +594,7 @@ flowchart LR
 - **Index.** `.tabgent/feeds.db` (SQLite, `journal_mode=DELETE`, created by the first
   subscription; reads never create it; a link at its place is refused) has `sources`
   (address, title, category, settings, validators, schedule, failures, status), `items`
-  (identity, title, author, dates, summary, state), `item_content` (the feed's HTML) and
+  (identity, title, author, dates, summary, state), `item_content` (the feed's HTML, or the cleaned full text) and
   `seen`. Item keys are the guid, Atom `id` or JSON Feed `id`, else the link, else a hash
   of the title, date and summary; an entry with a known key, or a new guid for a known
   link, is the same item, and a changed entry is updated in place. The identity link drops
@@ -606,8 +606,54 @@ flowchart LR
 - **Senders.** Every `feeds*` message must come from the library page whose `epub` port is
   registered (`isCurrentEpubSender`); content scripts and other pages are refused.
 
-Items open their page in a new tab, by the identity link. Reading items in Tabgent, their
-states and saving them as vault documents follow in a later change.
+### Reading and saving items
+
+**The inbox.** `vault/feeds/library` lists one entry per address, newest first, for the views
+unread (`state = 'inbox'`, not read), later, archive and all, optionally for one
+subscription; an address in several feeds names all of them. Later and archive also list
+saved documents marked so (`document.library` in `anchors.json`, set with
+`vault/document/state`); a saved document wins over the items at its address.
+`vault/feeds/mark` sets read, unread and the state by address, so every feed's entry
+changes together, and **Mark all as read** marks the unread items of the inbox or of one
+subscription, with their other feeds' entries.
+
+**The reader.** An item opens in the clip reader at its address (`clip/reader.html?url=`, the
+identity link, or `urn:tabgent:feed:<sha256 of subscription address and key>` for an entry
+without a link, which `clipSource()` accepts). `feedOpen` (from the reader's own address,
+checked by `isCurrentClipSender`) relays `vault/feeds/open`, which marks the address read
+and returns the item, its subscription's settings and its content. A saved item shows its
+vault copy as a clip does; otherwise the reader shows the feed's HTML, or full text:
+
+- `feedFullText` fetches the item's own link (never an address from the request) with
+  `credentials: 'include'` and `no-referrer`, at most 5 MiB in 20 s, decoded by its HTTP or
+  `<meta>` charset. The reader extracts the article with Defuddle and caches the cleaned
+  HTML with `vault/feeds/content`. Automatic when the subscription's full text setting is
+  **Always**, or **When the feed has only a summary** (an item without `content:encoded` or
+  Atom content, or with under 1,000 characters of it); otherwise on request.
+- Cleaning runs in `clip/extract.html`, a same-origin frame (the reader's policy now allows
+  `frame-src 'self'`) that loads Defuddle, Turndown, DOMPurify and `clip-content.js` and
+  nothing else. The reader keeps Trusted Types, which Defuddle and HTML parsing cannot meet,
+  and calls the frame's `tabgentClip.clean()` directly. `clean()` shares the clipping
+  script's pipeline (`finish()`): links, frames and media, images as `data-remote-src`,
+  DOMPurify, the Markdown and the limits. The reader cleans the result again before showing
+  it.
+- Images come from `feedImage`: the worker fetches the address without cookies or a
+  referrer, skips known trackers (feed counters, analytics and `pixel`/`beacon` images),
+  keeps JPEG, PNG, GIF, WebP and AVIF by their bytes up to 5 MiB, and refuses all when the
+  subscription's images are off. The reader shows them as `blob:` URLs.
+
+**Saving.** **Save to library**, or a highlight, note or question about an item not saved
+yet, saves what the reader shows. For a highlight the worker asks the reader over its `clip`
+port (`feedCommit`) before `vault/highlight/create`, after opening the side panel for Ask
+AI; for a question the reading companion does the same before it builds the reading context,
+so Codex gets the `article.md` path. `feedSave` bounds the result with `cleanClip`, fetches
+the images without cookies, and calls `vault/clip/save` with
+`origin: { type: 'feed', method: 'feed' | 'fulltext', sourceId, sourceUrl, sourceTitle, guid,
+publishedAt, pageUrl }`, which accepts `urn:tabgent:feed:` addresses for feed items only.
+`vault/feeds/saved` then links every item at the address to the document and moves its
+later or archive state into `document.library`, in the vault lock. A page clipped before is
+not replaced: the item joins that document. Prev/next navigation between items is not
+implemented.
 
 ## Files from the computer
 
