@@ -20,6 +20,9 @@
   "pageContext": {
     "message": "Page context"
   },
+  "pageClosedContext": {
+    "message": "$1 (closed)"
+  },
   "promptLabel": {
     "message": "Message Codex"
   },
@@ -987,6 +990,9 @@
   },
   "highlightUnanchoredHint": {
     "message": "This highlight's text was not found on the current page. Its notes are kept."
+  },
+  "highlightPageClosed": {
+    "message": "This page is closed. The highlight and its notes are kept."
   },
   "highlightTurns": {
     "message": "$1 saved"

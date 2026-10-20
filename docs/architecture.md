@@ -44,6 +44,11 @@ ports and retain its original page context. The sidebar beside an Agent tab has
 an independent session with the Agent tab as its context. The `agentViews` map
 records ownership before the Agent page loads. Closing the source transfers
 ownership to a remaining Agent tab; the native process closes with the final view.
+The Agent tab keeps the closed page as its companion (`agentCompanions`): each
+message names it with its last known address and `closed: true`, browser scope
+follows the Agent tab's own window, and a browser action on the closed tab fails
+with a tool error that says so. Sessions created in that view (Agent +, page
+history, a highlight) belong to the Agent tab and start with what it knew of the page.
 A prewarmed spare reduces startup work. Full Agent tabs hide the expand button.
 
 Chrome owns the toolbar's sidebar toggle. The Agent + button creates an independent
@@ -456,14 +461,18 @@ exit when the worker's port closes, which also ends any running turn.
 A quote that carries `highlight: { documentId, highlightId }` binds its conversation
 to that highlight. Any reader can send it (web, PDF or EPUB, named by the highlight or
 locator `kind`). Follow-ups keep the binding while the companion page shows the same
-document. **Ask AI** on a highlight with saved turns reopens its latest thread through
-the page-history resume path, with the quote attached again. A new highlight reuses an
-empty conversation and otherwise starts its own, so each highlight's thread holds its
-discussion. The highlight list in the Page conversations drawer does the same, and
-jumps to anchored highlights; unanchored ones are marked and keep their notes. Each
-entry shows the user's note and edits it inline (`readingNote`); the worker checks the
-highlight against the companion tab's document, saves it, and asks the page or reader
-to refresh its highlight records. A draft survives list refreshes.
+document. The worker remembers the document each companion tab last showed
+(`pageDocuments`, forgotten when the tab navigates elsewhere; the EPUB reader keeps
+its book while the tab stays in the reader, as on a reload), so after the page closes
+its Agent tab still binds to it and saves there. **Ask AI** on a highlight with saved
+turns reopens its latest thread through the page-history resume path, with the quote
+attached again. A new highlight reuses an empty conversation and otherwise starts its
+own, so each highlight's thread holds its discussion. The highlight list in the Page
+conversations drawer does the same, and jumps to anchored highlights; unanchored ones
+are marked and keep their notes. Each entry shows the user's note and edits it inline
+(`readingNote`); the worker checks the highlight against the companion tab's document,
+saves it, and asks the page or reader to refresh its highlight records. A draft
+survives list refreshes.
 
 The worker adds a hidden reading-context part after the browser context of each
 message. It names the document (title, URL, kind and notes file), the bound
@@ -584,8 +593,10 @@ index, while unavailable records remain hidden for a later retry.
 Each Agent view retains its own companion tab, independently of its shared thread.
 The connector prepends a text context item (tab ID, window ID, URL, title) to each
 submitted message. Queued messages retain this snapshot when started or steered
-from another view. The UI hides this routing item and continues showing the bound
-page in the composer. Page titles and URLs are treated as untrusted data.
+from another view. When the companion tab has closed, the item keeps the page's last
+known URL and title and adds `closed: true`. The UI hides this routing item and
+continues showing the bound page in the composer, marked closed once it is. Page
+titles and URLs are treated as untrusted data.
 
 Every browser action requires an explicit `tabId`, including `context`, `tabs`, and
 `open` (where it identifies the source window's tab). Missing IDs fail validation;

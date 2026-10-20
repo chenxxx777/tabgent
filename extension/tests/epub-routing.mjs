@@ -29,6 +29,7 @@ const native = {
 };
 const reader = 'chrome-extension://test/epub/reader.html';
 const tabs = { 1: { id: 1, windowId: 1, url: reader + '?book=book-small-1a2b3c4d' } };
+const closedTabs = new Set();
 const created = [],
   menus = [];
 globalThis.chrome = {
@@ -54,8 +55,12 @@ globalThis.chrome = {
   },
   sidePanel: { setPanelBehavior: async () => {}, open: async () => {} },
   tabs: {
-    get: async (id) => tabs[id] || { id, windowId: 1, url: 'https://example.test/' },
+    get: async (id) => {
+      if (closedTabs.has(id)) throw Error(`No tab with id: ${id}.`);
+      return tabs[id] || { id, windowId: 1, url: 'https://example.test/' };
+    },
     create: async (options) => (created.push(options), { id: 9 }),
+    update: async (id, value) => ({ id, windowId: 1, ...value }),
     onRemoved: event(),
   },
   webNavigation: { onCommitted: event(), getFrame: async () => null },
@@ -494,3 +499,53 @@ chrome.contextMenus.onClicked.listeners[0](
 await new Promise((r) => setTimeout(r, 0));
 assert.deepEqual(created, [{ url: reader, windowId: 7, index: 3 }]);
 console.log('PASS the toolbar context menu opens the EPUB reader');
+
+// The book's discussion continues in an Agent tab after the reader is reloaded and closed:
+// the reader's address names the reader, so the reload keeps the book it showed.
+const busySession = turn.session;
+await native.onMessage.listeners[0]({
+  session: busySession,
+  message: { method: 'turn/completed', params: { turn: { id: 'why', status: 'interrupted' } } },
+});
+for (const listener of port.onMessage.listeners)
+  listener({ type: 'book', sha256, title: 'A Small Book' });
+assert.equal((await side({ type: 'readingState' })).page.kind, 'epub');
+const agentTab = await side({ type: 'openAgent', windowId: 1 });
+assert.equal(agentTab.tabId, 9);
+const agentMessages = [];
+const agent = {
+  name: 'chat',
+  sender: { url: chat.sender.url, id: 'test', tab: { id: 9 }, frameId: 0 },
+  onMessage: event(),
+  onDisconnect: event(),
+  postMessage: (m) => agentMessages.push(m),
+};
+onConnect(agent);
+await agent.onMessage.listeners[0]({ type: 'attach', tabId: 9 });
+assert.equal(agentMessages[0].state.companionTabId, 1);
+// A reload commits the reader's address again; the new reader has not named its book yet.
+for (const listener of port.onDisconnect.listeners) listener();
+for (const listener of chrome.webNavigation.onCommitted.listeners)
+  await listener({ tabId: 1, frameId: 0, url: reader + '?book=book-small-1a2b3c4d' });
+closedTabs.add(1);
+for (const listener of chrome.tabs.onRemoved.listeners) await listener(1);
+await agent.onMessage.listeners[0]({
+  type: 'ui',
+  name: 'codexRpc',
+  args: [{ id: 51, method: 'turn/start', params: { input: [{ type: 'text', text: 'And?' }] } }],
+});
+assert(!agentMessages.some((m) => m.value?.method === 'bridge/error'));
+const afterReload = sent.findLast((m) => m.op === 'rpc' && m.message.method === 'turn/start');
+assert.notEqual(afterReload, turn);
+const afterReloadReading = JSON.parse(
+  afterReload.message.params.input
+    .find((p) => p.text?.startsWith(readingContextPrefix))
+    .text.slice(readingContextPrefix.length),
+);
+assert.equal(afterReloadReading.saving, 'highlight');
+assert.equal(afterReloadReading.highlight.id, 'h001');
+assert.deepEqual(
+  (({ url, kind, chapters }) => ({ url, kind, chapters }))(afterReloadReading.document),
+  { url: 'urn:sha256:' + sha256, kind: 'epub', chapters: folder + '/chapters' },
+);
+console.log('PASS a reloaded, then closed EPUB reader keeps its book for the Agent tab');
