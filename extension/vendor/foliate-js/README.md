@@ -65,8 +65,8 @@ unfamiliar-site JavaScript optimizer blocking is enabled: the same failure can
 be reproduced without field trials by setting the temporary profile preference
 `safebrowsing.javascript_optimizer_blocked_for_unfamiliar_sites` to `true`.
 The everyday Chrome profile is not needed for this compatibility check. Recheck these patches when updating the
-vendor and run `npm run test:epub` (direct Chrome launch plus CDP, headed on macOS;
-`EPUB_HEADLESS=1` also exercises direct headless Chrome).
+vendor and run `npm run test:epub` (direct Chrome launch plus CDP, headless by
+default; `EPUB_HEADED=1` shows the window).
 
 ## Updating
 
