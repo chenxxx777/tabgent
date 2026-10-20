@@ -71,6 +71,7 @@ export async function readingRequest(type,params={}){
  if(type==='readingJump')return {found:params.highlightId!=='h002'};
  if(type==='readingSave')value.save={explicit:params.enabled,target:params.enabled?'document':'off'};
  if(type==='vaultConfigure'){if(!/^[\/~]/.test(params.path))throw Error('path must be absolute');value.vault={...value.vault,path:params.path};}
+ if(type==='readingNote'){if(params.note==='fail')throw Error('Disk is busy');value.highlights.find(h=>h.id===params.highlightId).note=params.note;}
  return structuredClone(value);
 }
 export async function startBridge(){if(mode==='attach-failure')throw Error('Missing tab');}
@@ -1373,6 +1374,122 @@ export function saveScopePreference(){}
         await page.waitForFunction(() =>
           setupTest.reading.some((r) => r.type === 'readingJump' && r.highlightId === 'h001'),
         );
+
+        // The user's own note: add it inline, keep it across refreshes, edit and remove it.
+        const noteButton = entries.nth(0).locator('.highlight-note-button');
+        assert.equal(await noteButton.textContent(), 'Add note');
+        await noteButton.click();
+        const noteInput = entries.nth(0).locator('.highlight-note-form textarea');
+        assert.equal(await noteInput.evaluate((e) => e === document.activeElement), true);
+        assert.equal(await noteButton.getAttribute('aria-expanded'), 'true');
+        await page.keyboard.type('Endorsement, not independence.');
+        // A refresh while typing keeps the draft and the focus.
+        await page.evaluate(() => setupTest.event('codex-reading-changed'));
+        await page.waitForTimeout(100);
+        assert.equal(await noteInput.inputValue(), 'Endorsement, not independence.');
+        assert.equal(await noteInput.evaluate((e) => e === document.activeElement), true);
+        await page.keyboard.press('Escape');
+        assert.equal(await entries.nth(0).locator('.highlight-note-form').count(), 0);
+        assert.equal(
+          await noteButton.evaluate((e) => e === document.activeElement),
+          true,
+          'Escape returns focus to the note button',
+        );
+        assert(
+          !(await page.evaluate(() => setupTest.reading.some((r) => r.type === 'readingNote'))),
+        );
+        await page.keyboard.press('Enter');
+        await noteInput.fill('fail');
+        await page.keyboard.press('ControlOrMeta+Enter');
+        await entries.nth(0).locator('.highlight-note-error').waitFor();
+        assert.equal(
+          await entries.nth(0).locator('.highlight-note-error').textContent(),
+          'The note could not be saved: Disk is busy',
+        );
+        await noteInput.fill('  My view: endorsement.\nSecond line.  ');
+        await entries.nth(0).locator('.highlight-note-form button[type="submit"]').click();
+        await entries.nth(0).locator('.highlight-note').waitFor();
+        assert.deepEqual(
+          await page.evaluate(() => setupTest.reading.findLast((r) => r.type === 'readingNote')),
+          {
+            type: 'readingNote',
+            documentId: 'article-x',
+            highlightId: 'h001',
+            note: 'My view: endorsement.\nSecond line.',
+          },
+        );
+        assert.equal(
+          await entries.nth(0).locator('.highlight-note').textContent(),
+          'My view: endorsement.\nSecond line.',
+        );
+        assert.equal(await noteButton.textContent(), 'Edit note');
+        await noteButton.click();
+        assert.equal(await noteInput.inputValue(), 'My view: endorsement.\nSecond line.');
+        await noteInput.fill('');
+        await page.keyboard.press('ControlOrMeta+Enter');
+        await page.waitForFunction(
+          () => !document.querySelector('.highlight-entry .highlight-note-form'),
+        );
+        assert.equal(await entries.nth(0).locator('.highlight-note').count(), 0);
+        assert.equal(await noteButton.textContent(), 'Add note');
+        console.log('PASS highlight list notes: add, keep draft on refresh, Escape, error, remove');
+
+        // Highlight IDs restart in every document: a draft on article-x h001 must not reopen
+        // under another document's h001 when the panel follows the tab to it.
+        await noteButton.click();
+        await noteInput.fill('Draft for the first article');
+        const original = await page.evaluate(() => {
+          const value = setupTest.readingValue;
+          const saved = structuredClone({
+            page: value.page,
+            document: value.document,
+            highlights: value.highlights,
+          });
+          value.page = { url: 'https://example.test/other', title: 'Other', kind: 'web' };
+          value.document = {
+            id: 'article-y',
+            highlightsPath: '/vault/ReadingVault/Articles/article-y/highlights.md',
+          };
+          value.highlights = [
+            {
+              id: 'h001',
+              text: 'Another article',
+              location: '',
+              turnCount: 0,
+              anchored: true,
+              note: 'Kept',
+            },
+          ];
+          setupTest.event('codex-reading-changed');
+          return saved;
+        });
+        await page.waitForFunction(
+          () =>
+            document.querySelector('.highlight-entry .highlight-quote')?.textContent ===
+            'Another article',
+        );
+        assert.equal(await page.locator('.highlight-note-form').count(), 0, 'The draft is dropped');
+        assert.equal(await entries.nth(0).locator('.highlight-note').textContent(), 'Kept');
+        assert.equal(await noteButton.getAttribute('aria-expanded'), 'false');
+        await noteButton.click();
+        assert.equal(await noteInput.inputValue(), 'Kept', "The new document's own note opens");
+        await page.keyboard.press('Escape');
+        assert(
+          !(await page.evaluate(() =>
+            setupTest.reading.some((r) => r.type === 'readingNote' && r.documentId === 'article-y'),
+          )),
+          'Nothing was saved to the other document',
+        );
+        // Going back: the old draft does not come back either.
+        await page.evaluate((saved) => {
+          Object.assign(setupTest.readingValue, saved);
+          setupTest.event('codex-reading-changed');
+        }, original);
+        await page.waitForFunction(
+          () => document.querySelectorAll('.highlight-entry').length === 2,
+        );
+        assert.equal(await page.locator('.highlight-note-form').count(), 0);
+        console.log('PASS a note draft closes when the panel switches to another document');
         await page.evaluate(() => (window.beforeReload = true));
         await entries.nth(0).locator('.highlight-open').click();
         await page.waitForFunction(() => !window.beforeReload);

@@ -280,6 +280,83 @@ footer {
 .floating button {
   padding: 6px 10px;
 }
+#highlightMenu {
+  max-width: min(360px, calc(100vw - 16px));
+}
+.note,
+#highlightList .note {
+  display: block;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+#highlightMenu .note {
+  max-height: 8.6em;
+  overflow: auto;
+  margin: 2px 0 4px;
+  padding: 6px 10px 8px;
+  border-bottom: 1px solid var(--border);
+  line-height: 1.45;
+}
+.note .label,
+.editor .label {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+#highlightList .note {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin-top: 4px;
+  font-size: 12px;
+}
+.editor {
+  width: min(360px, calc(100vw - 16px));
+  padding: 10px;
+}
+.editor .quote {
+  display: block;
+  overflow: hidden;
+  margin-bottom: 8px;
+  color: var(--muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.editor textarea {
+  display: block;
+  width: 100%;
+  min-height: 6.5em;
+  max-height: 40vh;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  font: inherit;
+  line-height: 1.45;
+  color: inherit;
+  resize: vertical;
+}
+.editor textarea:focus-visible {
+  outline: 2px solid #3b82f6;
+  outline-offset: 0;
+}
+.editor .row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 8px;
+}
+.editor .hint {
+  flex: 1;
+  color: var(--muted);
+  font-size: 12px;
+}
+.editor .error {
+  margin-top: 6px;
+  color: #b7392b;
+}
 #toast {
   position: fixed;
   inset: auto 0 56px;

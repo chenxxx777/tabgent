@@ -244,6 +244,26 @@ const fixture = textPdf(
       );
       return outerHTML;
     }
+    // The reading layer's closed shadow root inside the PDF.js frame, as Markup.
+    async function layerHtml() {
+      const client = await page.context().newCDPSession(page);
+      const { root: document } = await client.send('DOM.getDocument', { depth: -1, pierce: true });
+      let shadow = null;
+      (function walk(node) {
+        if (node.localName === 'tabgent-reader') shadow = node.shadowRoots?.[0];
+        for (const child of [
+          ...(node.children || []),
+          ...(node.shadowRoots || []),
+          ...(node.contentDocument ? [node.contentDocument] : []),
+        ])
+          walk(child);
+      })(document);
+      const { outerHTML } = await client.send('DOM.getOuterHTML', {
+        backendNodeId: shadow.backendNodeId,
+      });
+      await client.detach();
+      return outerHTML;
+    }
 
     let worker = await launch();
     await open();
@@ -378,6 +398,28 @@ const fixture = textPdf(
     ]);
     console.log('PASS restart restores PDF highlights');
 
+    // The user's own note on h002, added from the popover, survives a reload.
+    const note = '我的看法: autonomy is endorsement, not isolation.';
+    const target = await textPoint('independence');
+    await page.mouse.click(target.left + 4, target.y);
+    await wait(300);
+    await press('note');
+    await page.keyboard.type(note);
+    await page.keyboard.press('Control+Enter');
+    assert(await until(() => docs()[0].anchors.highlights[1].note === note));
+    assert.match(
+      docs()[0].markdown,
+      /## Highlight 002[\s\S]*<!-- tabgent:note h002 start -->\n\n### 笔记\n\n我的看法: autonomy is endorsement, not isolation\.\n\n<!-- tabgent:note h002 end -->\n\n### 对话/,
+    );
+    await page.close();
+    await open('');
+    await until(async () => (await painted()).length === 2);
+    const reloaded = await textPoint('independence');
+    await page.mouse.click(reloaded.left + 4, reloaded.y);
+    await wait(300);
+    assert((await layerHtml()).includes(`<span>${note}</span>`), 'The note shows on click');
+    console.log('PASS a PDF highlight note is saved from the popover and shown after a reload');
+
     const discussed = await textPoint('independence');
     await page.mouse.click(discussed.left + 4, discussed.y);
     await wait(300);
@@ -409,6 +451,15 @@ const fixture = textPdf(
       /## Highlight 002[\s\S]*Why is autonomy[\s\S]*Give an example\.[\s\S]*Fixture answer 2\./,
     );
     console.log('PASS Open discussion after a restart reopens the same thread and keeps saving');
+    // Through the real connector, the message about h002 carried the note as the user's.
+    const stored = JSON.parse(fs.readFileSync(path.join(home, 'codex/fixture-threads.json')));
+    const sentInput = stored[turn.threadId].at(-1).items[0].content;
+    const prefix = 'Reading context for this message';
+    const readingPart = sentInput.find((part) => part.text?.startsWith(prefix));
+    const reading = JSON.parse(readingPart.text.slice(readingPart.text.indexOf('\n') + 1));
+    assert.equal(reading.highlight.id, 'h002');
+    assert.equal(reading.highlight.userNote, note);
+    console.log("PASS the follow-up's reading context carries the user's note to Codex");
 
     // A new conversation on the PDF saves page questions to the PDF's document notes.
     await panel(`document.getElementById('newConversation').click()`);

@@ -383,6 +383,29 @@ async function until(check, ms = 10000) {
       'PASS clicking a highlight offers Ask AI and Delete; both reach the vault and chat',
     );
 
+    // The user's own note: Add note in the highlight menu, saved to the vault files.
+    const note = '我的看法: the repetition is deliberate.';
+    const noteFile = () => fs.readFileSync(path.join(folder, 'highlights.md'), 'utf8');
+    await page.mouse.click(repeated.x1 + 4, repeated.y1);
+    await page.waitForSelector('#highlightMenu:popover-open');
+    assert.equal(await page.isHidden('#menuNote'), true);
+    assert.equal(await page.textContent('#menuNoteEdit'), await message('highlightNoteAdd'));
+    await page.click('#menuNoteEdit');
+    await page.waitForSelector('#noteEditor:popover-open');
+    assert.equal(await page.evaluate(() => document.activeElement?.id), 'noteText');
+    await page.keyboard.type(note);
+    await page.keyboard.press('Tab');
+    assert.equal(await page.evaluate(() => document.activeElement?.id), 'noteCancel');
+    await page.keyboard.press('Shift+Tab');
+    await page.keyboard.press('Control+Enter');
+    await until(() => saved().highlights.find((h) => h.id === 'h004')?.note === note);
+    await page.waitForSelector('#noteEditor:not(:popover-open)', { state: 'attached' });
+    assert.match(
+      noteFile(),
+      /> Repeated line\. Shared ending two\n\n<!-- tabgent:note h004 start -->\n\n### 笔记\n\n我的看法: the repetition is deliberate\.\n/,
+    );
+    console.log('PASS an EPUB highlight note is saved from the highlight menu');
+
     // Restart the browser. A record that no longer matches the text stays unanchored.
     await context.close();
     const data = saved();
@@ -394,9 +417,17 @@ async function until(check, ms = 10000) {
     await page.waitForSelector('#viewer:not([hidden])');
     assert(await until(async () => (await chapterTitle()) === 'Chapter Two: Repetition'));
     assert(await paintedIs(1));
+    // After the restart, clicking the highlight shows the note; the list shows it too.
+    const kept = await textBox('Shared ending two');
+    await page.mouse.click(kept.x1 + 4, kept.y1);
+    await page.waitForSelector('#highlightMenu:popover-open');
+    assert.equal(await page.textContent('#menuNoteText'), note);
+    assert.equal(await page.textContent('#menuNoteEdit'), await message('highlightNoteEdit'));
+    await page.keyboard.press('Escape');
     await page.click('#contentsButton');
     await page.click('#highlightsTab');
     await page.waitForSelector('#highlightList li.unanchored');
+    assert.equal(await page.textContent('#highlightList li .note'), note);
     assert.equal(await page.locator('#highlightList li').count(), 3);
     assert.equal(await page.locator('#highlightList li.unanchored').count(), 1);
     assert.equal(await page.locator('#highlightList li.anchored').count(), 2);

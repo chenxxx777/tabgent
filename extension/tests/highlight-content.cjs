@@ -66,6 +66,12 @@ const assert = require('node:assert/strict'),
           return { ok: true };
         }
         if (message.type === 'highlightAsk') return { panelOpened: vault.panelOpened };
+        if (message.type === 'highlightNote') {
+          if (vault.noteError) return { error: vault.noteError, code: 'io_error' };
+          const highlight = vault.highlights.find((h) => h.id === message.highlightId);
+          highlight.note = message.note;
+          return { highlight: { ...highlight } };
+        }
         return {};
       };
       globalThis.chrome = {
@@ -110,6 +116,7 @@ const assert = require('node:assert/strict'),
         },
       );
     });
+    await page.addScriptTag({ path: path.resolve(__dirname, '../highlight-note.js') });
     await page.addScriptTag({ path: path.resolve(__dirname, '../highlight-content.js') });
     const painted = () => page.evaluate(() => CSS.highlights.get('tabgent-highlight').size);
     const lastSent = (type) => page.evaluate((t) => sent.filter((m) => m.type === t).at(-1), type);
@@ -329,6 +336,127 @@ const assert = require('node:assert/strict'),
     await page.keyboard.press('Escape');
     console.log('PASS side panel jump / nearby text / refreshed discussion state');
 
+    // The user's own note: the popover offers it, the editor saves it, a click shows it.
+    const editorOpen = () =>
+      page.evaluate(() => !!ui.querySelector('.editor') && !ui.querySelector('.editor').hidden);
+    const uiFocus = () =>
+      page.evaluate(() => ui.activeElement?.dataset.action || ui.activeElement?.localName || null);
+    const notes = () => page.evaluate(() => sent.filter((m) => m.type === 'highlightNote'));
+    const clickSaved = async () => {
+      const at = await box('#saved', 'saved');
+      await page.mouse.click(at.left + 5, at.y);
+      await page.waitForFunction(() => !ui.querySelectorAll('.bar')[1].hidden);
+    };
+    await clickSaved();
+    assert.equal(
+      await page.evaluate(() => ui.querySelector('[data-action="note"]').textContent),
+      'highlightNoteAdd',
+    );
+    assert.equal(await page.evaluate(() => ui.querySelector('.note').hidden), true);
+    const addNote = await button('note');
+    await page.mouse.click(addNote.x, addNote.y);
+    assert.equal(await editorOpen(), true);
+    assert.equal(await uiFocus(), 'textarea');
+    assert.deepEqual(
+      (await visible()).filter((v) => !v.startsWith('highlightOpenPanel')),
+      [],
+      'The popover gives way to the editor',
+    );
+    assert.equal(
+      await page.evaluate(() => CSS.highlights.get('tabgent-highlight-active').size),
+      1,
+      'The highlight being annotated stays marked',
+    );
+    // Keys typed in the editor never reach the page's own shortcuts.
+    await page.evaluate(() => {
+      globalThis.pageKeys = 0;
+      document.addEventListener('keydown', () => pageKeys++);
+    });
+    await page.keyboard.type('Endorsement, not independence.');
+    assert.equal(await page.evaluate(() => pageKeys), 0);
+    await page.keyboard.press('Tab');
+    assert.equal(await uiFocus(), 'button');
+    await page.keyboard.press('Tab');
+    await page.keyboard.press('Tab');
+    assert.equal(await uiFocus(), 'textarea', 'Tab stays inside the editor');
+    // An outside click keeps unsaved text; Control+Enter saves it.
+    await page.mouse.click(20, 650);
+    assert.equal(await editorOpen(), true);
+    await page.evaluate(() => ui.querySelector('.editor textarea').focus());
+    await page.keyboard.press('Control+Enter');
+    await page.waitForFunction(() => sent.some((m) => m.type === 'highlightNote'));
+    assert.deepEqual((await notes()).at(-1), {
+      type: 'highlightNote',
+      documentId: 'article-doc',
+      highlightId: 'h100',
+      note: 'Endorsement, not independence.',
+      title: 'Reader fixture',
+    });
+    await page.waitForFunction(() => ui.querySelector('.editor').hidden);
+    assert.equal(
+      await page.evaluate(() => ui.querySelector('.toast').textContent),
+      'highlightNoteSaved',
+    );
+    assert.equal(await uiFocus(), null, 'Focus leaves the closed editor');
+    await clickSaved();
+    assert.equal(
+      await page.evaluate(() => ui.querySelector('.note').textContent),
+      'highlightNoteLabelEndorsement, not independence.',
+    );
+    assert.equal(
+      await page.evaluate(() => ui.querySelector('[data-action="note"]').textContent),
+      'highlightNoteEdit',
+    );
+    console.log(
+      'PASS popover note: editor focus and Tab, isolated keys, save, note shown on click',
+    );
+
+    // Keyboard: Tab into the popover, arrow to Edit note; Escape cancels without saving.
+    await page.keyboard.press('Tab');
+    assert.equal(await uiFocus(), 'discuss');
+    await page.keyboard.press('ArrowRight');
+    assert.equal(await uiFocus(), 'note');
+    await page.keyboard.press('Enter');
+    assert.equal(await editorOpen(), true);
+    assert.equal(
+      await page.evaluate(() => ui.querySelector('.editor textarea').value),
+      'Endorsement, not independence.',
+    );
+    await page.keyboard.type(' Draft');
+    await page.keyboard.press('Escape');
+    assert.equal(await editorOpen(), false);
+    assert.equal((await notes()).length, 1, 'Escape discards the draft');
+    // A failed save keeps the editor and its text; an empty note removes the note.
+    await clickSaved();
+    const editNote = await button('note');
+    await page.mouse.click(editNote.x, editNote.y);
+    await page.evaluate(() => (vault.noteError = 'Disk is busy'));
+    await page.keyboard.press('ControlOrMeta+A');
+    await page.keyboard.press('Backspace');
+    await page.keyboard.press('Control+Enter');
+    await page.waitForFunction(() => !ui.querySelector('.editor .error').hidden);
+    assert.equal(
+      await page.evaluate(() => ui.querySelector('.editor .error').textContent),
+      'highlightNoteFailed:Disk is busy',
+    );
+    assert.equal(await editorOpen(), true);
+    await page.evaluate(() => (vault.noteError = null));
+    const saveNote = await page.evaluate(() => {
+      const r = ui.querySelector('.editor .save').getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    });
+    await page.mouse.click(saveNote.x, saveNote.y);
+    await page.waitForFunction(() => ui.querySelector('.editor').hidden);
+    assert.equal((await notes()).at(-1).note, '');
+    assert.equal(
+      await page.evaluate(() => ui.querySelector('.toast').textContent),
+      'highlightNoteRemoved',
+    );
+    await clickSaved();
+    assert.equal(await page.evaluate(() => ui.querySelector('.note').hidden), true);
+    await page.keyboard.press('Escape');
+    console.log('PASS keyboard Edit note, Escape discards, failed save stays open, empty removes');
+
     await page.evaluate(() => (document.body.style.paddingBottom = '2000px'));
     await drag('#other', 'paragraph for');
     await page.mouse.wheel(0, 40);
@@ -455,6 +583,7 @@ const assert = require('node:assert/strict'),
       };
     });
     await prerendered.addScriptTag({ path: path.resolve(__dirname, '../web-anchor.js') });
+    await prerendered.addScriptTag({ path: path.resolve(__dirname, '../highlight-note.js') });
     await prerendered.addScriptTag({ path: path.resolve(__dirname, '../highlight-content.js') });
     await prerendered.waitForTimeout(500);
     assert.deepEqual(

@@ -13,9 +13,10 @@ The truncated state is exposed in its tooltip and model context.
 
 When a conversation is about a document, each message also carries a reading
 context: the document's title, URL and kind, the bound highlight's text and
-location, up to five earlier saved turns about that highlight, and the path of the
-ReadingVault folder. When a question refers to earlier reading, Codex can list,
-search and read the notes in that folder with the read-only `reading_vault` tool,
+location, your note on that highlight (up to 2,000 characters, marked as yours), up
+to five earlier saved turns about that highlight, and the path of the ReadingVault
+folder. When a question refers to earlier reading, Codex can list, search and read
+the notes in that folder with the read-only `reading_vault` tool,
 without an approval prompt. It reads only the notes Tabgent writes (`AGENTS.md`,
 each document's `highlights.md`, `source.md` and `anchors.json`, and an imported book's
 `chapters/NN-<title>.md`), never other files
@@ -55,7 +56,7 @@ symlink so existing attachment paths remain valid.
 | ------------------------------------------- | ----------------------------------------------------------------------- |
 | `~/Library/Application Support/Tabgent/`    | Installed connector and, for normal installations, extension files.     |
 | `$CODEX_HOME/projects/tabgent/attachments/` | User-uploaded file copies, each in a generated subdirectory.            |
-| `~/ReadingVault/` or the configured folder  | Saved highlights, their page URLs and anchors, and saved discussions.   |
+| `~/ReadingVault/` or the configured folder  | Saved highlights, your notes on them, page URLs, anchors, discussions.  |
 | `Books/book-*/` in the vault                | Imported EPUB files, their SHA-256 record, and chapter text.            |
 | Chrome extension local storage              | Reading-note saves waiting for a retry (at most 100), EPUB positions.   |
 | `$CODEX_HOME/projects/tabgent/vault.json`   | The configured ReadingVault folder.                                     |
@@ -64,15 +65,16 @@ symlink so existing attachment paths remain valid.
 
 The ReadingVault holds one folder per document. `highlights.md` contains the
 document title, URL and metadata (author, site, publication date when the page
-declares them), each highlighted passage with its location and time, and the saved
-discussion: your question as typed (with any other quoted passage) and the final
-answer, without tool output or reasoning. `anchors.json` holds the same turns plus
-anchors, thread IDs and timestamps; `.tabgent/index.json` maps URLs to folders.
-Highlight conversations are saved automatically. Questions about a page without a
+declares them), each highlighted passage with its location and time, the note you
+wrote on it, and the saved discussion: your question as typed (with any other
+quoted passage) and the final answer, without tool output or reasoning.
+`anchors.json` holds the same notes and turns plus anchors, thread IDs and
+timestamps; `.tabgent/index.json` maps URLs to folders. Highlight conversations are saved automatically. Questions about a page without a
 highlight are saved only while **Reading notes** is on, which is the default only
 when the page already has notes. Turning it off stops saving for that conversation;
-it does not delete notes. Delete a highlight in the page, or edit or delete the
-files yourself, to remove saved notes. Nothing in the vault is uploaded by Tabgent.
+it does not delete notes. Delete a highlight in the page (its note goes with it),
+save an empty note to remove only the note, or edit or delete the files yourself, to
+remove saved notes. Nothing in the vault is uploaded by Tabgent.
 
 Removing an attachment from the composer removes its draft reference. It does not
 delete the saved file. Sent attachments remain available for conversation history.

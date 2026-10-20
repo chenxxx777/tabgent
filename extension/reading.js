@@ -8,6 +8,7 @@ import { documentUrl } from './vault-client.js';
 export const documentKinds = ['web', 'pdf', 'epub'];
 export const limits = {
   highlight: 1500,
+  userNote: 2000,
   noteUser: 600,
   noteAssistant: 1500,
   notes: 6000,
@@ -93,6 +94,10 @@ export function readingContext({ document, highlight, notes, vault, saving }) {
         : highlight.text
           ? { text: clip(highlight.text, limits.highlight) }
           : {}),
+      // The user's own note on the passage: their view, not the author's text.
+      ...(string(highlight.userNote).trim()
+        ? { userNote: clip(string(highlight.userNote).trim(), limits.userNote) }
+        : {}),
     };
   if (notes?.length) value.earlierNotes = notes;
   if (vault?.path)

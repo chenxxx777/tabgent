@@ -109,6 +109,7 @@ const readingMessages = new Set([
   'readingSave',
   'readingJump',
   'readingOpen',
+  'readingNote',
   'vaultConfigure',
 ]);
 async function getSession(tabId) {
@@ -745,9 +746,23 @@ const highlightMessages = new Set([
   'highlightCreate',
   'highlightDelete',
   'highlightAsk',
+  'highlightNote',
   'highlightStatus',
 ]);
 const pageText = (value, limit) => (typeof value === 'string' ? value.slice(0, limit) : '');
+// The user's own note on a saved highlight; the side panel's highlight list shows it too.
+async function updateNote(tabId, documentId, highlightId, note) {
+  if (typeof note !== 'string') throw new VaultError('invalid_params', 'Invalid note');
+  const result = await vaultRequest('vault/highlight/update', {
+    documentId,
+    highlightId,
+    note: note.slice(0, 20000),
+  });
+  await loaded;
+  for (const s of sessions.values())
+    if (s.tabId === tabId) for (const p of s.ports) event(p, 'codex-reading-changed');
+  return { highlight: result.highlight || null };
+}
 // Highlights belong to top-level HTTP(S) documents named by Chrome's sender metadata, or to
 // the current PDF.js viewer, whose document is the original PDF URL.
 async function highlightMessage(msg, sender) {
@@ -867,6 +882,8 @@ async function highlightMessage(msg, sender) {
     });
     return { ok: true };
   }
+  if (msg.type === 'highlightNote')
+    return updateNote(tabId, resolved.document.id, highlight.id, msg.note);
   await handOffSelection(sender, {
     url: pageUrl,
     text: pageText(highlight.text, 20000) || pageText(highlight.anchor?.quote?.exact, 20000),
@@ -918,6 +935,7 @@ const epubMessages = new Set([
   'epubHighlightCreate',
   'epubHighlightDelete',
   'epubHighlightAsk',
+  'epubHighlightNote',
   'epubHighlightStatus',
 ]);
 // The EPUB reader names a book by its file hash; highlights are checked against that book.
@@ -1039,6 +1057,8 @@ async function epubMessage(msg, sender) {
     });
     return { ok: true };
   }
+  if (msg.type === 'epubHighlightNote')
+    return updateNote(tabId, resolved.document.id, highlight.id, msg.note);
   await handOffSelection(sender, {
     url,
     text: pageText(highlight.text, 20000) || pageText(highlight.anchor?.quote?.exact, 20000),
