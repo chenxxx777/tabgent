@@ -784,6 +784,14 @@ Short daily sessions build a durable habit.
     assert.equal(pdfRead.value.url, url(files.pdf) + '#page=2');
     assert.equal(pdfRead.value.pages, 3);
     assert.match(pdfRead.value.text, /Autonomy is the endorsement/);
+    // Viewer actions stay available on a local PDF; pointer and keys do not.
+    assert.deepEqual(pdfRead.value.actions, [
+      'selectText',
+      'highlight',
+      'savePdf',
+      'screenshot',
+      'scroll',
+    ]);
     assert.deepEqual(listingRead, {
       success: false,
       value: 'Tab is outside the selected scope or is a protected page',

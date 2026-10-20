@@ -51,7 +51,8 @@ itself. With it on, Tabgent works only on files you open in Chrome: it never lis
 (a directory listing is not treated as a document) and does not read other files. In the
 selected window scope, Agent can read such a tab (text, a PDF page, a screenshot) but cannot
 click or type in it, and it cannot open `file://` addresses, so it cannot reach another file
-through a local page. Frames inside a local page are never read. Content read from a file is
+through a local page. In a local PDF it can also select text, add a viewer annotation and
+download a copy, as in an online PDF; its annotations are not saved to the vault. Frames inside a local page are never read. Content read from a file is
 sent to Codex like webpage content, and the file's path is the page address in each
 message's browser context.
 

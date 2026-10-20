@@ -93,7 +93,9 @@ async function loadFile() {
   if (port) port.postMessage({ type: 'document', sha256: fileSha256 });
   else connect();
   const name = decodeURIComponent(new URL(source).pathname.split('/').pop()) || 'document.pdf';
-  return { data, name };
+  // The vault keeps originals up to 100 MB; a larger PDF keeps its notes without a copy, so
+  // its bytes go to PDF.js without keeping a second copy.
+  return { data, name, copy: data.byteLength <= 100 * 1024 * 1024 };
 }
 const localFile = local ? loadLocal() : file ? loadFile() : null;
 localFile?.catch(() => {}); // Reported when the PDF.js frame asks for the document.
@@ -104,9 +106,8 @@ let copying = null;
 function copyToVault() {
   if (!file || copying) return;
   copying = (async () => {
-    const { data, name } = await localFile;
-    // The vault keeps originals up to 100 MB; a larger PDF keeps its notes without a copy.
-    if (data.byteLength > 100 * 1024 * 1024) return;
+    const { data, name, copy } = await localFile;
+    if (!copy) return;
     const { title, meta } = await pdfInfo(app.pdfDocument, source, name);
     const base = { type: 'pdfFileSave', title, meta, name, size: data.byteLength };
     let reply = await viewerRequest({ ...base, offset: 0, data: '' });
@@ -223,7 +224,15 @@ async function operate(args) {
       text: text.slice(offset, offset + 30000),
       offset,
       nextOffset: offset + 30000 < text.length ? offset + 30000 : null,
-      actions: ['selectText', 'highlight', 'savePdf', 'screenshot', 'scroll', 'click', 'press'],
+      // A PDF from the computer is read-only for Agent apart from these viewer actions.
+      actions: [
+        'selectText',
+        'highlight',
+        'savePdf',
+        'screenshot',
+        'scroll',
+        ...(file ? [] : ['click', 'press']),
+      ],
     };
   }
   if (args.action === 'savePdf') {
@@ -305,7 +314,7 @@ document.addEventListener('webviewerloaded', async (event) => {
       name = loaded.name;
       // The file name names downloads made from the viewer. PDF.js takes the buffer it is
       // given; a file from the computer keeps its bytes for the vault copy.
-      await app.open({ data: file ? loaded.data.slice() : loaded.data, filename: name });
+      await app.open({ data: loaded.copy ? loaded.data.slice() : loaded.data, filename: name });
     } else {
       // The original URL is validated by the wrapper, not the generic demo viewer.
       await app.open({ url: source, withCredentials: true });
