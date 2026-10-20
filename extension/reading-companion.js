@@ -6,6 +6,7 @@
 import { pageContextPrefix, readingContextPrefix } from './session-config.js';
 import { selectionContextPrefix } from './ui/user-input.js';
 import { documentUrl } from './vault-client.js';
+import { isLocalFileUrl } from './local-files.js';
 import {
   appendParams,
   clip,
@@ -36,6 +37,7 @@ export function createReadingCompanion({
   event,
   vault,
   pdfSource,
+  filePdfDocument = () => undefined,
   epubDocument = () => undefined,
   tabMessage = (tabId, message) => chrome.tabs.sendMessage(tabId, message, { frameId: 0 }),
 }) {
@@ -63,10 +65,20 @@ export function createReadingCompanion({
     const book = epubDocument(tab);
     if (book !== undefined)
       return book && { ...book, title: clip(book.title || page.title || tab.title || '', 500) };
+    // A PDF opened from the computer is named by its file hash once its viewer has read it.
+    const file = filePdfDocument(tab);
+    if (file !== undefined)
+      return file && { ...file, title: clip(page.title || tab.title || '', 500) };
     const pdf = pdfSource(tab.url);
     const url = documentUrl(pdf || page.url || tab.url || '');
-    // An imported PDF is named by its file hash, like a book.
-    if (!/^https?:/.test(url) && !(pdf && /^urn:sha256:[0-9a-f]{64}$/.test(url))) return null;
+    // An imported PDF is named by its file hash, like a book. A Markdown, text or HTML file from
+    // the computer is named by its file:// URL, as a webpage by its address.
+    if (
+      !/^https?:/.test(url) &&
+      !(pdf && /^urn:sha256:[0-9a-f]{64}$/.test(url)) &&
+      !(!pdf && isLocalFileUrl(url))
+    )
+      return null;
     return { url, title: clip(page.title || tab.title || '', 500), kind: pdf ? 'pdf' : 'web' };
   }
   const resolveDocument = (document) =>
@@ -403,7 +415,11 @@ export function createReadingCompanion({
           id: crypto.randomUUID(),
           text: clip(highlight.text, 20000),
           truncated: false,
-          url: document.kind === 'epub' ? document.url : pdfSource(tab.url) || tab.url,
+          // Books and PDFs named by their hash (imported, or opened from the computer).
+          url:
+            document.kind === 'epub' || document.url.startsWith('urn:')
+              ? document.url
+              : pdfSource(tab.url) || tab.url,
           title: document.title,
           frameId: 0,
           documentId: frame?.documentId,

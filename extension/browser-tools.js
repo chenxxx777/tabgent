@@ -1,11 +1,36 @@
 import { saveResource, downloadStatus } from './resource-files.js';
 import { agentPointer } from './agent-pointer.js';
-import { pdfSource, pdfTab, pdfCommand } from './pdf-routing.js';
+import { pdfSource, pdfTab, pdfCommand, isFilePdf } from './pdf-routing.js';
 import { nativeInput } from './browser-input.js';
+import { isLocalFileUrl, fileAccessAllowed } from './local-files.js';
 const newTab = (tab) => /^chrome:\/\/(newtab|new-tab-page)\//.test(tab.url || '');
+// A file the user opened from the computer (file://, or a PDF from it in Tabgent's viewer).
+// Agent cannot open one itself: navigate and open accept only HTTP(S) URLs.
+const localTab = (tab) => isLocalFileUrl(tab.url) || isFilePdf(pdfSource(tab.url));
 const allowed = (tab) =>
   !tab.incognito &&
-  (/^(https?:|about:blank)/.test(tab.url || '') || newTab(tab) || !!pdfSource(tab.url));
+  (/^(https?:|about:blank)/.test(tab.url || '') ||
+    newTab(tab) ||
+    !!pdfSource(tab.url) ||
+    isLocalFileUrl(tab.url));
+// Local files are read-only for Agent: it reads, screenshots and scrolls them, but never clicks
+// or types there, so it cannot follow a link in a local page to open another file.
+const localReadOnly = new Set([
+  'click',
+  'hover',
+  'drag',
+  'type',
+  'press',
+  'select',
+  'check',
+  'resources',
+  'saveResource',
+]);
+// Frames whose documents Agent may read: web frames, and the top frame of a local file. Frames
+// inside a local file can load other files, so they stay unavailable.
+const readableFrame = (frame) =>
+  /^https?:|^about:(blank|srcdoc)/.test(frame.url) ||
+  (frame.frameId === 0 && isLocalFileUrl(frame.url));
 const busyTabs = new Set();
 export async function available(session) {
   const owner = await chrome.tabs.get(session.tabId);
@@ -23,6 +48,10 @@ export async function context(session) {
       !session.noCompanion && !tab.incognito && (allowed(tab) || agentPage) ? pdfTab(tab) : null,
     ...(allowed(tab) && !newTab(tab)
       ? { contentType: pdfSource(tab.url) ? 'application/pdf' : await contentType(tab.id) }
+      : {}),
+    // A file from the computer that Chrome does not let Tabgent read yet.
+    ...(!tab.incognito && localTab(tab) && !(await fileAccessAllowed())
+      ? { fileAccess: false }
       : {}),
   };
 }
@@ -79,6 +108,10 @@ async function operate(session, args, id, readPdf) {
   };
   if (!tabs.some((t) => t.id === id))
     throw Error('Tab is outside the selected scope or is a protected page');
+  if (localReadOnly.has(args.action) && localTab(tabs.find((t) => t.id === id)))
+    throw Error(
+      'This tab shows a file from the computer, which is read-only for Agent: use read, screenshot or scroll',
+    );
   if (args.action === 'close') {
     if (id === session.tabId)
       throw Error('Close the conversation tab manually; this action can close other scoped tabs');
@@ -125,6 +158,7 @@ async function operate(session, args, id, readPdf) {
     result = { success: true };
   } else if (args.action === 'read' && (await contentType(id)) === 'application/pdf') {
     if (!readPdf) throw Error('PDF reader unavailable');
+    // Chrome's own viewer, for an online PDF or one from the computer (file://).
     const tab = tabs.find((t) => t.id === id);
     const response = await fetch(tab.url, {
       credentials: 'include',
@@ -175,8 +209,7 @@ async function operate(session, args, id, readPdf) {
     const results = await Promise.all(
       selected.map(async (frame) => {
         const info = { frameId: frame.frameId, parentFrameId: frame.parentFrameId, url: frame.url };
-        if (!/^https?:|^about:(blank|srcdoc)/.test(frame.url))
-          return { ...info, unavailable: true };
+        if (!readableFrame(frame)) return { ...info, unavailable: true };
         if (args.action === 'frames') return info;
         try {
           const [value] = await chrome.scripting.executeScript({
@@ -220,8 +253,7 @@ async function operate(session, args, id, readPdf) {
       await check();
       const frames = await chrome.webNavigation.getAllFrames({ tabId: id });
       const frame = frames.find((f) => f.frameId === frameId);
-      if (!frame || !/^https?:|^about:(blank|srcdoc)/.test(frame.url))
-        throw Error('Frame is unavailable or protected');
+      if (!frame || !readableFrame(frame)) throw Error('Frame is unavailable or protected');
       const [value] = await chrome.scripting.executeScript({
         target: { tabId: id, frameIds: [frameId] },
         func: pageAction,

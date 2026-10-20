@@ -1802,6 +1802,8 @@ addWebUiListener('codex-context', (value) => {
     void reading.refresh();
   }
   $('context').hidden = !value.page;
+  // A file from the computer that Chrome does not let Tabgent read yet.
+  $('fileAccess').hidden = value.fileAccess !== false;
   for (const [id, text] of [
     ['contextText', value.page ? value.page.title || value.page.url : ''],
     ['contextFullTitle', value.page?.title || ''],
@@ -1811,6 +1813,7 @@ addWebUiListener('codex-context', (value) => {
   }
   if (!value.page) $('contextDetails').hidePopover();
 });
+$('fileAccessOpen').onclick = () => bridge.send('openFileAccess');
 $('setupPrimary').onclick = () => {
   if ($('setup').dataset.helper === 'missing') bridge.send('helperHelp');
   else if (setupMode === 'install')

@@ -1,13 +1,18 @@
 import { paintAgentPointer } from '../agent-pointer.js';
 import { t, loadTimeData } from '../i18n.js';
-import { pdfSource, isLocalPdf } from '../pdf-routing.js';
+import { pdfSource, isLocalPdf, isFilePdf } from '../pdf-routing.js';
 import { startHighlights } from './pdf-highlights.js';
+import { pdfInfo } from './pdf-info.js';
 const frame = document.querySelector('#viewer');
 const status = document.querySelector('#status');
-const source = pdfSource(location.href);
+// A PDF opened from the computer (file://) is read from the file; the vault names it by hash.
+// Its viewer runs only as the tab's page: a local HTML page cannot embed it to show a file.
+const named = pdfSource(location.href);
+const file = isFilePdf(named) && window.top === window;
+const source = isFilePdf(named) && !file ? null : named;
 // An imported PDF (urn:sha256:...) opens from its copy in the ReadingVault.
 const local = isLocalPdf(source);
-if (source && !local) {
+if (source && !local && !file) {
   const icon = new Image();
   icon.referrerPolicy = 'no-referrer';
   icon.onload = () => {
@@ -25,6 +30,7 @@ let app,
   port,
   last = '',
   selectionId,
+  fileSha256 = null,
   ready = false;
 async function fallback() {
   if (local) return;
@@ -72,10 +78,56 @@ async function viewerRequest(message) {
     return reply;
   }
 }
-const localFile = local ? loadLocal() : null;
+const CHUNK = 2 * 1024 * 1024;
+const hex = async (data) =>
+  [...new Uint8Array(await crypto.subtle.digest('SHA-256', data))]
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+// A PDF from the computer: Chrome lets this page read the file while the user allows Tabgent
+// access to file URLs. Its SHA-256 is its vault identity, announced on the viewer's port.
+async function loadFile() {
+  const response = await fetch(source.split('#')[0]);
+  if (!response.ok) throw Error(`The file could not be read (${response.status})`);
+  const data = new Uint8Array(await response.arrayBuffer());
+  fileSha256 = await hex(data);
+  if (port) port.postMessage({ type: 'document', sha256: fileSha256 });
+  else connect();
+  const name = decodeURIComponent(new URL(source).pathname.split('/').pop()) || 'document.pdf';
+  return { data, name };
+}
+const localFile = local ? loadLocal() : file ? loadFile() : null;
 localFile?.catch(() => {}); // Reported when the PDF.js frame asks for the document.
+// A PDF from the computer is copied into the vault once it has notes (its first highlight or
+// saved conversation), so the library can reopen it and Codex can read its pages after the
+// file moves. Opening it alone writes nothing.
+let copying = null;
+function copyToVault() {
+  if (!file || copying) return;
+  copying = (async () => {
+    const { data, name } = await localFile;
+    // The vault keeps originals up to 100 MB; a larger PDF keeps its notes without a copy.
+    if (data.byteLength > 100 * 1024 * 1024) return;
+    const { title, meta } = await pdfInfo(app.pdfDocument, source, name);
+    const base = { type: 'pdfFileSave', title, meta, name, size: data.byteLength };
+    let reply = await viewerRequest({ ...base, offset: 0, data: '' });
+    while (!reply.complete) {
+      const offset = reply.received;
+      reply = await viewerRequest({
+        ...base,
+        offset,
+        data: data.subarray(offset, offset + CHUNK).toBase64(),
+      });
+      if (!reply.complete && reply.received <= offset) throw Error('The vault stopped the copy');
+    }
+  })().catch((error) => {
+    copying = null;
+    console.warn('The PDF was not copied into the reading vault', error);
+  });
+}
 function connect() {
   port = chrome.runtime.connect({ name: 'pdf' });
+  // A restarted service worker learns the file's identity again.
+  if (fileSha256) port.postMessage({ type: 'document', sha256: fileSha256 });
   port.onMessage.addListener(async ({ id, args }) => {
     try {
       const result =
@@ -248,11 +300,12 @@ document.addEventListener('webviewerloaded', async (event) => {
   let name;
   try {
     await app.initializedPromise;
-    if (local) {
-      const file = await localFile;
-      name = file.name;
-      // The file name names downloads made from the viewer.
-      await app.open({ data: file.data, filename: name });
+    if (local || file) {
+      const loaded = await localFile;
+      name = loaded.name;
+      // The file name names downloads made from the viewer. PDF.js takes the buffer it is
+      // given; a file from the computer keeps its bytes for the vault copy.
+      await app.open({ data: file ? loaded.data.slice() : loaded.data, filename: name });
     } else {
       // The original URL is validated by the wrapper, not the generic demo viewer.
       await app.open({ url: source, withCredentials: true });
@@ -287,7 +340,13 @@ document.addEventListener('webviewerloaded', async (event) => {
       true,
     );
     if (!port) connect();
-    startHighlights({ app, frame, source, name }).catch((e) => console.warn(e));
+    startHighlights({
+      app,
+      frame,
+      source,
+      name,
+      ...(file ? { onDocument: copyToVault } : {}),
+    }).catch((e) => console.warn(e));
   } catch (error) {
     clearTimeout(timer);
     if (local)
