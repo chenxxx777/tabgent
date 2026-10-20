@@ -179,7 +179,7 @@ async function until(check, ms = 10000) {
     await launch();
     await openReader();
     await page.waitForSelector('#start:not([hidden])');
-    assert(await text('#booksStatus', 'epubNoBooks'), 'Empty vault lists no books');
+    assert(await text('#booksStatus', 'libraryEmpty'), 'Empty vault lists no books');
     await page.setInputFiles('#file', book);
     await page.waitForSelector('#viewer:not([hidden])');
     assert.equal(await page.title(), 'A Small Book of Reading');
@@ -342,13 +342,13 @@ async function until(check, ms = 10000) {
     await wait(600); // The position is saved after a short debounce.
     await page.close();
     await openReader();
-    await page.waitForSelector('#books button');
+    await page.waitForSelector('#books a.item');
     assert.equal(await page.textContent('#books .title'), 'A Small Book of Reading');
     assert(
       (await page.textContent('#books .meta')).includes(await message('epubHighlightCount', '4')),
     );
     if (shots) await page.screenshot({ path: path.join(shots, 'library.png') });
-    await page.click('#books button');
+    await page.click('#books a.item');
     await page.waitForSelector('#viewer:not([hidden])');
     assert(await until(async () => (await chapterTitle()) === 'Chapter Two: Repetition'));
     assert(await paintedIs(2), 'Restored highlights are painted');
@@ -439,7 +439,7 @@ async function until(check, ms = 10000) {
 
     // Dropping the same file again opens it and reuses the vault copy.
     await openReader();
-    await page.waitForSelector('#books button');
+    await page.waitForSelector('#books a.item');
     await page.evaluate(async (base64) => {
       const transfer = new DataTransfer();
       transfer.items.add(new File([Uint8Array.fromBase64(base64)], 'dropped.epub'));
@@ -457,7 +457,7 @@ async function until(check, ms = 10000) {
 
     // A newer open supersedes one still loading: the books never mix in state or uploads.
     await openReader();
-    await page.waitForSelector('#books button');
+    await page.waitForSelector('#books a.item');
     await page.setInputFiles('#file', large);
     await page.evaluate(async (base64) => {
       const transfer = new DataTransfer();
@@ -484,7 +484,7 @@ async function until(check, ms = 10000) {
       transfer.items.add(new File(['plain text'], 'notes.txt'));
       dispatchEvent(new DragEvent('drop', { dataTransfer: transfer, cancelable: true }));
     });
-    assert(await text('#toast', 'epubNotEpub'), 'The text file is refused');
+    assert(await text('#toast', 'libraryNotSupported'), 'The text file is refused');
     assert(await until(async () => (await page.title()) === 'Large Book', 20000));
     await page.click('#library');
     await page.waitForSelector('#start:not([hidden])');

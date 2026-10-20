@@ -1,6 +1,6 @@
 import { cleanAnnotations } from './ui/annotations.js';
 import { createUrlHistory } from './url-history.js';
-import { startPdfRouting, pdfSource, isCurrentPdfSender } from './pdf-routing.js';
+import { startPdfRouting, pdfSource, isLocalPdf, isCurrentPdfSender } from './pdf-routing.js';
 import {
   registerEpubPort,
   isEpubReaderUrl,
@@ -929,6 +929,7 @@ async function handOffSelection(
 }
 const epubMessages = new Set([
   'epubBooks',
+  'libraryDocuments',
   'epubSourceSave',
   'epubSourceRead',
   'epubResolve',
@@ -943,6 +944,9 @@ async function epubMessage(msg, sender) {
   if (!isCurrentEpubSender(sender)) throw Error('Invalid EPUB reader sender');
   const tabId = sender.tab.id;
   if (msg.type === 'epubBooks') return vaultRequest('vault/books/list', { kind: 'epub' });
+  // The library lists every vault document: webpages, PDFs and books.
+  if (msg.type === 'libraryDocuments')
+    return vault.request('vault/documents/list', {}, { timeout: 60000 });
   if (msg.type === 'epubSourceRead')
     return vault.request(
       'vault/source/read',
@@ -966,6 +970,8 @@ async function epubMessage(msg, sender) {
       'vault/source/save',
       {
         ...book,
+        // The library imports PDFs from the computer too, named by their hash the same way.
+        kind: msg.kind === 'pdf' ? 'pdf' : 'epub',
         sha256: msg.sha256,
         size: msg.size,
         offset: msg.offset,
@@ -1070,8 +1076,35 @@ async function epubMessage(msg, sender) {
   });
   return { ok: true };
 }
+// The viewer of an imported PDF reads its original back from the vault. The document is the
+// one named by the viewer's address (urn:sha256:...), never one the page asks for.
+async function pdfLocalRead(msg, sender) {
+  const source = pdfSource(sender.url);
+  if (!isLocalPdf(source) || !sender.tab || sender.tab.incognito || sender.frameId !== 0)
+    throw Error('Invalid PDF viewer sender');
+  // Chrome hides extension documents from webNavigation.getFrame.
+  if (!(await isCurrentPdfSender(sender))) throw Error('Stale PDF viewer');
+  const { document } = await vaultRequest('vault/document/resolve', {
+    url: documentUrl(source),
+    title: '',
+    kind: 'pdf',
+  });
+  if (!document?.createdAt)
+    throw new VaultError('not_found', 'This PDF is not in the reading vault');
+  return vault.request(
+    'vault/source/read',
+    { documentId: document.id, offset: msg.offset, length: msg.length },
+    { timeout: 60000 },
+  );
+}
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   if (sender.id !== chrome.runtime.id || msg.type === 'pdfFallback') return;
+  if (msg.type === 'pdfLocalRead') {
+    pdfLocalRead(msg, sender).then(reply, (e) =>
+      reply({ error: e.message, code: e.code || 'error' }),
+    );
+    return true;
+  }
   if (highlightMessages.has(msg.type) || epubMessages.has(msg.type)) {
     (epubMessages.has(msg.type) ? epubMessage : highlightMessage)(msg, sender).then(reply, (e) =>
       reply({ error: e.message, code: e.code || 'error' }),
@@ -1142,6 +1175,14 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     }
     if (!sender.url?.startsWith(chrome.runtime.getURL(''))) throw Error('Invalid sender');
     if (readingMessages.has(msg.type)) return reading.message(msg, sender);
+    if (msg.type === 'openLibrary') {
+      // From the side panel: the library opens next to the page it is beside.
+      const tab = Number.isInteger(msg.companionTabId)
+        ? await chrome.tabs.get(msg.companionTabId).catch(() => null)
+        : null;
+      await openEpubReader(tab || sender.tab);
+      return {};
+    }
     if (msg.type === 'openConversationLink') {
       await loaded;
       const source = sessions.get(msg.conversationKey);
@@ -1431,10 +1472,10 @@ chrome.runtime.onInstalled.addListener(() => {
       title: chrome.i18n.getMessage('selectionMenu'),
       contexts: ['selection'],
     });
-    // The toolbar button's right-click menu opens the bundled EPUB reader.
+    // The toolbar button's right-click menu opens the library, which is also the EPUB reader.
     chrome.contextMenus.create({
       id: 'open-epub-reader',
-      title: chrome.i18n.getMessage('epubOpenReader'),
+      title: chrome.i18n.getMessage('libraryOpen'),
       contexts: ['action'],
     });
   });

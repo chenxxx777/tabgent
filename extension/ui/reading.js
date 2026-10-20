@@ -266,6 +266,15 @@ export function createReading({ i18n, request, showError, selection, reload }) {
     $('readingFolderForm').hidden = true;
     $('readingError').hidden = true;
   };
+  // The library lists every document in the vault and opens it, or imports a file.
+  $('readingLibrary').onclick = async () => {
+    $('readingMenu').hidePopover();
+    try {
+      await request('openLibrary');
+    } catch (error) {
+      showError(error.message);
+    }
+  };
   $('readingFolderForm').onsubmit = async (event) => {
     event.preventDefault();
     const path = $('readingPathInput').value.trim();

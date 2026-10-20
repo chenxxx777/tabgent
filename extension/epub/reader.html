@@ -30,7 +30,7 @@
         ☰
       </button>
       <div id="heading">
-        <span id="bookTitle">$i18n{epubReaderTitle}</span>
+        <span id="bookTitle">$i18n{libraryTitle}</span>
       </div>
       <span id="status" role="status"></span>
       <div id="reading" class="controls" hidden>
@@ -70,12 +70,17 @@
       </section>
       <section id="start">
         <div id="drop">
-          <h1>$i18n{epubReaderTitle}</h1>
-          <p>$i18n{epubDropHint}</p>
-          <button id="choose" class="primary">$i18n{epubChoose}</button>
-          <input id="file" type="file" accept=".epub,application/epub+zip" hidden />
+          <h1>$i18n{libraryTitle}</h1>
+          <p>$i18n{libraryDropHint}</p>
+          <button id="choose" class="primary">$i18n{libraryChoose}</button>
+          <input
+            id="file"
+            type="file"
+            accept=".epub,application/epub+zip,.pdf,application/pdf"
+            hidden
+          />
         </div>
-        <h2>$i18n{epubVaultBooks}</h2>
+        <h2>$i18n{libraryDocuments}</h2>
         <p id="booksStatus" class="muted"></p>
         <ul id="books"></ul>
       </section>

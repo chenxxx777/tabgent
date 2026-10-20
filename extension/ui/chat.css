@@ -2049,6 +2049,9 @@ body.history-open {
 #readingError {
   color: var(--error);
 }
+#readingLibrary {
+  margin-top: 8px;
+}
 #highlightSection {
   margin-bottom: 8px;
 }

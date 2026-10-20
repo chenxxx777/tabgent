@@ -49,7 +49,7 @@ with tempfile.TemporaryDirectory(prefix="tabgent-install-") as directory:
     assert not (installed / "extension/native").exists()
     launcher = installed / "connector"
     assert os.access(launcher, os.X_OK)
-    assert {"vault", "epub_text"} <= helper
+    assert {"vault", "epub_text", "pdf_text"} <= helper
     for name in helper:
         assert (installed / f"{name}.py").is_file(), name
     assert (

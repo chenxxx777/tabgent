@@ -4,6 +4,7 @@
 // bytes and the PDF.js annotation storage are never touched, so savePdf exports only PDF.js
 // edits and the native fallback never asks about unsaved changes.
 import * as anchors from './pdf-anchor.js';
+import { pdfInfo } from './pdf-info.js';
 import '../highlight-note.js';
 
 const notes = globalThis.tabgentHighlightNote;
@@ -34,30 +35,11 @@ async function send(message) {
   return response;
 }
 
-// PDF metadata title (as PDF.js chooses it), else the file name.
-async function documentInfo(app, source, name) {
-  try {
-    const { info, metadata } = await app.pdfDocument.getMetadata();
-    const value = metadata?.get('dc:title');
-    const title =
-      value && value !== 'Untitled' && !/[\uFFF0-\uFFFF]/.test(value) ? value : info?.Title;
-    return {
-      title: (typeof title === 'string' && title.trim()) || name,
-      meta: {
-        author: typeof info?.Author === 'string' ? info.Author.trim() : '',
-        siteName: new URL(source).hostname,
-      },
-    };
-  } catch {
-    return { title: name, meta: {} };
-  }
-}
-
 export async function startHighlights({ app, frame, source, name }) {
   const win = frame.contentWindow,
     doc = frame.contentDocument;
   if (!win.CSS?.highlights || !win.Highlight) return;
-  const { title, meta } = await documentInfo(app, source, name);
+  const { title, meta } = await pdfInfo(app.pdfDocument, source, name);
   const normalizeText = win.pdfjsLib?.normalizeUnicode || ((value) => value);
   const paint = new win.Highlight(),
     focused = new win.Highlight();

@@ -991,24 +991,6 @@
   "highlightTurns": {
     "message": "$1 saved"
   },
-  "epubOpenReader": {
-    "message": "Open EPUB reader"
-  },
-  "epubReaderTitle": {
-    "message": "EPUB reader"
-  },
-  "epubDropHint": {
-    "message": "Drop an EPUB file here or choose one. It is saved in your reading vault, so you can reopen it here later."
-  },
-  "epubChoose": {
-    "message": "Choose EPUB file"
-  },
-  "epubVaultBooks": {
-    "message": "Books in your reading vault"
-  },
-  "epubNoBooks": {
-    "message": "No books yet."
-  },
   "epubBooksUnavailable": {
     "message": "The reading vault is unavailable: $1"
   },
@@ -1020,9 +1002,6 @@
   },
   "epubUntitled": {
     "message": "Untitled"
-  },
-  "epubNotEpub": {
-    "message": "Choose an EPUB file."
   },
   "epubLoading": {
     "message": "Opening…"
@@ -1086,5 +1065,53 @@
   },
   "epubProgress": {
     "message": "Reading progress"
+  },
+  "libraryOpen": {
+    "message": "Open library"
+  },
+  "libraryTitle": {
+    "message": "Library"
+  },
+  "libraryDropHint": {
+    "message": "Drop an EPUB or PDF file here, or choose one. It is copied into your reading vault, so you can reopen it here later without the file."
+  },
+  "libraryChoose": {
+    "message": "Choose EPUB or PDF file"
+  },
+  "libraryDocuments": {
+    "message": "In your reading vault"
+  },
+  "libraryEmpty": {
+    "message": "Nothing in your reading vault yet. Highlight a webpage or PDF, or open a file here."
+  },
+  "libraryNotSupported": {
+    "message": "Choose an EPUB or PDF file."
+  },
+  "libraryTooLarge": {
+    "message": "This file is larger than 100 MB, the limit for files in your reading vault."
+  },
+  "libraryPdfFailed": {
+    "message": "The PDF could not be saved to your reading vault: $1"
+  },
+  "libraryKindWeb": {
+    "message": "Webpage"
+  },
+  "libraryKindPdf": {
+    "message": "PDF"
+  },
+  "libraryKindLocalPdf": {
+    "message": "Imported PDF"
+  },
+  "libraryKindEpub": {
+    "message": "EPUB"
+  },
+  "libraryUpdated": {
+    "message": "Updated $1"
+  },
+  "libraryNoCopy": {
+    "message": "No copy in the vault; choose the file again to open it"
+  },
+  "pdfLocalFailed": {
+    "message": "This PDF could not be opened from your reading vault: $1"
   }
 }
