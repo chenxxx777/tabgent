@@ -447,7 +447,9 @@ status link is the address's post, then the author's consecutive replies (by the
 in each header), each post's `[dir="auto"]` text with links and emoji, and its
 `pbs.twimg.com/media` images; quoted posts' parts, buttons and counts are left out. A post
 address in neither layout is refused (`x-layout`, asking for a selection instead). Both
-layouts get a short title, `<name> on X: "<first 80 characters>…"`, and no "save whole page"
+layouts get a short title, `<name> on X: "<first 80 characters>…"` (graphemes; a cut inside
+a word of a space-separated script moves back to its space, at most 20 characters, so
+Chinese and Japanese are cut by characters), and no "save whole page"
 offer for a short post. The result is parsed into an
 inert `DOMParser` document. Images keep only their address in `data-remote-src` (the best
 `srcset` candidate up to 2048 pixels, `pbs.twimg.com` at `name=large`; tracking pixels and
@@ -483,7 +485,8 @@ host access (no CORS), the Referer Chrome sends from the page (`referer.js`: Chr
 default `strict-origin-when-cross-origin`, so the page address for the same origin and only
 its origin otherwise; an extension's `fetch` cannot set this header, so each request gets a
 `declarativeNetRequest` session rule for its exact address and the extension's own
-background requests, removed when the request ends; hosts such as sspai.com refuse image
+background requests, removed when the request ends (if the rule cannot be added, the
+request goes without a Referer; rules a stopped worker left are removed at its start); hosts such as sspai.com refuse image
 requests without a Referer), and cookies only for the page's own
 site and only on the first request (a same-site image is fetched with `redirect: 'manual'`,
 and a redirect is followed again without cookies; the site test is an approximation without

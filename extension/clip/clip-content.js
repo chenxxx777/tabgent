@@ -25,16 +25,27 @@
     if (xPage(url) !== 'post') return '';
     return /^\/[^/]+\/status\/(\d+)/.exec(new URL(url).pathname)?.[1] || '';
   }
-  // A short title for a post: who wrote it and how it starts, never the whole post.
+  // A short title for a post: who wrote it and how it starts, never the whole post. The start
+  // is cut at 80 characters (graphemes, so no emoji or accent is split). Only a cut inside a
+  // word of a space-separated script moves back to the space before that word, and by at
+  // most 20 characters: Chinese and Japanese text, which has no spaces between words, is cut
+  // by characters even when a space appears early.
+  const unspaced = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u;
+  const wordChar = (c) => /[\p{L}\p{N}\p{M}]/u.test(c || '') && !unspaced.test(c || '');
   function xTitle(name, text) {
-    const words = [...label(text, 4000)];
-    const start =
-      words.length > 80
-        ? `${words
-            .slice(0, 80)
-            .join('')
-            .replace(/\s+\S*$/, '')}…`
-        : words.join('');
+    const chars = [
+      ...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(label(text, 4000)),
+    ].map((part) => part.segment);
+    let start = chars.join('');
+    if (chars.length > 80) {
+      let cut = 80;
+      if (wordChar(chars[cut - 1]) && wordChar(chars[cut])) {
+        let back = cut;
+        while (back > cut - 20 && !/\s/.test(chars[back - 1])) back--;
+        if (back > cut - 20) cut = back;
+      }
+      start = `${chars.slice(0, cut).join('').trimEnd()}…`;
+    }
     return label(start ? `${name || 'Post'} on X: "${start}"` : `${name || 'Post'} on X`);
   }
   const escapeHtml = (value) =>
@@ -785,6 +796,6 @@
     );
     if (!busy) timer = setTimeout(hide, open ? 12000 : tone === 'error' ? 10000 : 7000);
   }
-  // cutMarkdown is exposed for tests; the worker calls run, ask and notify.
-  globalThis.tabgentClip = { run, ask, notify, cutMarkdown, clean };
+  // cutMarkdown and xTitle are exposed for tests; the worker calls run, ask and notify.
+  globalThis.tabgentClip = { run, ask, notify, cutMarkdown, clean, xTitle };
 })();

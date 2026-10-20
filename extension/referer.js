@@ -38,30 +38,49 @@ export async function withReferer(url, pageUrl, run) {
   if (!value || !target || !api?.updateSessionRules || /[*^|]/.test(target) || target.length > 4096)
     return run();
   const id = FIRST + (next++ % COUNT);
-  await api.updateSessionRules({
-    removeRuleIds: [id],
-    addRules: [
-      {
-        id,
-        priority: 2,
-        action: {
-          type: 'modifyHeaders',
-          requestHeaders: [{ header: 'referer', operation: 'set', value }],
-        },
-        condition: {
-          urlFilter: `|${target}|`,
-          initiatorDomains: [chrome.runtime.id],
-          tabIds: [chrome.tabs?.TAB_ID_NONE ?? -1],
-          resourceTypes: ['xmlhttprequest', 'other'],
-        },
-      },
-    ],
-  });
+  // A rule that cannot be added (a full rule set, an API error) leaves the request as it
+  // was before: without a Referer, never failed for it.
+  const added = await Promise.resolve()
+    .then(() =>
+      api.updateSessionRules({
+        removeRuleIds: [id],
+        addRules: [
+          {
+            id,
+            priority: 2,
+            action: {
+              type: 'modifyHeaders',
+              requestHeaders: [{ header: 'referer', operation: 'set', value }],
+            },
+            condition: {
+              urlFilter: `|${target}|`,
+              initiatorDomains: [chrome.runtime.id],
+              tabIds: [chrome.tabs?.TAB_ID_NONE ?? -1],
+              resourceTypes: ['xmlhttprequest', 'other'],
+            },
+          },
+        ],
+      }),
+    )
+    .then(
+      () => true,
+      () => false,
+    );
+  if (!added) return run();
   try {
     return await run();
   } finally {
     await api.updateSessionRules({ removeRuleIds: [id] }).catch(() => {});
   }
+}
+
+// Rules left by a worker that stopped during a request: removed when the worker starts.
+export async function clearRefererRules() {
+  const api = globalThis.chrome?.declarativeNetRequest;
+  if (!api?.getSessionRules || !api.updateSessionRules) return;
+  const rules = await api.getSessionRules();
+  const stale = rules.map((rule) => rule.id).filter((id) => id >= FIRST && id < FIRST + COUNT);
+  if (stale.length) await api.updateSessionRules({ removeRuleIds: stale });
 }
 
 // A fetch that sends pageUrl's Referer with each request (for one page's images).

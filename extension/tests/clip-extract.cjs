@@ -290,7 +290,7 @@ function xThread() {
     assert.equal(visitor.extractor, 'x');
     assert.equal(
       visitor.title,
-      'Fixture Author on X: "Fixture post: a new way of writing software where you describe what you want…"',
+      'Fixture Author on X: "Fixture post: a new way of writing software where you describe what you want and…"',
     );
     assert.equal(visitor.byline, 'Fixture Author (@fixtureauthor)');
     assert.equal(visitor.markdown.match(/Fixture post: a new way/g).length, 1);
@@ -365,6 +365,36 @@ function xThread() {
     const fenced = await cut(`Intro.\n\n\`\`\`js\n${'const line = 1;\n'.repeat(2000)}`, 6000);
     assert.match(fenced.markdown, /\nconst line = 1;\n?\n\`\`\`\n\n\*clipTruncated\*$/);
     assert.deepEqual(await cut('Short.', 6000), { markdown: 'Short.', truncated: false });
+    // X titles: 80 characters of the post. Chinese and Japanese are cut by characters even
+    // with an early space; a cut inside an English word moves back to its space; a long word
+    // without spaces, and an emoji at the cut, are not torn.
+    const xTitle = (name, text) =>
+      page.evaluate(([n, t]) => globalThis.tabgentClip.xTitle(n, t), [name, text]);
+    const chinese =
+      'GPT-5 发布了，这是第一印象：推理速度比上一代快很多，长文本理解更稳定，写代码时会主动检查边界条件，但偶尔还是会过度自信地给出错误的结论，需要人工复核。整体来说值得升级，尤其是做长文档总结和代码审查的时候。';
+    const chineseTitle = await xTitle('某人', chinese);
+    assert.equal(chineseTitle, `某人 on X: "${[...chinese].slice(0, 80).join('')}…"`);
+    const early = await xTitle(
+      '某人',
+      '今天 OpenAI 发布了新的推理模型，' + '它在数学和代码上的表现都比之前好很多。'.repeat(4),
+    );
+    assert.match(early, /^某人 on X: "今天 OpenAI 发布了新的推理模型，它在数学和代码上的表现/);
+    assert.equal([...early.slice('某人 on X: "'.length, -2)].length, 80);
+    const japanese =
+      'Claude 4 を試してみました。長い文章の要約がとても自然で、コードの説明も分かりやすいです。ただし、最新の情報には弱いので、検索と組み合わせるのが良さそうです。しばらく日常の作業で使ってみます。';
+    const japaneseTitle = await xTitle('誰か', japanese);
+    assert.equal(japaneseTitle, `誰か on X: "${[...japanese].slice(0, 80).join('')}…"`);
+    const english =
+      "There's a new kind of coding I call vibe coding, where you fully give in to the vibes and forget the code exists.";
+    assert.equal(
+      await xTitle('Someone', english),
+      `Someone on X: "There's a new kind of coding I call vibe coding, where you fully give in to the…"`,
+    );
+    const long = 'Look: ' + 'a'.repeat(120);
+    assert.equal(await xTitle('Someone', long), `Someone on X: "Look: ${'a'.repeat(74)}…"`);
+    const family = 'x'.repeat(79) + '👨‍👩‍👧' + ' more text after the emoji';
+    assert.equal(await xTitle('Someone', family), `Someone on X: "${'x'.repeat(79)}👨‍👩‍👧…"`);
+    assert.equal(await xTitle('Someone', 'Short post.'), 'Someone on X: "Short post."');
     // A cap of zero or less ends at once with no text, never in a loop.
     for (const cap of [0, -5000]) {
       const empty = await cut('Some text.\n\nMore text.', cap);

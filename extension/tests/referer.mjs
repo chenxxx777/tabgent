@@ -81,4 +81,31 @@ calls.length = 0;
 assert.equal(await withReferer('http://cdn.example/a.png', page, async () => 'plain'), 'plain');
 assert.equal(await withReferer('https://cdn.example/a*b.png', page, async () => 'plain'), 'plain');
 assert.equal(calls.length, 0);
+// A rule that cannot be added (thrown or rejected) leaves the request without a Referer,
+// and the request still runs.
+const api = globalThis.chrome.declarativeNetRequest;
+const working = api.updateSessionRules;
+for (const failure of [
+  () => {
+    throw Error('rule set full');
+  },
+  async () => {
+    throw Error('rule set full');
+  },
+]) {
+  api.updateSessionRules = failure;
+  assert.equal(await withReferer(image, page, async () => 'still fetched'), 'still fetched');
+}
+api.updateSessionRules = working;
+
+// Rules a stopped worker left behind are removed at start; other rules are not touched.
+const { clearRefererRules } = await import('../referer.js');
+calls.length = 0;
+api.getSessionRules = async () => [{ id: 910003 }, { id: 910999 }, { id: 1000042 }, { id: 911000 }];
+await clearRefererRules();
+assert.deepEqual(calls, [{ removeRuleIds: [910003, 910999] }]);
+calls.length = 0;
+api.getSessionRules = async () => [{ id: 1000042 }];
+await clearRefererRules();
+assert.deepEqual(calls, []);
 console.log('PASS image requests carry the Referer Chrome sends, one rule per request');
