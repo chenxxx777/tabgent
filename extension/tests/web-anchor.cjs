@@ -215,6 +215,45 @@ const article = (before = '', after = '') => `
     assert.equal(unit.empty, null);
     assert(unit.similarity > 0.5 && unit.similarity < 0.6);
     console.log('PASS quote matcher units');
+
+    // Views: offsets and DOM paths are used only in the view the anchor was made in (the
+    // live page, or a clipped copy: view 'clip'); elsewhere only the quote and its context.
+    await load(article());
+    const live = await describe(`rangeOf('independence from others')`);
+    const inView = (anchor, view) =>
+      page.evaluate(
+        ([a, v]) => {
+          const result = tabgentWebAnchor.resolve(a, undefined, { view: v });
+          return result && { method: result.method, text: result.range.toString() };
+        },
+        [anchor, view],
+      );
+    assert.deepEqual(await inView(live, 'page'), {
+      method: 'dom',
+      text: 'independence from others',
+    });
+    assert.deepEqual(await inView(live, 'clip'), {
+      method: 'quote',
+      text: 'independence from others',
+    });
+    const clipped = { ...live, view: 'clip' };
+    assert.deepEqual(await inView(clipped, 'clip'), {
+      method: 'dom',
+      text: 'independence from others',
+    });
+    assert.equal((await inView(clipped, 'page')).method, 'quote');
+    // Identical passages: a position decides only in the anchor's own view.
+    await load(`<main>${twin}</main>`);
+    const sameOriginal = await describe(`rangeOf('Same words here.', 1)`);
+    const sameAnchor = {
+      ...sameOriginal,
+      dom: undefined,
+      quote: { ...sameOriginal.quote, prefix: '', suffix: '' },
+    };
+    await load(`<main><p>Shift.</p>${twin}</main>`);
+    assert.equal((await inView(sameAnchor, 'page'))?.method, 'position-tiebreak');
+    assert.equal(await inView({ ...sameAnchor, view: 'clip' }, 'page'), null);
+    console.log('PASS anchors use offsets and DOM paths only in the view they were made in');
   } finally {
     await browser.close();
   }
