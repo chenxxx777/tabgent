@@ -34,13 +34,19 @@
     selectionTimer,
     toastTimer;
 
-  const pageUrl = () => location.href.split('#')[0];
+  // Tabgent's clipped-page reader sets this before loading the layer: the page's address,
+  // the element that holds the text, its title and metadata, and the view anchors belong to.
+  // On webpages it is unset.
+  const view = globalThis.tabgentReadingView || null;
+  const pageUrl = () => (view ? view.url : location.href.split('#')[0]);
+  const pageTitle = () => (view ? view.title : document.title);
   const clamp = (value, low, high) => Math.max(low, Math.min(value, high));
   const strip = (value) => value.replace(/[\s\u00ad\u200b-\u200d\ufeff]+/g, '');
   // Live DOM text of a range, including script/style text the index skips. Mutation passes
   // compare it with the value captured when the range was assigned, never with index text.
   const liveText = (range) => (range ? strip(range.toString()) : undefined);
-  const index = () => anchors.buildIndex(document.body || document.documentElement, host);
+  const index = () =>
+    anchors.buildIndex(view?.root || document.body || document.documentElement, host);
 
   async function send(message) {
     let response;
@@ -57,6 +63,7 @@
   }
 
   function pageMeta() {
+    if (view) return view.meta || {};
     const content = (selector) =>
       document.querySelector(selector)?.getAttribute('content')?.trim() || '';
     return {
@@ -69,7 +76,8 @@
   // A human-readable location: the closest heading before the highlight.
   function sectionLabel(range) {
     let label = '';
-    for (const heading of [...document.querySelectorAll('h1,h2,h3,h4,h5,h6')].slice(0, 2000)) {
+    const headings = (view?.root || document).querySelectorAll('h1,h2,h3,h4,h5,h6');
+    for (const heading of [...headings].slice(0, 2000)) {
       if (range.comparePoint(heading, 0) > 0) break;
       label = heading.textContent.replace(/\s+/g, ' ').trim() || label;
     }
@@ -383,7 +391,7 @@
       documentId: page?.documentId,
       highlightId: record.highlight.id,
       note,
-      title: document.title,
+      title: pageTitle(),
     });
     if (response.highlight) record.highlight = response.highlight;
     closeEditor();
@@ -427,7 +435,7 @@
       ask,
       text: text.trim().slice(0, limit),
       anchor,
-      title: document.title,
+      title: pageTitle(),
       meta: pageMeta(),
       location: sectionLabel(exactRange),
       ...(ask ? { context: anchors.context(textIndex, start, end) } : {}),
@@ -470,7 +478,7 @@
       type: 'highlightAsk',
       documentId: page?.documentId,
       highlightId: record.highlight.id,
-      title: document.title,
+      title: pageTitle(),
       context,
     });
     leaveUi();
@@ -490,7 +498,7 @@
         type: 'highlightDelete',
         documentId: page?.documentId,
         highlightId: record.highlight.id,
-        title: document.title,
+        title: pageTitle(),
       });
     } catch (error) {
       // Already deleted elsewhere (another tab or the vault itself).
@@ -545,7 +553,9 @@
           continue;
         }
       }
-      const match = anchors.resolve(record.highlight.anchor, textIndex);
+      const match = anchors.resolve(record.highlight.anchor, textIndex, {
+        view: view?.name || 'page',
+      });
       record.range = match?.range || null;
       record.method = match?.method;
       record.start = match?.start;
@@ -612,7 +622,7 @@
     repaint();
     let response;
     try {
-      response = await send({ type: 'highlightResolve', title: document.title, meta: pageMeta() });
+      response = await send({ type: 'highlightResolve', title: pageTitle(), meta: pageMeta() });
     } catch (error) {
       // A connector that is starting may need a moment; a missing one does not retry.
       if (generation === loading && error.code !== 'host_missing' && ++loadAttempts <= 3)
@@ -731,7 +741,7 @@
     try {
       const response = await send({
         type: 'highlightResolve',
-        title: document.title,
+        title: pageTitle(),
         meta: pageMeta(),
       });
       if (page?.url !== url || response.url !== url) return;

@@ -2054,6 +2054,7 @@ body.history-open {
   margin-top: 8px;
 }
 #readingClipSelection,
+#readingClipOpen,
 #readingClip:not([hidden]) ~ #readingLibrary {
   margin-top: 2px;
 }

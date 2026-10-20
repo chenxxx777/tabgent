@@ -242,6 +242,25 @@ body.dragging #drop {
 #books div.item {
   opacity: 0.55;
 }
+/* A clipped webpage opens its clipped copy; this link opens the live page. */
+#books li:has(> .original) {
+  position: relative;
+}
+#books li:has(> .original) .item {
+  padding-right: 110px;
+}
+#books .original {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  color: var(--muted);
+  font-size: 12px;
+  text-decoration: none;
+}
+#books .original:hover {
+  color: var(--ink);
+  text-decoration: underline;
+}
 #books .title {
   font-weight: 600;
 }

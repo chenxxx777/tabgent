@@ -1,6 +1,7 @@
 import { saveResource, downloadStatus } from './resource-files.js';
 import { agentPointer } from './agent-pointer.js';
 import { pdfSource, pdfTab, pdfCommand } from './pdf-routing.js';
+import { clipSource, clipTab } from './clip-routing.js';
 import { nativeInput } from './browser-input.js';
 const newTab = (tab) => /^chrome:\/\/(newtab|new-tab-page)\//.test(tab.url || '');
 const allowed = (tab) =>
@@ -17,10 +18,16 @@ export async function context(session) {
   const tab = await chrome.tabs.get(session.tabId);
   // Agent pages may be context, but are never exposed to browser input tools.
   const agentPage = tab.url?.startsWith(chrome.runtime.getURL('ui/chat.html'));
+  // The clipped-page reader is context (the page's address, viewer 'clip') but never a
+  // target: Codex reads the clipped text from the vault instead.
+  const clipped = !session.noCompanion && !tab.incognito && !!clipSource(tab.url);
   return {
     scope: session.scope,
-    page:
-      !session.noCompanion && !tab.incognito && (allowed(tab) || agentPage) ? pdfTab(tab) : null,
+    page: clipped
+      ? clipTab(tab)
+      : !session.noCompanion && !tab.incognito && (allowed(tab) || agentPage)
+        ? pdfTab(tab)
+        : null,
     ...(allowed(tab) && !newTab(tab)
       ? { contentType: pdfSource(tab.url) ? 'application/pdf' : await contentType(tab.id) }
       : {}),

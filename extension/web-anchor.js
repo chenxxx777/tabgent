@@ -314,8 +314,10 @@
   }
 
   // DOM hint → position → quote search. A hint or position is accepted only when the quote
-  // and its full context match; otherwise every occurrence competes on context.
-  function resolve(anchor, index = buildIndex()) {
+  // and its full context match; otherwise every occurrence competes on context. Offsets and
+  // DOM paths belong to the view an anchor was made in (the live page, or its clipped copy:
+  // anchor.view 'clip'); in the other view only the quote and its context are used.
+  function resolve(anchor, index = buildIndex(), { view = 'page' } = {}) {
     if (anchor?.kind !== 'web' || !anchor.quote?.exact) return null;
     const { exact, prefix = '', suffix = '' } = anchor.quote;
     const exactAt = (start, end) => index.text.slice(start, end) === exact;
@@ -325,9 +327,10 @@
       const range = index.rangeFromOffsets(start, end);
       return range ? { start, end, method, range } : null;
     };
-    let hint = Number.isInteger(anchor.position?.start) ? anchor.position.start : null;
-    const first = anchor.dom && nodeFromPath(anchor.dom.start?.path),
-      last = anchor.dom && nodeFromPath(anchor.dom.end?.path);
+    const own = (anchor.view || 'page') === view;
+    let hint = own && Number.isInteger(anchor.position?.start) ? anchor.position.start : null;
+    const first = own && anchor.dom && nodeFromPath(anchor.dom.start?.path),
+      last = own && anchor.dom && nodeFromPath(anchor.dom.end?.path);
     if (first && last) {
       try {
         const range = document.createRange();
@@ -339,7 +342,7 @@
         if (offsets && exactAt(offsets.start, offsets.end)) hint = offsets.start;
       } catch {}
     }
-    const position = anchor.position;
+    const position = own ? anchor.position : null;
     if (Number.isInteger(position?.start) && verified(position.start, position.end))
       return found(position.start, position.end, 'position');
     const match = matchQuote(index.text, anchor.quote, hint);

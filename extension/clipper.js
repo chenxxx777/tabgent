@@ -209,6 +209,7 @@ export function createClipper({ vault, changed = () => {}, fetch = globalThis.fe
       ]
         .filter(Boolean)
         .join(' '),
+      open: true,
     });
     changed(tabId);
     return { ok: true, document: saved.document, clip: saved.clip, backup: saved.backup || null };

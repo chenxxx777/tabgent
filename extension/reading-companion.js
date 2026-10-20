@@ -36,6 +36,7 @@ export function createReadingCompanion({
   event,
   vault,
   pdfSource,
+  clipSource = () => null,
   epubDocument = () => undefined,
   tabMessage = (tabId, message) => chrome.tabs.sendMessage(tabId, message, { frameId: 0 }),
 }) {
@@ -64,6 +65,15 @@ export function createReadingCompanion({
     if (book !== undefined)
       return book && { ...book, title: clip(book.title || page.title || tab.title || '', 500) };
     const pdf = pdfSource(tab.url);
+    // The clipped-page reader shows a webpage's clipped copy: its document is the page.
+    const clipped = clipSource(tab.url);
+    if (clipped)
+      return {
+        url: clipped,
+        title: clip(page.title || tab.title || '', 500),
+        kind: 'web',
+        view: 'clip',
+      };
     const url = documentUrl(pdf || page.url || tab.url || '');
     // An imported PDF is named by its file hash, like a book.
     if (!/^https?:/.test(url) && !(pdf && /^urn:sha256:[0-9a-f]{64}$/.test(url))) return null;
@@ -408,13 +418,17 @@ export function createReadingCompanion({
           id: crypto.randomUUID(),
           text: clip(highlight.text, 20000),
           truncated: false,
-          url: document.kind === 'epub' ? document.url : pdfSource(tab.url) || tab.url,
+          url:
+            document.kind === 'epub'
+              ? document.url
+              : pdfSource(tab.url) || clipSource(tab.url) || tab.url,
           title: document.title,
           frameId: 0,
           documentId: frame?.documentId,
           tabId,
           locator: {
             kind: document.kind,
+            ...(clipSource(tab.url) ? { view: 'clip' } : {}),
             anchor: highlight.anchor || null,
             // The EPUB reader names the chapter file Codex reads instead of the reader tab.
             ...(/^chapters\/[^/\\]+\.md$/.test(context?.chapterFile || '')

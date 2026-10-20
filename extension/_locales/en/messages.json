@@ -1197,5 +1197,32 @@
   },
   "clipImagesFailed": {
     "message": "$1 images could not be saved and stay linked online."
+  },
+  "clipOpen": {
+    "message": "Open clipped copy"
+  },
+  "clipOriginal": {
+    "message": "Original page"
+  },
+  "clipDelete": {
+    "message": "Delete clipped copy"
+  },
+  "clipDeleteConfirm": {
+    "message": "Delete the clipped copy of this page? Your highlights and notes are kept."
+  },
+  "clipDeleted": {
+    "message": "The clipped copy was deleted. Your highlights and notes are kept."
+  },
+  "clipNotFound": {
+    "message": "This page has no clipped copy."
+  },
+  "clipIncomplete": {
+    "message": "This clipped copy is incomplete. Clip the page again."
+  },
+  "clipImageMissing": {
+    "message": "Image not saved · View it online"
+  },
+  "libraryKindClipped": {
+    "message": "Webpage · clipped"
   }
 }

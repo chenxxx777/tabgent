@@ -23,7 +23,15 @@ import {
 } from './vault-client.js';
 import { createReadingCompanion } from './reading-companion.js';
 import { createClipper } from './clipper.js';
+import {
+  registerClipPort,
+  clipSource,
+  clipViewerUrl,
+  isCurrentClipSender,
+} from './clip-routing.js';
 startPdfRouting();
+// The page a tab shows: a PDF viewer's PDF, a clipped-page reader's page, or its own URL.
+const pageAddress = (url) => pdfSource(url) || clipSource(url) || url;
 const sessions = new Map(),
   requests = new Map(),
   chunks = new Map();
@@ -96,6 +104,7 @@ const reading = createReadingCompanion({
   event,
   vault,
   pdfSource,
+  clipSource,
   epubDocument,
   // Highlight commands reach webpage content scripts or the EPUB reader page.
   tabMessage: async (tabId, message) => {
@@ -151,7 +160,7 @@ async function getSession(tabId) {
 async function historyUrl(s) {
   const tab = await chrome.tabs.get(s.tabId).catch(() => null);
   if (tab?.incognito) return '';
-  const url = pdfSource(tab?.url) || tab?.url || tab?.pendingUrl;
+  const url = (tab?.url && pageAddress(tab.url)) || tab?.pendingUrl;
   if (url && !url.startsWith(chrome.runtime.getURL('ui/chat.html'))) return url;
   return '';
 }
@@ -488,6 +497,8 @@ async function receive(message) {
   broadcast(s, m);
 }
 chrome.runtime.onConnect.addListener((port) => {
+  // The clipped-page reader registers itself; it carries no commands.
+  if (port.name === 'clip') return void registerClipPort(port);
   if (port.name === 'pdf' || port.name === 'epub') {
     if (port.name === 'epub' && !registerEpubPort(port)) return;
     void (async () => {
@@ -611,8 +622,10 @@ chrome.runtime.onConnect.addListener((port) => {
                 JSON.stringify({
                   tabId: tab.id,
                   windowId: tab.windowId,
-                  url: pdfSource(tab.url) || tab.url,
+                  url: pageAddress(tab.url),
                   title: tab.title || '',
+                  // Tabgent's reader of the page's clipped copy, not the live page.
+                  ...(clipSource(tab.url) ? { viewer: 'clip' } : {}),
                 }),
             };
             input.unshift(page);
@@ -778,11 +791,13 @@ async function updateNote(tabId, documentId, highlightId, note) {
 // the current PDF.js viewer, whose document is the original PDF URL.
 async function highlightMessage(msg, sender) {
   const pdf = pdfSource(sender.url);
+  // Tabgent's reader of a clipped page: its document is the page.
+  const clipped = !pdf && clipSource(sender.url);
   if (
     !sender.tab ||
     sender.tab.incognito ||
     sender.frameId !== 0 ||
-    (!pdf && !/^https?:/.test(sender.url || ''))
+    (!pdf && !clipped && !/^https?:/.test(sender.url || ''))
   )
     throw Error('Invalid highlight sender');
   const tabId = sender.tab.id;
@@ -794,10 +809,12 @@ async function highlightMessage(msg, sender) {
           () => false,
         )
       : null;
-  let pageUrl = pdf;
+  let pageUrl = pdf || clipped;
   if (pdf) {
     // Chrome hides extension documents from webNavigation.getFrame.
     if (!(await isCurrentPdfSender(sender))) throw Error('Stale PDF viewer');
+  } else if (clipped) {
+    if (!(await isCurrentClipSender(sender))) throw Error('Stale clipped page reader');
   } else {
     const frame = await chrome.webNavigation.getFrame({ tabId, frameId: 0 });
     if (!frame || (sender.documentId && frame.documentId !== sender.documentId))
@@ -809,7 +826,11 @@ async function highlightMessage(msg, sender) {
     kind = pdf ? 'pdf' : 'web';
   // PDF quotes name their page; webpages keep handOffSelection's default locator.
   const locator = (anchor) =>
-    pdf ? { kind: 'pdf', anchor, ...(anchor ? { page: anchor.page } : {}) } : null;
+    pdf
+      ? { kind: 'pdf', anchor, ...(anchor ? { page: anchor.page } : {}) }
+      : clipped
+        ? { kind: 'web', view: 'clip', anchor }
+        : null;
   const title = pageText(msg.title, 500) || pageText(sender.tab.title, 500);
   const meta = cleanPageMeta(msg.meta);
   const context = {
@@ -836,7 +857,9 @@ async function highlightMessage(msg, sender) {
     return {};
   }
   if (msg.type === 'highlightCreate') {
-    const anchor = pdf ? cleanPdfAnchor(msg.anchor) : cleanWebAnchor(msg.anchor),
+    const anchor = pdf
+        ? cleanPdfAnchor(msg.anchor)
+        : cleanWebAnchor(msg.anchor, { view: clipped ? 'clip' : 'page' }),
       text = pageText(msg.text, 20000);
     if (!anchor || !text.trim()) throw new VaultError('invalid_params', 'Invalid highlight');
     const location = pageText(msg.location, 200).trim();
@@ -1087,6 +1110,57 @@ async function epubMessage(msg, sender) {
   });
   return { ok: true };
 }
+// The clipped-page reader reads its page's clip from the vault. The document is the one its
+// own address names, never one the reader asks for.
+const clipMessages = new Set(['clipRead', 'clipAsset', 'clipDelete', 'clipOpen']);
+async function clipMessage(msg, sender) {
+  if (msg.type === 'clipOpen') {
+    // From the clipping prompt on a webpage: open the clipped copy of that page beside it.
+    if (!sender.tab || sender.tab.incognito || sender.frameId !== 0)
+      throw Error('Invalid clip sender');
+    const frame = await chrome.webNavigation.getFrame({ tabId: sender.tab.id, frameId: 0 });
+    if (!frame || (sender.documentId && frame.documentId !== sender.documentId))
+      throw Error('Stale page');
+    if (!/^https?:/.test(frame.url || '')) throw Error('Invalid clip sender');
+    await openClip(sender.tab, frame.url);
+    return {};
+  }
+  const page = clipSource(sender.url);
+  if (!page || !(await isCurrentClipSender(sender))) throw Error('Invalid clipped page reader');
+  const { document } = await vaultRequest('vault/document/resolve', {
+    url: page,
+    title: '',
+    kind: 'web',
+  });
+  if (!document?.createdAt) throw new VaultError('not_found', 'This page has no clipped copy');
+  const offset = Number.isInteger(msg.offset) ? msg.offset : 0;
+  const length = Number.isInteger(msg.length) ? msg.length : 1024 * 1024;
+  if (msg.type === 'clipRead')
+    return vault.request(
+      'vault/clip/read',
+      { documentId: document.id, offset, length },
+      { timeout: 60000 },
+    );
+  if (msg.type === 'clipAsset')
+    return vault.request(
+      'vault/clip/asset/read',
+      { documentId: document.id, file: pageText(msg.file, 100), offset, length },
+      { timeout: 60000 },
+    );
+  const result = await vaultRequest('vault/clip/delete', { documentId: document.id });
+  await loaded;
+  for (const s of sessions.values())
+    if (s.tabId === sender.tab.id) for (const p of s.ports) event(p, 'codex-reading-changed');
+  return result;
+}
+// The clipped copy of a page opens in a tab next to the page.
+function openClip(tab, url) {
+  return chrome.tabs.create({
+    url: clipViewerUrl(documentUrl(url)),
+    ...(tab?.windowId != null ? { windowId: tab.windowId } : {}),
+    ...(Number.isInteger(tab?.index) ? { index: tab.index + 1 } : {}),
+  });
+}
 // The viewer of an imported PDF reads its original back from the vault. The document is the
 // one named by the viewer's address (urn:sha256:...), never one the page asks for.
 async function pdfLocalRead(msg, sender) {
@@ -1116,6 +1190,12 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     );
     return true;
   }
+  if (clipMessages.has(msg.type)) {
+    clipMessage(msg, sender).then(reply, (e) =>
+      reply({ error: e.message, code: e.code || 'error' }),
+    );
+    return true;
+  }
   if (highlightMessages.has(msg.type) || epubMessages.has(msg.type)) {
     (epubMessages.has(msg.type) ? epubMessage : highlightMessage)(msg, sender).then(reply, (e) =>
       reply({ error: e.message, code: e.code || 'error' }),
@@ -1125,10 +1205,11 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   (async () => {
     if (msg.type === 'pageSelection' || msg.type === 'pageSelectionCleared') {
       const epub = isEpubReaderUrl(sender.url);
+      const clipped = clipSource(sender.url);
       if (
         !sender.tab ||
         sender.tab.incognito ||
-        (!/^https?:/.test(sender.url || '') && !pdfSource(sender.url) && !epub) ||
+        (!/^https?:/.test(sender.url || '') && !pdfSource(sender.url) && !epub && !clipped) ||
         (msg.type === 'pageSelection' && (typeof msg.text !== 'string' || !msg.text.trim()))
       )
         throw Error('Invalid selection');
@@ -1137,6 +1218,10 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
       if (selectionUrl) {
         // Chrome hides extension documents from webNavigation.getFrame.
         if (!(await isCurrentPdfSender(sender))) throw Error('Stale PDF selection');
+      } else if (clipped) {
+        // The clipped-page reader quotes the page it shows.
+        if (!(await isCurrentClipSender(sender))) throw Error('Stale clipped page selection');
+        selectionUrl = clipped;
       } else if (epub) {
         // Like PDF.js, the reader is an extension document hidden from webNavigation.
         if (!isCurrentEpubSender(sender)) throw Error('Stale EPUB selection');
@@ -1195,6 +1280,20 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
         ? (agentCompanions.get(sender.tab.id) ?? source.tabId)
         : (msg.companionTabId ?? source.tabId);
       return clipper.clip(tabId, { mode: msg.mode === 'selection' ? 'selection' : 'article' });
+    }
+    if (msg.type === 'clipOpenView') {
+      // From the side panel: the clipped copy of the page it is beside.
+      await loaded;
+      const source = sessions.get(msg.conversationKey);
+      if (!source) throw Error('Conversation not found');
+      const tabId = sender.tab
+        ? (agentCompanions.get(sender.tab.id) ?? source.tabId)
+        : (msg.companionTabId ?? source.tabId);
+      const tab = await chrome.tabs.get(tabId);
+      const url = pageAddress(tab.url || '');
+      if (!/^https?:/.test(url)) throw Error('This page has no clipped copy');
+      await openClip(tab, url);
+      return {};
     }
     if (msg.type === 'openLibrary') {
       // From the side panel: the library opens next to the page it is beside.
@@ -1460,7 +1559,7 @@ chrome.webNavigation.onCommitted.addListener(async (detail) => {
       continue;
     if (detail.frameId === 0 && detail.url) {
       s.pageUrls ||= {};
-      s.pageUrls[detail.tabId] = pdfSource(detail.url) || detail.url;
+      s.pageUrls[detail.tabId] = pageAddress(detail.url);
       await persist();
     }
 

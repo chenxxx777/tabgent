@@ -63,7 +63,11 @@ export function createReading({ i18n, request, showError, selection, reload }) {
     $('readingPath').title = state.vault?.path || '';
     $('readingChange').disabled = !state.vault;
     // Clipping saves a webpage's text in its vault folder; it needs a live web page.
-    const clippable = state.page?.kind === 'web' && /^https?:/i.test(state.page.url || '');
+    // In Tabgent's reader of the clipped copy, the live page is needed to clip again.
+    const clippable =
+      state.page?.kind === 'web' &&
+      /^https?:/i.test(state.page.url || '') &&
+      state.page.view !== 'clip';
     const clipped = Date.parse(state.clip?.clippedAt);
     $('readingClip').hidden = !clippable;
     $('readingClip').textContent = i18n(state.clip ? 'clipAgain' : 'clipPage');
@@ -71,6 +75,7 @@ export function createReading({ i18n, request, showError, selection, reload }) {
       ? ''
       : i18n('readingClipped', new Date(clipped).toLocaleString());
     $('readingClipSelection').hidden = !clippable || !selection()?.text;
+    $('readingClipOpen').hidden = !clippable || !state.clip?.complete;
     renderHighlights();
   }
 
@@ -288,6 +293,15 @@ export function createReading({ i18n, request, showError, selection, reload }) {
   }
   $('readingClip').onclick = () => void clipPage('article');
   $('readingClipSelection').onclick = () => void clipPage('selection');
+  // The clipped copy opens in Tabgent's reader, next to the page.
+  $('readingClipOpen').onclick = async () => {
+    $('readingMenu').hidePopover();
+    try {
+      await request('clipOpenView');
+    } catch (error) {
+      showError(error.message);
+    }
+  };
   // The library lists every document in the vault and opens it, or imports a file.
   $('readingLibrary').onclick = async () => {
     $('readingMenu').hidePopover();

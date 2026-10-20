@@ -1197,5 +1197,32 @@
   },
   "clipImagesFailed": {
     "message": "$1 张图片未能保存，仍链接到网上。"
+  },
+  "clipOpen": {
+    "message": "打开剪藏版"
+  },
+  "clipOriginal": {
+    "message": "原网页"
+  },
+  "clipDelete": {
+    "message": "删除剪藏"
+  },
+  "clipDeleteConfirm": {
+    "message": "删除这个网页的剪藏吗？高亮和笔记会保留。"
+  },
+  "clipDeleted": {
+    "message": "剪藏已删除，高亮和笔记仍然保留。"
+  },
+  "clipNotFound": {
+    "message": "这个网页还没有剪藏。"
+  },
+  "clipIncomplete": {
+    "message": "这份剪藏不完整，请重新剪藏。"
+  },
+  "clipImageMissing": {
+    "message": "图片未保存 · 在网上查看"
+  },
+  "libraryKindClipped": {
+    "message": "网页 · 已剪藏"
   }
 }
