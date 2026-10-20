@@ -4,6 +4,7 @@
 // vault/clip/save. The page and its clipped copy are one vault document, named by its URL.
 import { cleanPageMeta, documentUrl } from './vault-client.js';
 import { fetchImages, localizeMarkdown, uploadImages } from './clip-images.js';
+import { refererFetch } from './referer.js';
 import './user-error.js';
 
 const FILES = [
@@ -19,6 +20,20 @@ const text = (value, limit) => (typeof value === 'string' ? value.slice(0, limit
 const count = (value) => (Number.isInteger(value) && value >= 0 ? Math.min(value, 1e8) : 0);
 const bytes = (value) => new TextEncoder().encode(value).length;
 const t = (key, ...values) => chrome.i18n.getMessage(key, values.map(String)) || key;
+// Clip reasons the page returns. Mapped by code so a real locale shows the sentence, and a
+// test whose translator echoes the key still shows that key.
+const CLIP_REASON = {
+  'x-layout': 'clipXLayout',
+  'x-not-post': 'clipXOpenPost',
+  'no-selection': 'clipNoSelection',
+  navigated: 'clipNavigated',
+};
+function clipFailure(reason, message) {
+  const key = CLIP_REASON[reason];
+  const explained = key ? globalThis.tabgentExplainError?.({ code: reason, message: '' }, t) : '';
+  if (explained && explained !== t('errorGeneric')) return explained;
+  return key ? t(key) : t('clipFailed', message || '');
+}
 
 // The page's result reshaped to the vault contract; null when it is not usable.
 export function cleanClip(result) {
@@ -62,15 +77,19 @@ export function cleanClip(result) {
 }
 
 // Saves a cleaned clip: its images are downloaded (cookies only for imagesFrom's own site;
-// none when it is empty) and uploaded first, then vault/clip/save writes the clip.
+// none when it is empty; with the Referer of the page they are on, referer, as the browser
+// sends it) and uploaded first, then vault/clip/save writes the clip.
 // Returns { ok, saved, kept, failed }; ok is false when the Markdown cannot fit.
 export async function storeClip(
   vault,
-  { url, title, clip, imagesFrom = '', origin, existing = null, fetch, onProgress },
+  { url, title, clip, imagesFrom = '', referer = '', origin, existing = null, fetch, onProgress },
 ) {
   const images = clip.images.filter((image) => image.url);
   const downloaded = images.length
-    ? await fetchImages(clip.images, imagesFrom, { fetch, onProgress })
+    ? await fetchImages(clip.images, imagesFrom, {
+        fetch: referer ? refererFetch(referer, fetch) : fetch,
+        onProgress,
+      })
     : { assets: [], files: new Map(), failed: [] };
   await uploadImages(vault, downloaded.assets);
   // Web addresses replace the placeholders of unsaved images, unless that makes the
@@ -193,12 +212,7 @@ export function createClipper({ vault, changed = () => {}, fetch = globalThis.fe
     }
     if (!result?.ok) {
       const reason = result?.reason || 'error';
-      const message = {
-        'x-not-post': t('clipXOpenPost'),
-        'no-selection': t('clipNoSelection'),
-        navigated: t('clipNavigated'),
-      }[reason];
-      await say(tabId, { text: message || t('clipFailed', result?.message || ''), tone: 'error' });
+      await say(tabId, { text: clipFailure(reason, result?.message), tone: 'error' });
       return { ok: false, reason };
     }
     const clip = cleanClip(result);
@@ -213,6 +227,7 @@ export function createClipper({ vault, changed = () => {}, fetch = globalThis.fe
       title: clip.title || text(tab.title, 500),
       clip,
       imagesFrom: frame.url,
+      referer: frame.url,
       origin: { method: clip.method, extractor: clip.extractor, pageUrl: frame.url },
       existing,
       fetch,

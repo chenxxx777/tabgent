@@ -51,6 +51,10 @@ const codes = [
   'path_empty',
   'no_text',
   'too_long',
+  'x-layout',
+  'x-not-post',
+  'no-selection',
+  'navigated',
   'invalid_highlight',
   'io_error',
   'timeout',
@@ -145,6 +149,12 @@ for (const [name, messages] of Object.entries(locales)) {
     explain({ message: 'The item is too long to save' }, t),
     messages.errorTooLong.message,
   );
+  assert.equal(explain({ code: 'x-layout', message: 'x-layout' }, t), messages.clipXLayout.message);
+  assert.equal(
+    explain({ code: 'x-not-post', message: 'x-not-post' }, t),
+    messages.clipXOpenPost.message,
+  );
+  assert.doesNotMatch(messages.clipXLayout.message, /\/|\\/);
   assert.notEqual(messages.errorNoText.message, messages.errorInvalidParams.message);
   assert.notEqual(messages.errorTooLong.message, messages.errorInvalidParams.message);
   assert.notEqual(messages.errorPathEmpty.message, messages.errorInvalidParams.message);

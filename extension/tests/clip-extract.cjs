@@ -3,6 +3,7 @@
 // code, links, embeds, unsafe markup, a synthetic X thread, X timelines, selections, the
 // whole-page fallback and short pages. Nothing is fetched by the clipping script.
 const assert = require('node:assert/strict'),
+  fs = require('node:fs'),
   path = require('node:path'),
   { chromium } = require('playwright');
 const extension = path.resolve(__dirname, '..');
@@ -69,6 +70,16 @@ ${Array.from({ length: 900 }, (_, i) => `<p>Figure ${i}</p><img src="${longImage
 const xPages = {
   'https://x.com/author/status/100': xThread(),
   'https://x.com/home': xThread(),
+  // The layout X shows visitors who are not logged in: a real page's structure (captured
+  // 2026-10-21 from a public post), with generated people, ids and text (see the fixture).
+  'https://x.com/fixtureauthor/status/1900000000000000001': fs.readFileSync(
+    path.join(__dirname, 'fixtures/x-logged-out.html'),
+    'utf8',
+  ),
+  // A post page in a layout Tabgent does not know.
+  'https://x.com/someone/status/5': `<!doctype html><html><head><title>X</title></head><body><main>
+    <h1>A post</h1><ul><li><p>Post text that cannot be told apart from replies.</p></li>
+    <li><p>Somebody else's reply.</p></li></ul></main></body></html>`,
 };
 // A synthetic X conversation page: the structure X renders, with generated text.
 function xThread() {
@@ -262,7 +273,49 @@ function xThread() {
     );
     assert.notEqual(thread.imageToken, article.imageToken);
     assert.equal(thread.posts, 3);
+    // A short title: the author and how the post starts, not the page title.
+    assert.equal(
+      thread.title,
+      'Fixture Author on X: "Autonomy is endorsement, not independence. A long thread about motivation…"',
+    );
     assert.deepEqual(requests, []);
+
+    // The logged-out layout (no data-testid): the post once, its image, the author's own
+    // reply right after it; not other people's replies, the author's later post after them,
+    // counts, buttons or the screen-reader heading that repeats the whole post.
+    const visitorUrl = 'https://x.com/fixtureauthor/status/1900000000000000001';
+    await open(visitorUrl);
+    const visitor = await run({ mode: 'article', url: visitorUrl });
+    assert.equal(visitor.ok, true, JSON.stringify(visitor).slice(0, 300));
+    assert.equal(visitor.extractor, 'x');
+    assert.equal(
+      visitor.title,
+      'Fixture Author on X: "Fixture post: a new way of writing software where you describe what you want and…"',
+    );
+    assert.equal(visitor.byline, 'Fixture Author (@fixtureauthor)');
+    assert.equal(visitor.markdown.match(/Fixture post: a new way/g).length, 1);
+    assert.match(visitor.markdown, /weekend projects 😀\n\nSecond paragraph of the fixture post/);
+    assert.match(visitor.markdown, /Second post by the author, continuing the thread/);
+    assert.doesNotMatch(visitor.markdown, /should not be clipped|not part of the thread/);
+    assert.doesNotMatch(
+      visitor.markdown,
+      /^#|发帖|显示翻译|X 上的|1474|3633|3\.4万|737\.1万|浏览量/m,
+    );
+    assert.equal(visitor.posts, 2);
+    assert.equal(visitor.tooLittle, false);
+    assert.deepEqual(
+      visitor.images.map((image) => image.url),
+      ['https://pbs.twimg.com/media/FIXTUREMEDIA?format=webp&name=large'],
+    );
+    assert.deepEqual(requests, []);
+    // Another post layout is refused: generic extraction would mix in replies.
+    await open('https://x.com/someone/status/5');
+    assert.deepEqual(await run({ mode: 'article', url: 'https://x.com/someone/status/5' }), {
+      ok: false,
+      reason: 'x-layout',
+    });
+    // Saving the whole page stays possible, as the user's explicit choice.
+    assert.equal((await run({ mode: 'page', url: 'https://x.com/someone/status/5' })).ok, true);
     // Timelines and profiles are not clipped as articles.
     await open('https://x.com/home');
     assert.deepEqual(await run({ mode: 'article', url: 'https://x.com/home' }), {
@@ -312,6 +365,36 @@ function xThread() {
     const fenced = await cut(`Intro.\n\n\`\`\`js\n${'const line = 1;\n'.repeat(2000)}`, 6000);
     assert.match(fenced.markdown, /\nconst line = 1;\n?\n\`\`\`\n\n\*clipTruncated\*$/);
     assert.deepEqual(await cut('Short.', 6000), { markdown: 'Short.', truncated: false });
+    // X titles: 80 characters of the post. Chinese and Japanese are cut by characters even
+    // with an early space; a cut inside an English word moves back to its space; a long word
+    // without spaces, and an emoji at the cut, are not torn.
+    const xTitle = (name, text) =>
+      page.evaluate(([n, t]) => globalThis.tabgentClip.xTitle(n, t), [name, text]);
+    const chinese =
+      'GPT-5 发布了，这是第一印象：推理速度比上一代快很多，长文本理解更稳定，写代码时会主动检查边界条件，但偶尔还是会过度自信地给出错误的结论，需要人工复核。整体来说值得升级，尤其是做长文档总结和代码审查的时候。';
+    const chineseTitle = await xTitle('某人', chinese);
+    assert.equal(chineseTitle, `某人 on X: "${[...chinese].slice(0, 80).join('')}…"`);
+    const early = await xTitle(
+      '某人',
+      '今天 OpenAI 发布了新的推理模型，' + '它在数学和代码上的表现都比之前好很多。'.repeat(4),
+    );
+    assert.match(early, /^某人 on X: "今天 OpenAI 发布了新的推理模型，它在数学和代码上的表现/);
+    assert.equal([...early.slice('某人 on X: "'.length, -2)].length, 80);
+    const japanese =
+      'Claude 4 を試してみました。長い文章の要約がとても自然で、コードの説明も分かりやすいです。ただし、最新の情報には弱いので、検索と組み合わせるのが良さそうです。しばらく日常の作業で使ってみます。';
+    const japaneseTitle = await xTitle('誰か', japanese);
+    assert.equal(japaneseTitle, `誰か on X: "${[...japanese].slice(0, 80).join('')}…"`);
+    const english =
+      "There's a new kind of coding I call vibe coding, where you fully give in to the vibes and forget the code exists.";
+    assert.equal(
+      await xTitle('Someone', english),
+      `Someone on X: "There's a new kind of coding I call vibe coding, where you fully give in to the…"`,
+    );
+    const long = 'Look: ' + 'a'.repeat(120);
+    assert.equal(await xTitle('Someone', long), `Someone on X: "Look: ${'a'.repeat(74)}…"`);
+    const family = 'x'.repeat(79) + '👨‍👩‍👧' + ' more text after the emoji';
+    assert.equal(await xTitle('Someone', family), `Someone on X: "${'x'.repeat(79)}👨‍👩‍👧…"`);
+    assert.equal(await xTitle('Someone', 'Short post.'), 'Someone on X: "Short post."');
     // A cap of zero or less ends at once with no text, never in a loop.
     for (const cap of [0, -5000]) {
       const empty = await cut('Some text.\n\nMore text.', cap);

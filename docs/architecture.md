@@ -438,7 +438,19 @@ elements that `checkVisibility()` reports as not displayed are marked `hidden` i
 and images keep their displayed size, so the page the user reads is never modified. On
 `x.com` and `twitter.com`, single posts use Defuddle's X extractor with
 `includeReplies: false` (the post and the author's thread loaded on the page); X articles
-use its article extractor; timelines and profiles are refused. The result is parsed into an
+use its article extractor; timelines and profiles are refused. Visitors who are not logged
+in get another layout without `data-testid` (the conversation is a list of plain `<article>`s
+in `div#urt:conversation:<id>:…`, with a screen-reader `<h1>` that repeats the whole post),
+where Defuddle's X extractor finds nothing and its generic extraction would keep the heading,
+counts and everyone's replies. `clip-content.js` reads that layout itself: the article whose
+status link is the address's post, then the author's consecutive replies (by the `@handle`
+in each header), each post's `[dir="auto"]` text with links and emoji, and its
+`pbs.twimg.com/media` images; quoted posts' parts, buttons and counts are left out. A post
+address in neither layout is refused (`x-layout`, asking for a selection instead). Both
+layouts get a short title, `<name> on X: "<first 80 characters>…"` (graphemes; a cut inside
+a word of a space-separated script moves back to its space, at most 20 characters, so
+Chinese and Japanese are cut by characters), and no "save whole page"
+offer for a short post. The result is parsed into an
 inert `DOMParser` document. Images keep only their address in `data-remote-src` (the best
 `srcset` candidate up to 2048 pixels, `pbs.twimg.com` at `name=large`; tracking pixels and
 `data:` images are dropped), frames and media become links, links become absolute HTTP(S)
@@ -469,7 +481,13 @@ and the reading context of any message about the page names its `article.md`.
 Images are saved by the worker (`clip-images.js`), not the page. The clipping script writes
 each image in the Markdown as a placeholder named by a random per-clip token, which the page
 cannot read from the isolated world. The worker fetches each distinct address once with its
-host access (no CORS), `referrerPolicy: 'no-referrer'`, and cookies only for the page's own
+host access (no CORS), the Referer Chrome sends from the page (`referer.js`: Chrome's
+default `strict-origin-when-cross-origin`, so the page address for the same origin and only
+its origin otherwise; an extension's `fetch` cannot set this header, so each request gets a
+`declarativeNetRequest` session rule for its exact address and the extension's own
+background requests, removed when the request ends (if the rule cannot be added, the
+request goes without a Referer; rules a stopped worker left are removed at its start); hosts such as sspai.com refuse image
+requests without a Referer), and cookies only for the page's own
 site and only on the first request (a same-site image is fetched with `redirect: 'manual'`,
 and a redirect is followed again without cookies; the site test is an approximation without
 the Public Suffix List), four at a time within 15 seconds each and 45 seconds overall. It keeps JPEG, PNG, GIF,
@@ -642,8 +660,8 @@ vault copy as a clip does; otherwise the reader shows the feed's HTML, or full t
   script's pipeline (`finish()`): links, frames and media, images as `data-remote-src`,
   DOMPurify, the Markdown and the limits. The reader cleans the result again before showing
   it.
-- Images come from `feedImage`: the worker fetches the address without cookies or a
-  referrer, skips known trackers (feed counters, analytics and `pixel`/`beacon` images),
+- Images come from `feedImage`: the worker fetches the address without cookies, with the
+  Referer of the item's identity address (`referer.js`, as for clips), skips known trackers (feed counters, analytics and `pixel`/`beacon` images),
   keeps JPEG, PNG, GIF, WebP and AVIF by their bytes up to 5 MiB, and refuses all when the
   subscription's images are off. The reader shows them as `blob:` URLs.
 
