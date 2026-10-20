@@ -59,9 +59,8 @@ const root = path.resolve(__dirname, '..');
         assert.equal(await page.locator('#connectorDownload').getAttribute('href'), connectorUrl);
         await page.screenshot({ path: path.join(os.tmpdir(), 'tabgent-store-setup.png') });
       }
-      assert(
-        (await page.locator('body').innerText()).includes('not processed only on your computer'),
-      );
+      const privacy = await page.evaluate(() => chrome.i18n.getMessage('helperPrivacy'));
+      assert((await page.locator('body').innerText()).includes(privacy));
       assert(!(await page.locator('body').innerText()).includes('$i18n{'));
     }
     console.log('PASS setup download, unavailable state, unsafe URL rejection and data disclosure');

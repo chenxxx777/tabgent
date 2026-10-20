@@ -17,6 +17,7 @@ if (source && !local) {
 }
 const native = document.querySelector('#native');
 native.textContent = t('pdfOpenNative');
+frame.title = t('pdfFrameTitle');
 // Chrome's viewer needs a web address; an imported PDF has none.
 native.hidden = local;
 if (!local) status.textContent = t('pdfLoading');
