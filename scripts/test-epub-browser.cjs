@@ -96,9 +96,11 @@ async function until(check, ms = 10000) {
           '--remote-debugging-port=0',
           '--no-first-run',
           '--no-default-browser-check',
-          ...(process.env.EPUB_HEADLESS === '1' || process.platform !== 'darwin'
-            ? ['--headless=new']
-            : []),
+          // Headless by default so repeated restarts never steal focus; EPUB_HEADED=1
+          // shows the window. EPUB_HEADLESS=1 stays accepted as the old spelling.
+          ...(process.env.EPUB_HEADED === '1' && process.env.EPUB_HEADLESS !== '1'
+            ? []
+            : ['--headless=new']),
           // Hosted Linux CI cannot provide Chromium's OS sandbox. macOS retains it.
           ...(process.platform === 'linux' ? ['--no-sandbox'] : []),
           'about:blank',
