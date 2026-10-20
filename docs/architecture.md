@@ -463,7 +463,11 @@ in the library: the same file opened from anywhere, renamed, moved or imported s
 document, and a changed file is a new one. Highlight and page-conversation messages from
 the viewer resolve that URN from the hash its port announced (waiting briefly for it),
 never from the page or its path. The quote of an Ask AI hand-off carries the URN, while the
-per-message browser context names the `file://` URL, so Codex sees where the file is.
+per-message browser context names the `file://` URL, so Codex sees where the file is. As for
+webpages, an Agent tab whose local page closes keeps the page's last `file://` address
+and its document. A local PDF's remembered document also records the file's address
+(`fileUrl`), so a reload of its viewer, which commits `file.html` again and names the file
+only once it is read, keeps the document while the tab shows the same file.
 
 The viewer copies the PDF into the vault once the document exists (its first highlight, or
 when a saved page conversation or a reopened PDF finds the document), through

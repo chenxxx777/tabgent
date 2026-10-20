@@ -447,7 +447,12 @@ try {
       { id: 'test', url: base + 'ui/chat.html' },
     );
   assert.deepEqual((await state(5)).page, { url: markdown, title: 'notes.md', kind: 'web' });
-  assert.deepEqual((await state(6)).page, { url: urn, kind: 'pdf', title: 'reading paper.pdf' });
+  assert.deepEqual((await state(6)).page, {
+    url: urn,
+    kind: 'pdf',
+    title: 'reading paper.pdf',
+    fileUrl: paper,
+  });
   assert.equal((await state(7)).page, null, 'A directory listing is not a document');
   console.log('PASS page conversations on local files save to their vault documents');
 
@@ -566,6 +571,88 @@ try {
     ],
   );
   console.log('PASS open local files are picked up when access turns on and at browser startup');
+
+  // A view whose companion page closes keeps that page, as for webpages: a local file keeps
+  // its file:// address and document, a local PDF its file and urn:sha256 document, also
+  // after its viewer reloaded. These views stand for Agent tabs, which outlive the page.
+  const view = async (tabId) => {
+    const messages = [],
+      port = {
+        name: 'chat',
+        sender: { url: base + 'ui/chat.html', id: 'test' },
+        onMessage: event(),
+        onDisconnect: event(),
+        postMessage: (m) => messages.push(m),
+      };
+    connect(port);
+    await port.onMessage.listeners[0]({ type: 'attach', tabId });
+    const conversationKey = messages.find((m) => m.type === 'attached').state.conversationKey;
+    return {
+      state: () =>
+        call(
+          { type: 'readingState', conversationKey, companionTabId: tabId },
+          { id: 'test', url: base + 'ui/chat.html' },
+        ),
+      context: async () => {
+        await port.onMessage.listeners[0]({ type: 'ui', name: 'codexContext', args: [] });
+        return messages.filter((m) => m.name === 'codex-context').at(-1).value;
+      },
+    };
+  };
+  const notes = await view(5);
+  await notes.state();
+  await commit({ tabId: 5, frameId: 0, url: markdown });
+  const pdfView = await view(6);
+  const remembered = (await pdfView.state()).page;
+  assert.equal(remembered.url, urn);
+  // A reload of the viewer commits file.html again: the same file keeps its document, also
+  // while the reloaded viewer has not named the file yet.
+  await commit({ tabId: 6, frameId: 0, url: fileViewer });
+  for (const listen of port.onDisconnect.listeners) listen();
+  assert.equal(filePdfDocument(tabs.get(6)), null);
+  assert.deepEqual((await pdfView.state()).page, remembered);
+  tabs.delete(5);
+  tabs.delete(6);
+  assert.deepEqual((await notes.state()).page, {
+    url: markdown,
+    title: 'notes.md',
+    kind: 'web',
+    closed: true,
+  });
+  assert.deepEqual((await notes.context()).page, {
+    id: 5,
+    url: markdown,
+    title: 'notes.md',
+    closed: true,
+  });
+  assert.deepEqual((await pdfView.state()).page, { ...remembered, closed: true });
+  assert.deepEqual((await pdfView.context()).page, {
+    id: 6,
+    url: paper + '#page=2',
+    title: 'reading paper.pdf',
+    closed: true,
+  });
+  // A viewer that moves on to another file forgets the document of the first one.
+  tabs.set(13, { id: 13, windowId: 1, index: 10, url: fileViewer, title: 'reading paper.pdf' });
+  const other = {
+    name: 'pdf',
+    sender: { ...viewer, tab: { id: 13 }, documentId: 'viewer-13', url: fileViewer },
+    onMessage: event(),
+    onDisconnect: event(),
+    postMessage: () => {},
+  };
+  connect(other);
+  for (const listen of other.onMessage.listeners) listen({ type: 'document', sha256 });
+  const moved = await view(13);
+  assert.equal((await moved.state()).page.url, urn);
+  await commit({
+    tabId: 13,
+    frameId: 0,
+    url: base + 'pdf/file.html?url=file:///Users/reader/Documents/other.pdf',
+  });
+  tabs.delete(13);
+  assert.equal((await moved.state()).page, null);
+  console.log('PASS a closed local page keeps its file address and document for its views');
 } finally {
   python.kill();
   fs.rmSync(temp, { recursive: true, force: true });

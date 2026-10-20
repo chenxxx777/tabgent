@@ -92,7 +92,8 @@ folder and opens them by `file://` URL. It checks that a PDF goes straight to th
 viewer, its highlight, Ask AI, note and vault copy under `urn:sha256`, a restart, a moved
 copy and a library import of the same file, highlights and Ask AI on Markdown and text
 files, the library entry of a text file, links from a local page and refused links from a
-website, and the explanation page, side panel reminder and pick-up of open files when file
+website, Agent tabs that keep asking and saving after a local file or reloaded PDF closes, and
+the explanation page, side panel reminder and pick-up of open files when file
 access is turned off and on. Codex is `fixtures/app-server-tools.py`, which wraps the
 fixture app-server: a message line `TOOL {json}` makes it call the browser tool with those
 arguments and record the result, which checks that Agent reads local tabs, cannot click or

@@ -65,10 +65,17 @@ export function createReadingCompanion({
     const book = epubDocument(tab);
     if (book !== undefined)
       return book && { ...book, title: clip(book.title || page.title || tab.title || '', 500) };
-    // A PDF opened from the computer is named by its file hash once its viewer has read it.
+    // A PDF opened from the computer is named by its file hash once its viewer has read it;
+    // fileUrl is the file's address, which the tab keeps across reloads.
     const file = filePdfDocument(tab);
     if (file !== undefined)
-      return file && { ...file, title: clip(page.title || tab.title || '', 500) };
+      return (
+        file && {
+          ...file,
+          title: clip(page.title || tab.title || '', 500),
+          fileUrl: documentUrl(pdfSource(tab.url)),
+        }
+      );
     const pdf = pdfSource(tab.url);
     const url = documentUrl(pdf || page.url || tab.url || '');
     // An imported PDF is named by its file hash, like a book. A Markdown, text or HTML file from
@@ -91,6 +98,16 @@ export function createReadingCompanion({
       return known ? { ...known, closed: true } : null;
     }
     const document = tabDocument(tab, page);
+    // A reloading local PDF viewer has not named its file yet: the tab still shows the
+    // document remembered for that file.
+    const known = s?.pageDocuments?.[tabId];
+    if (
+      !document &&
+      known?.fileUrl &&
+      filePdfDocument(tab) === null &&
+      known.fileUrl === documentUrl(pdfSource(tab.url))
+    )
+      return known;
     if (s && JSON.stringify(s.pageDocuments?.[tabId] ?? null) !== JSON.stringify(document)) {
       s.pageDocuments ||= {};
       if (document) s.pageDocuments[tabId] = document;
@@ -102,11 +119,15 @@ export function createReadingCompanion({
   // A companion tab that navigates away no longer shows the document remembered for it.
   // The EPUB reader's address names the reader, not the book (a book's URL is its hash):
   // while the tab stays in the reader, such as on a reload, the book is kept, and the next
-  // pageDocument call records the book the reader reports.
+  // pageDocument call records the book the reader reports. A PDF from the computer is also
+  // named by its hash; it is kept while the tab shows the same file.
   function navigated(s, tabId, url) {
     const known = s.pageDocuments?.[tabId];
     if (!known) return;
-    const same = known.kind === 'epub' ? isEpubReaderUrl(url) : known.url === documentUrl(url);
+    const same =
+      known.kind === 'epub'
+        ? isEpubReaderUrl(url)
+        : (known.fileUrl || known.url) === documentUrl(url);
     if (!same) delete s.pageDocuments[tabId];
   }
   // A session opened in a view starts with what its source knows of the view's page, the

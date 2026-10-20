@@ -823,6 +823,95 @@ Short daily sessions build a durable habit.
     await unnamed.close();
     console.log('PASS a PDF in Chrome viewer switches to Tabgent viewer; Chrome viewer on request');
 
+    // 12. An Agent tab outlives a local page, as a webpage's does: after the Markdown file, and
+    // a local PDF whose viewer reloaded, close, the Agent tab names the closed file and keeps
+    // asking and saving on the same highlight.
+    function lastContexts(threadId) {
+      const parts = threads()
+        [threadId].at(-1)
+        .items.find((item) => item.type === 'userMessage').content;
+      const part = (prefix) =>
+        JSON.parse(parts.find((p) => p.text?.startsWith(prefix)).text.replace(/^[^\n]*\n/, ''));
+      return {
+        page: part('Browser context for this message'),
+        reading: part('Reading context for this message'),
+      };
+    }
+    async function openAgentTab(panel) {
+      const opened = context.waitForEvent('page');
+      await panel(`document.getElementById('openAgent').click()`);
+      const agent = await opened;
+      await agent.waitForURL('**/ui/chat.html');
+      assert(
+        await until(() =>
+          agent.evaluate(() => document.getElementById('connection').dataset.state === 'ready'),
+        ),
+        'The Agent tab connects',
+      );
+      return agent;
+    }
+    async function askAgent(agent, text, folder, dir) {
+      const count = anchorsOf(dir, folder).turns.length + 1;
+      await agent.fill('#prompt', text);
+      await agent.press('#prompt', 'Enter');
+      assert(await until(() => anchorsOf(dir, folder).turns.length === count, 15000), text);
+      return anchorsOf(dir, folder).turns.at(-1);
+    }
+    await md.bringToFront();
+    panel = await panelFor(url(files.md));
+    let agent = await openAgentTab(panel);
+    panel.close();
+    await md.close();
+    assert(
+      await until(
+        async () =>
+          (await agent.textContent('#contextText')) ===
+          (await message('pageClosedContext', 'notes.md')),
+      ),
+      await agent.textContent('#contextText'),
+    );
+    const mdThread = anchorsOf(articles, note1).turns[0].threadId;
+    let turn = await askAgent(agent, 'And after closing the file?', note1, articles);
+    assert.deepEqual([turn.highlightId, turn.threadId], ['h002', mdThread]);
+    let contexts = lastContexts(mdThread);
+    assert.deepEqual([contexts.page.closed, contexts.page.url], [true, url(files.md)]);
+    assert.equal(contexts.reading.document.url, url(files.md));
+    assert.equal(contexts.reading.saving, 'highlight');
+    await agent.close();
+
+    const reread = await context.newPage();
+    await reread.goto(url(files.pdf));
+    pdf = await viewer(reread);
+    await drag(reread, pdf, 'Readers who endorse a goal', '.page[data-page-number="2"] .textLayer');
+    await press(reread, 'ask');
+    assert(await until(() => anchorsOf(books, paper).highlights.length === 3));
+    await reread.bringToFront();
+    panel = await panelFor(url(files.pdf));
+    assert(await send(panel, 'Why do they persist?'));
+    assert(await until(() => anchorsOf(books, paper).turns.some((t) => t.highlightId === 'h003')));
+    const pdfThread = anchorsOf(books, paper).turns.find((t) => t.highlightId === 'h003').threadId;
+    agent = await openAgentTab(panel);
+    panel.close();
+    await reread.reload();
+    await viewer(reread);
+    await reread.close();
+    assert(
+      await until(
+        async () =>
+          (await agent.textContent('#contextText')) ===
+          (await message('pageClosedContext', 'reading paper.pdf')),
+      ),
+      await agent.textContent('#contextText'),
+    );
+    turn = await askAgent(agent, 'Read its pages from my notes.', paper, books);
+    assert.deepEqual([turn.highlightId, turn.threadId], ['h003', pdfThread]);
+    contexts = lastContexts(pdfThread);
+    assert.deepEqual([contexts.page.closed, contexts.page.url], [true, url(files.pdf)]);
+    assert.equal(contexts.reading.document.url, urn);
+    assert.match(contexts.reading.document.pages, /\/Books\/paper-[^/]+\/pages$/);
+    await agent.close();
+    console.log('PASS Agent tabs keep asking and saving after a local file or PDF closes');
+
     assert(!logs.some((line) => line.startsWith('pageerror')), logs.join('\n'));
     assert.equal(personalState(), personalBefore, 'The personal ReadingVault was not touched');
     passed = true;
