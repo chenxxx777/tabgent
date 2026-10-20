@@ -27,8 +27,12 @@ reads are sent to the model like any other tool result.
 Clipping a page (**Clip this page**) reads its main text from the page as it is shown in
 your browser, including text you see only when signed in and personal information on the
 page (for example names and replies on X), and saves it in the ReadingVault. The text is
-extracted in the page by scripts bundled with Tabgent; nothing is fetched and no other
-service is involved. Images are not downloaded: `article.md` keeps their web addresses.
+extracted in the page by scripts bundled with Tabgent; no other service is involved. Then
+the extension downloads the page's images directly from their servers: without a referrer,
+and with cookies only for images on the page's own site (a redirect to another site is
+followed without them). Up to 50 JPEG, PNG, GIF, WebP or
+AVIF images per page are saved, each up to 5 MB and 30 MB together; others (SVG, larger
+images, failed downloads) stay linked at their web addresses.
 Clipping does not send anything to Codex. A message about the page names the clipped text
 (its `article.md` path) in the reading context, and Codex reads it only on request.
 
@@ -40,7 +44,7 @@ limit which tabs tools can access; they do not validate the intentions of a page
 
 | Permission                            | Why it is needed                                                                       |
 | ------------------------------------- | -------------------------------------------------------------------------------------- |
-| HTTP(S) host access and `scripting`   | Read the selected page, observe text selection, and extract a page's text to clip it.  |
+| HTTP(S) host access and `scripting`   | Read the selected page, observe text selection, and clip a page's text and images.     |
 | `file:///*` host access               | Work on files you open in Chrome, once you allow access to file URLs.                  |
 | `tabs` and `webNavigation`            | Associate conversations with tabs and preserve them across navigation.                 |
 | `sidePanel`                           | Display the conversation alongside the page.                                           |
@@ -80,7 +84,7 @@ symlink so existing attachment paths remain valid.
 | `~/ReadingVault/` or the configured folder  | Saved highlights, your notes on them, page URLs, anchors, discussions.  |
 | `Books/book-*/` in the vault                | Imported EPUB files, their SHA-256 record, and chapter text.            |
 | `Books/paper-*/` in the vault               | PDF highlights; imported or highlighted local PDFs, SHA-256, page text. |
-| `Articles/article-*/` in the vault          | Webpage highlights; a clipped page's text, cleaned HTML and record.     |
+| `Articles/article-*/` in the vault          | Webpage highlights; a clipped page's text, HTML, images and record.     |
 | Chrome extension local storage              | Note saves awaiting retry (at most 100), EPUB positions, file prompt.   |
 | `$CODEX_HOME/projects/tabgent/vault.json`   | The configured ReadingVault folder.                                     |
 | Shared Codex session storage and index      | Conversation history and project association.                           |
@@ -101,7 +105,8 @@ remove saved notes. Nothing in the vault is uploaded by Tabgent.
 
 A clipped page is saved in its page's folder as `article.md` (the text as Markdown, with
 the page address and clip time), `article.html` (the cleaned page, without scripts, styles,
-forms or frames) and `article.json` (when and how it was clipped). Clipping the page again
+forms or frames), its images in `assets/`, and `article.json` (when and how it was clipped,
+and the address each image came from). Clipping the page again
 replaces them after asking; an `article.md` you edited is kept as
 `article-edited-<time>.md`. Delete the files to remove a clip; the page's highlights stay.
 

@@ -1198,6 +1198,15 @@
   "clipNavigated": {
     "message": "页面在剪藏时发生了变化，请重新剪藏。"
   },
+  "clipSavingImages": {
+    "message": "正在剪藏… 图片 $1/$2"
+  },
+  "clipImagesSaved": {
+    "message": "已保存 $1 张图片。"
+  },
+  "clipImagesFailed": {
+    "message": "$1 张图片未能保存，仍链接到网上。"
+  },
   "fileAccessTitle": {
     "message": "让 Tabgent 读取你在 Chrome 中打开的文件"
   },
