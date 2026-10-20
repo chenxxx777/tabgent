@@ -838,6 +838,7 @@ def save_clip(settings, params):
                     "size": asset["size"],
                     "mime": CLIP_ASSET_TYPES[asset["ext"]],
                     "source": asset["source"],
+                    "sources": asset["sources"],
                 }
                 for asset in assets
             ],
@@ -1798,7 +1799,8 @@ def _clip_images(value):
 
 
 def _clip_assets(value):
-    """The images saved with a clip: {sha256, ext, size, source}, unique and bounded."""
+    """The images saved with a clip: {sha256, ext, size, source, sources}, unique and
+    bounded."""
     value = [] if value is None else value
     if not isinstance(value, list) or len(value) > CLIP_ASSET_COUNT:
         raise VaultError(
@@ -1821,10 +1823,31 @@ def _clip_assets(value):
             and re.match(r"https?://", source, re.IGNORECASE)
         ):
             raise VaultError("invalid_params", "Each asset needs its web address")
+        # Every address the page showed these bytes at (the first is source).
+        sources = item.get("sources", [source])
+        if not (
+            isinstance(sources, list)
+            and len(sources) <= CLIP_ASSET_COUNT
+            and all(
+                isinstance(url, str)
+                and len(url) <= 4096
+                and re.match(r"https?://", url, re.IGNORECASE)
+                for url in sources
+            )
+        ):
+            raise VaultError("invalid_params", "asset sources must be web addresses")
         size = _integer(item, "size", 1, CLIP_ASSET_LIMIT)
         total += size
         seen.add(digest)
-        assets.append({"sha256": digest, "ext": ext, "size": size, "source": source})
+        assets.append(
+            {
+                "sha256": digest,
+                "ext": ext,
+                "size": size,
+                "source": source,
+                "sources": list(dict.fromkeys([source, *sources])),
+            }
+        )
     if total > CLIP_ASSETS_LIMIT:
         raise VaultError("invalid_params", "The images are too large together")
     return assets

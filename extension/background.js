@@ -1202,8 +1202,20 @@ async function clipMessage(msg, sender) {
     );
   const result = await vaultRequest('vault/clip/delete', { documentId: document.id });
   await loaded;
+  // Side panels beside the reader, the live page or another reader of it stop offering the
+  // deleted copy.
+  const showing = new Set([sender.tab.id]);
+  const open = await Promise.resolve()
+    .then(() => chrome.tabs.query({}))
+    .catch(() => []);
+  for (const tab of open)
+    if (
+      clipSource(tab.url) === page ||
+      (/^https?:/.test(tab.url || '') && documentUrl(tab.url) === page)
+    )
+      showing.add(tab.id);
   for (const s of sessions.values())
-    if (s.tabId === sender.tab.id) for (const p of s.ports) event(p, 'codex-reading-changed');
+    if (showing.has(s.tabId)) for (const p of s.ports) event(p, 'codex-reading-changed');
   return result;
 }
 // The clipped copy of a page opens in a tab next to the page.

@@ -111,7 +111,13 @@ function prepareImages(root, assets) {
   const files = new Map(
     (Array.isArray(assets) ? assets : [])
       .filter((asset) => /^assets\/[0-9a-f]{16}\.(?:jpg|png|gif|webp|avif)$/.test(asset?.file))
-      .map((asset) => [asset.source, asset.file]),
+      // Every address the image was saved from (records before sources name only source).
+      .flatMap((asset) =>
+        [asset.source, ...(Array.isArray(asset.sources) ? asset.sources : [])].map((source) => [
+          source,
+          asset.file,
+        ]),
+      ),
   );
   const pending = [];
   for (const img of root.querySelectorAll('img')) {

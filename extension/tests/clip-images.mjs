@@ -113,6 +113,11 @@ assert.deepEqual(result.assets.map(({ ext, size, sha256 }) => [ext, size, sha256
   ['png', PNG.length, sha(PNG)],
 ]);
 const pngFile = `${sha(PNG).slice(0, 16)}.png`;
+// The file keeps every address that returned it, so the reader finds it at each one.
+assert.deepEqual(result.assets.find((asset) => asset.ext === 'png').sources.sort(), [
+  'https://cdn.other.test/same-as-a.png',
+  'https://www.example.test/a.png',
+]);
 assert.deepEqual(
   [...result.files].sort(([a], [b]) => a - b),
   [

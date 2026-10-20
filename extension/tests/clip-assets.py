@@ -195,6 +195,7 @@ with tempfile.TemporaryDirectory(prefix="tabgent-clip-assets-") as directory:
                 "size": len(PNG),
                 "mime": "image/png",
                 "source": "https://cdn.example.test/chart.png",
+                "sources": ["https://cdn.example.test/chart.png"],
             }
         ]
         summary = saved["clip"]
@@ -289,6 +290,12 @@ with tempfile.TemporaryDirectory(prefix="tabgent-clip-assets-") as directory:
         assert later["backup"] is None
         names = sorted(path.name for path in (folder / "assets").iterdir())
         assert names == sorted([name, photo, "my-sketch.png"]), names
+        # Back to the photo, which later checks read.
+        clip(
+            settings,
+            [asset(JPEG, "jpg", "https://cdn.example.test/photo.jpg")],
+            replace=True,
+        )
         print("PASS the images of an edited article.md are kept with it")
 
         # An assets/ that is a symbolic link is refused before anything is written.
@@ -323,6 +330,9 @@ with tempfile.TemporaryDirectory(prefix="tabgent-clip-assets-") as directory:
             [good, good],
             [{**good, "ext": "svg"}],
             [{**good, "source": "javascript:alert(1)"}],
+            [{**good, "sources": ["javascript:alert(1)"]}],
+            [{**good, "sources": "https://cdn.example.test/a.png"}],
+            [{**good, "sources": ["https://x.test/"] * (vault.CLIP_ASSET_COUNT + 1)}],
             [{**good, "size": 0}],
             [{**good, "size": vault.CLIP_ASSET_LIMIT + 1}],
             [

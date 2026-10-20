@@ -484,12 +484,14 @@
     root.append(box);
     document.documentElement.append(host);
   }
-  function show(text, tone, actions = []) {
+  // A prompt (ask) takes focus until it is answered; a status with an action does not, so
+  // typing and the page's own shortcuts keep working.
+  function show(text, tone, actions = [], prompt = actions.length > 0) {
     ensure();
     clearTimeout(timer);
     box.replaceChildren(text);
     box.dataset.tone = tone || 'info';
-    box.setAttribute('role', actions.length ? 'alertdialog' : 'status');
+    box.setAttribute('role', prompt ? 'alertdialog' : 'status');
     if (actions.length) {
       const row = document.createElement('div');
       row.className = 'actions';
@@ -505,7 +507,7 @@
     }
     box.hidden = false;
     if (!host.matches(':popover-open')) host.showPopover();
-    if (actions.length)
+    if (prompt)
       (box.querySelector('button.primary') || box.querySelector('button'))?.focus({
         preventScroll: true,
       });
@@ -568,7 +570,12 @@
   // A status line: progress stays until the next one; results hide after a few seconds.
   function notify({ text, tone = 'info', busy = false, open = false } = {}) {
     if (pending) return;
-    show(String(text || '').slice(0, 1000), tone, open ? [['open', t('clipOpen'), true]] : []);
+    show(
+      String(text || '').slice(0, 1000),
+      tone,
+      open ? [['open', t('clipOpen'), true]] : [],
+      false,
+    );
     if (!busy) timer = setTimeout(hide, open ? 12000 : tone === 'error' ? 10000 : 7000);
   }
   // cutMarkdown is exposed for tests; the worker calls run, ask and notify.
