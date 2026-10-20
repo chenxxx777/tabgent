@@ -399,6 +399,12 @@
     truncated ||= cut.truncated;
     const { words, chars, enough } = count(article.textContent);
     const selection = getSelection();
+    // Images the size limits cut away are not saved; their places keep their index.
+    const shown = new Set(
+      [...article.querySelectorAll('img[data-remote-src]')].map((img) =>
+        img.getAttribute('data-remote-src'),
+      ),
+    );
     return {
       ok: true,
       mode,
@@ -412,7 +418,7 @@
       excerpt: label(found.description, LIMIT.excerpt),
       html: article.innerHTML,
       markdown,
-      images: list,
+      images: list.map((image) => (shown.has(image.url) ? image : { ...image, url: '' })),
       imageToken: token,
       words,
       chars,

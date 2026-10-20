@@ -798,9 +798,11 @@ def save_clip(settings, params):
         backup = _clip_backup(folder, current)
         if moves:
             _ensure_dir(folder / "assets")
+        # Staged images are copied, not moved: another clip that shares an image may still
+        # need it. Abandoned staged images are pruned after a day.
         for staged, asset_name in moves:
             if staged is not None:
-                os.replace(staged, folder / "assets" / asset_name)
+                _write(folder / "assets" / asset_name, staged.read_bytes())
         files = {}
         for key, file, text in (
             ("html", CLIP_HTML, content),
@@ -839,7 +841,9 @@ def save_clip(settings, params):
         }
         # The record comes last: a clip is complete when the files it names are there.
         _write(folder / CLIP_RECORD, _json(record))
-        _clip_prune_assets(folder, current, record)
+        # The kept copy of an edited article.md still links the earlier images.
+        if not backup:
+            _clip_prune_assets(folder, current, record)
         document["updatedAt"] = now
         if not document["title"] and title:
             document["title"] = title
@@ -875,6 +879,8 @@ def save_clip_asset(settings, params):
         return {"complete": False, "received": 0}
     with _locked(root):
         if ready.is_file() and ready.stat().st_size == size:
+            # A staged image used again is kept for another day.
+            os.utime(ready)
             return {"complete": True, "received": size}
         try:
             received = part.stat().st_size

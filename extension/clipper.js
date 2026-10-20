@@ -162,12 +162,13 @@ export function createClipper({ vault, changed = () => {}, fetch = globalThis.fe
       : { assets: [], files: new Map(), failed: [] };
     await shown;
     await uploadImages(vault, downloaded.assets);
-    const markdown = localizeMarkdown(
-      clip.markdown,
-      clip.imageToken,
-      clip.images,
-      downloaded.files,
-    );
+    // Web addresses replace the placeholders of unsaved images, unless that makes the
+    // Markdown too long: then those images keep only their description.
+    let markdown = localizeMarkdown(clip.markdown, clip.imageToken, clip.images, downloaded.files);
+    if (bytes(markdown) > CLIP_LIMIT.markdown)
+      markdown = localizeMarkdown(clip.markdown, clip.imageToken, clip.images, downloaded.files, {
+        remote: false,
+      });
     if (bytes(markdown) > CLIP_LIMIT.markdown) {
       await say(tabId, { text: t('clipFailed', ''), tone: 'error' });
       return { ok: false, reason: 'invalid' };

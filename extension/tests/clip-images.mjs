@@ -53,6 +53,12 @@ function network(routes) {
     calls.push({ url, ...options });
     const route = routes[url];
     if (!route) throw TypeError('Failed to fetch');
+    // A redirect: opaque when not followed, as fetch reports it; else the target's answer.
+    if (route.redirect) {
+      if (options.redirect === 'manual') return { type: 'opaqueredirect', ok: false, status: 0 };
+      calls.push({ url: route.redirect, ...options, redirected: true });
+      return new Response(routes[route.redirect].body);
+    }
     if (route.delay)
       await new Promise((resolve, reject) => {
         const timer = setTimeout(resolve, route.delay);
@@ -163,6 +169,31 @@ assert.equal(late.assets.length, 0);
 assert(late.failed.every(({ reason }) => reason === 'time_limit'));
 console.log('PASS count, total and time limits leave the rest linked online');
 
+// Cookies only on the first request: a same-site image that redirects is fetched again
+// without cookies, so the site it redirects to never gets them.
+const hop = network({
+  'https://www.example.test/r?u=tracker': { redirect: 'https://tracker.test/p.png' },
+  'https://tracker.test/p.png': { body: PNG },
+});
+const hopped = await fetchImages([{ url: 'https://www.example.test/r?u=tracker' }], page, {
+  fetch: hop.fetch,
+});
+assert.deepEqual(
+  hop.calls.map(({ url, credentials, redirect, redirected }) => [
+    url,
+    credentials,
+    redirect,
+    !!redirected,
+  ]),
+  [
+    ['https://www.example.test/r?u=tracker', 'include', 'manual', false],
+    ['https://www.example.test/r?u=tracker', 'omit', 'follow', false],
+    ['https://tracker.test/p.png', 'omit', 'follow', true],
+  ],
+);
+assert.equal(hopped.assets.length, 1);
+console.log('PASS a redirect from the page site is followed without cookies');
+
 // Uploads: one image at a time in chunks, resuming where the vault stopped.
 const big = bytes(PNG, 5 * 1024 * 1024);
 const requests = [];
@@ -227,5 +258,16 @@ assert.equal(
   ].join('\n'),
 );
 assert.equal(localizeMarkdown(markdown, 'not-a-token', [], new Map()), markdown);
+// When web addresses would make the Markdown too long, unsaved images keep no link.
+assert.equal(
+  localizeMarkdown(
+    `![A](tabgent-image-${token}-0) ![B](tabgent-image-${token}-1)`,
+    token,
+    [{ url: 'https://x.test/a.png' }, { url: 'https://x.test/b.png' }],
+    new Map([[0, 'abc.png']]),
+    { remote: false },
+  ),
+  '![A](assets/abc.png) ![B]()',
+);
 assert.equal(destination('https://x.test/a>b c'), '<https://x.test/a%3Eb c>');
 console.log('PASS Markdown placeholders become saved files or web addresses');
