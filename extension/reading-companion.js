@@ -57,9 +57,8 @@ export function createReadingCompanion({
   }
 
   // The readable document behind a tab. The EPUB reader names its book by file hash.
-  async function pageDocument(tabId, page = {}) {
-    const tab = await chrome.tabs.get(tabId).catch(() => null);
-    if (!tab || tab.incognito) return null;
+  function tabDocument(tab, page = {}) {
+    if (tab.incognito) return null;
     const book = epubDocument(tab);
     if (book !== undefined)
       return book && { ...book, title: clip(book.title || page.title || tab.title || '', 500) };
@@ -68,6 +67,37 @@ export function createReadingCompanion({
     // An imported PDF is named by its file hash, like a book.
     if (!/^https?:/.test(url) && !(pdf && /^urn:sha256:[0-9a-f]{64}$/.test(url))) return null;
     return { url, title: clip(page.title || tab.title || '', 500), kind: pdf ? 'pdf' : 'web' };
+  }
+  // The document a conversation's companion tab shows. Each one seen is remembered on the
+  // session, so after the tab closes its Agent views keep the document: they still bind to
+  // and save on it, and the closed page cannot be mistaken for another one.
+  async function pageDocument(tabId, page = {}, s = null) {
+    const tab = await chrome.tabs.get(tabId).catch(() => null);
+    if (!tab) {
+      const known = s?.pageDocuments?.[tabId];
+      return known ? { ...known, closed: true } : null;
+    }
+    const document = tabDocument(tab, page);
+    if (s && JSON.stringify(s.pageDocuments?.[tabId] ?? null) !== JSON.stringify(document)) {
+      s.pageDocuments ||= {};
+      if (document) s.pageDocuments[tabId] = document;
+      else delete s.pageDocuments[tabId];
+      await persist();
+    }
+    return document;
+  }
+  // A companion tab that navigates away no longer shows the document remembered for it.
+  function navigated(s, tabId, url) {
+    const known = s.pageDocuments?.[tabId];
+    if (known && known.url !== documentUrl(url)) delete s.pageDocuments[tabId];
+  }
+  // A session opened in a view starts with what its source knows of the view's page, the
+  // only record of that page once it has closed.
+  function keepPage(target, source, tabId) {
+    for (const key of ['pageUrls', 'pageDocuments']) {
+      const known = source[key]?.[tabId];
+      if (known && !target[key]?.[tabId]) (target[key] ||= {})[tabId] = structuredClone(known);
+    }
   }
   const resolveDocument = (document) =>
     document
@@ -120,7 +150,7 @@ export function createReadingCompanion({
       }
       return parts;
     }
-    const current = Number.isInteger(page?.tabId) ? await pageDocument(page.tabId, page) : null;
+    const current = Number.isInteger(page?.tabId) ? await pageDocument(page.tabId, page, s) : null;
     // A quote saved as a highlight binds the conversation, whichever reader it came from.
     const binding = highlightBinding(messageSelection(params), current || {});
     if (binding) {
@@ -283,12 +313,12 @@ export function createReadingCompanion({
     return flushing;
   }
 
-  const newSession = (current, view, threadId) => {
+  const newSession = (current, view, owner, threadId) => {
     const id = crypto.randomUUID();
     const session = {
       id,
       key: id,
-      tabId: view.tabId,
+      tabId: owner,
       threadId: threadId || undefined,
       hasUserInput: !!threadId,
       scope: current.scope,
@@ -297,6 +327,7 @@ export function createReadingCompanion({
       draft: '',
       ports: new Set(),
     };
+    keepPage(session, current, view.tabId);
     sessions.set(id, session);
     return session;
   };
@@ -316,6 +347,11 @@ export function createReadingCompanion({
       ? sessions.get(agentViews.get(view.agentTabId))
       : await getSession(view.tabId);
     if (!current) throw Error('Conversation not found');
+    // A new session belongs to an open tab: an Agent view whose page closed owns it.
+    const owner =
+      view.agentTabId && !(await chrome.tabs.get(view.tabId).catch(() => null))
+        ? view.agentTabId
+        : view.tabId;
     const same =
       current.reading?.documentId === ref.documentId &&
       current.reading?.highlightId === ref.highlightId;
@@ -323,13 +359,14 @@ export function createReadingCompanion({
     if (latest && current.threadId !== latest)
       target =
         [...sessions.values()].find((s) => s.threadId === latest && !s.closedTab) ||
-        newSession(current, view, latest);
+        newSession(current, view, owner, latest);
     else if (!latest && !same && (current.hasUserInput || current.turnPending))
-      target = newSession(current, view);
+      target = newSession(current, view, owner);
     if (target.reading?.highlightId !== ref.highlightId) delete target.readingNotes;
     target.reading = highlightBinding(selection);
     target.selection = selection;
     if (target !== current) {
+      keepPage(target, current, view.tabId);
       if (view.agentTabId) agentViews.set(view.agentTabId, target.key);
       else sidebarViews.set(view.tabId, target.key);
     }
@@ -374,7 +411,7 @@ export function createReadingCompanion({
     }
     if (msg.type === 'readingNote') {
       if (typeof msg.note !== 'string') throw Error('Invalid note');
-      const { resolved, highlight } = await pageHighlight(tabId, msg);
+      const { resolved, highlight } = await pageHighlight(source, tabId, msg);
       await vault.request('vault/highlight/update', {
         documentId: resolved.document.id,
         highlightId: highlight.id,
@@ -387,7 +424,7 @@ export function createReadingCompanion({
       return state(source, tabId);
     }
     if (msg.type === 'readingOpen') {
-      const { document, resolved, highlight } = await pageHighlight(tabId, msg);
+      const { document, resolved, highlight } = await pageHighlight(source, tabId, msg);
       const [frame, context] = await Promise.all([
         chrome.webNavigation.getFrame({ tabId, frameId: 0 }).catch(() => null),
         tabMessage(tabId, {
@@ -396,14 +433,15 @@ export function createReadingCompanion({
           highlightId: highlight.id,
         }).catch(() => null),
       ]);
-      const tab = await chrome.tabs.get(tabId);
+      // A closed page offers no live address or nearby text; the vault record names it.
+      const tab = await chrome.tabs.get(tabId).catch(() => null);
       return focusHighlight(
         {
           selectionId: crypto.randomUUID(),
           id: crypto.randomUUID(),
           text: clip(highlight.text, 20000),
           truncated: false,
-          url: document.kind === 'epub' ? document.url : pdfSource(tab.url) || tab.url,
+          url: document.kind === 'epub' || !tab ? document.url : pdfSource(tab.url) || tab.url,
           title: document.title,
           frameId: 0,
           documentId: frame?.documentId,
@@ -431,8 +469,8 @@ export function createReadingCompanion({
   }
 
   // A saved highlight of the document the tab shows, checked against the vault record.
-  async function pageHighlight(tabId, msg) {
-    const document = await pageDocument(tabId);
+  async function pageHighlight(source, tabId, msg) {
+    const document = await pageDocument(tabId, {}, source);
     const resolved = document
       ? await vault.request('vault/document/resolve', {
           url: document.url,
@@ -448,7 +486,7 @@ export function createReadingCompanion({
   }
 
   async function state(source, tabId) {
-    const document = await pageDocument(tabId);
+    const document = await pageDocument(tabId, {}, source);
     const [vaultValue, resolved] = await Promise.all([
       vaultStatus(true),
       document
@@ -501,5 +539,5 @@ export function createReadingCompanion({
     for (const port of s.ports) event(port, 'codex-reading-changed');
   }
 
-  return { input, notification, resumed, focusHighlight, message, flush };
+  return { input, notification, resumed, focusHighlight, message, flush, navigated, keepPage };
 }

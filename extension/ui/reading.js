@@ -94,10 +94,15 @@ export function createReading({ i18n, request, showError, selection, reload }) {
       quote.type = 'button';
       quote.className = 'highlight-quote';
       quote.textContent = highlight.text;
+      // A closed page keeps its highlights and notes, but has nothing to show them on.
       quote.title = i18n(
-        highlight.anchored === false ? 'highlightUnanchoredHint' : 'highlightJump',
+        state.page.closed
+          ? 'highlightPageClosed'
+          : highlight.anchored === false
+            ? 'highlightUnanchoredHint'
+            : 'highlightJump',
       );
-      quote.disabled = highlight.anchored === false;
+      quote.disabled = highlight.anchored === false || !!state.page.closed;
       quote.onclick = async () => {
         try {
           const result = await request('readingJump', { highlightId: highlight.id });

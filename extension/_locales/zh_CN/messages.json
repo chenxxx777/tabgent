@@ -209,6 +209,12 @@
   "highlightUnanchoredHint": {
     "message": "当前页面中找不到这段高亮文字，笔记仍然保留。"
   },
+  "highlightPageClosed": {
+    "message": "此页面已关闭，高亮和笔记仍然保留。"
+  },
+  "pageClosedContext": {
+    "message": "$1（已关闭）"
+  },
   "highlightTurns": {
     "message": "已保存 $1 条"
   },

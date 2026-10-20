@@ -1802,8 +1802,10 @@ addWebUiListener('codex-context', (value) => {
     void reading.refresh();
   }
   $('context').hidden = !value.page;
+  // An Agent tab outlives its page: the closed page keeps its last known address.
+  const name = value.page ? value.page.title || value.page.url : '';
   for (const [id, text] of [
-    ['contextText', value.page ? value.page.title || value.page.url : ''],
+    ['contextText', value.page?.closed ? i18n('pageClosedContext', name) : name],
     ['contextFullTitle', value.page?.title || ''],
     ['contextFullUrl', value.page?.url || ''],
   ]) {
