@@ -53,6 +53,7 @@ const quote = "endorsement of one's own actions";
     fs.cpSync('extension/' + name, ext + '/' + name, { recursive: true });
   for (const name of [
     'pdf-routing.js',
+    'local-files.js',
     'agent-pointer.js',
     'i18n.js',
     'web-anchor.js',

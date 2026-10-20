@@ -13,6 +13,7 @@ const { chromium } = require('playwright');
   for (const name of [
     'pdf-routing.js',
     'clip-routing.js',
+    'local-files.js',
     'browser-tools.js',
     'resource-files.js',
     'browser-input.js',

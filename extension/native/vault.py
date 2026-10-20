@@ -101,7 +101,9 @@ the user read, highlighted or discussed before. Vault path: {vault}
 
 ## Layout
 
-- `Articles/<document-id>/`: one folder per webpage (`article-...`).
+- `Articles/<document-id>/`: one folder per webpage (`article-...`), including
+  Markdown, text and HTML files the user opened from their computer in Chrome, whose
+  `source` is their `file://` URL.
 - `Books/<document-id>/`: PDF documents (`paper-...`) and EPUB books (`book-...`).
 - `<document>/highlights.md`: the human record. YAML front matter (`title`, `type`,
   `document_id`, `source`), then one `## Highlight NNN` section per highlight with
@@ -122,11 +124,12 @@ the user read, highlighted or discussed before. Vault path: {vault}
   from the EPUB at import. Read the chapter you need or search the `chapters`
   folder instead of loading the whole book. EPUB highlights name their chapter.
 - `Books/paper-.../original.pdf`: a PDF imported from the user's computer, described
-  by `source.json`. Its `source` is `urn:sha256:<hash of the file>`. `pages/NNN.md`
-  holds the text of each page that has text, generated at import; read the pages you
-  need. PDFs opened from the web keep their URL and have no copy or page files, and
-  an imported copy of the same file is a separate document. PDF highlights name their
-  page.
+  by `source.json`. Its `source` is `urn:sha256:<hash of the file>`. A PDF the user
+  opened from their computer in Chrome is named the same way and copied here once it
+  has notes (a highlight or a saved discussion). `pages/NNN.md` holds the text of each
+  page that has text, generated with the copy; read the pages you need. PDFs opened from the web keep
+  their URL and have no copy or page files, and an imported copy of the same file is
+  a separate document. PDF highlights name their page.
 - `.tabgent/`: Tabgent's index and lock file. Ignore it.
 
 HTML comments such as `<!-- tabgent:highlight h001 start -->` mark the blocks that

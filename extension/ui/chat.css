@@ -1248,6 +1248,29 @@ select option {
   width: fit-content;
   margin: 6px;
 }
+#fileAccess {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  margin: 0 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 12px;
+}
+#fileAccess[hidden] {
+  display: none;
+}
+#fileAccess span {
+  flex: 1;
+}
+#fileAccessOpen {
+  flex: none;
+  font-size: 12px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+}
 #goal {
   font-size: 12px;
   margin: 0 0 8px;

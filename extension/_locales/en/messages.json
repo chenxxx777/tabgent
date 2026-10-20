@@ -1233,5 +1233,38 @@
   },
   "libraryKindClipped": {
     "message": "Webpage · clipped"
+  },
+  "fileAccessTitle": {
+    "message": "Let Tabgent read files you open in Chrome"
+  },
+  "fileAccessIntro": {
+    "message": "You opened a file from your computer in Chrome. To highlight it, ask AI about it and take notes on it, Chrome needs your permission once."
+  },
+  "fileAccessStepOne": {
+    "message": "Click Open Tabgent settings below."
+  },
+  "fileAccessStepTwo": {
+    "message": "Turn on Allow access to file URLs."
+  },
+  "fileAccessStepThree": {
+    "message": "Go back to your file. A PDF opens in Tabgent's viewer; in Markdown, text and HTML files, select text to start."
+  },
+  "fileAccessOpen": {
+    "message": "Open Tabgent settings"
+  },
+  "fileAccessOn": {
+    "message": "File access is on. Files you open in Chrome work with Tabgent."
+  },
+  "fileAccessScope": {
+    "message": "Tabgent reads only the files you open in Chrome yourself. It does not browse your folders, and Agent cannot open files on its own."
+  },
+  "fileAccessNotice": {
+    "message": "Tabgent cannot read files from your computer yet. Turn on Allow access to file URLs once to highlight this file and ask about it."
+  },
+  "fileAccessNoticeButton": {
+    "message": "Open settings"
+  },
+  "libraryKindFile": {
+    "message": "File on this computer"
   }
 }
