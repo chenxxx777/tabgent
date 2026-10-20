@@ -37,6 +37,21 @@ CSP plus the reader's own CSP block script execution and remote resources.
 - `paginator.js` stops swallowing section-source failures and guards pending
   layout/font/animation callbacks against missing or closed chapter views.
 
+Review follow-up patches:
+
+- Destroying a reflowable view or replacing a fixed-layout spread aborts pending
+  frame loads. Navigation generations prevent an older source/load from replacing
+  a newer chapter, and cancellation never becomes a reader error.
+- Unresolved targets are no-ops. Stale saved positions fall back to the text start;
+  a CFI anchor that no longer fits the HTML tree falls back to the section start.
+- Both renderers emit a composed `load-error` for actual source/render failures.
+  The reader handles internal book links through its navigation wrapper, and
+  paginator page-turn locks are released in `finally`, including gesture turns.
+- The adapter sanitizes the final HTML tree again, because raw-text parsing can
+  expose markup that was text in XHTML. HTML parsing can also normalize XML-only
+  namespaces (`xml:lang`, `epub:type`) and namespace CSS selectors; it does not
+  preserve the original XML document model.
+
 These patches address B1: Chromium 151's `MigrateAutomaticJsOptimizer` field trial
 (`MigrateToBlockV8OptimizerOnUnfamiliarSites`) makes an extension-created blob
 chapter a separate frame process that the parent cannot access, despite its

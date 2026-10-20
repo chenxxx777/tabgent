@@ -59,8 +59,27 @@ def xhtml(title, body):
 """
 
 
-def build(chapters=CHAPTERS, title=TITLE, author=AUTHOR, fixed_layout=False):
+def build(
+    chapters=CHAPTERS, title=TITLE, author=AUTHOR, fixed_layout=False, navigation=False
+):
     """The EPUB file as bytes."""
+    if navigation:
+        chapters = [
+            (
+                (
+                    href,
+                    label,
+                    '<p><a id="next-chapter" href="ch3.xhtml">Go to chapter three</a></p>'
+                    + '<xmp>&lt;/xmp&gt;&lt;img id="raw-text-image" src="data:," '
+                    + 'onerror="parent.tabgentScriptRan=true"/&gt;'
+                    + "&lt;script&gt;parent.tabgentRawTextRan=true&lt;/script&gt;</xmp>"
+                    + body,
+                )
+                if href == "ch1.xhtml"
+                else (href, label, body)
+            )
+            for href, label, body in chapters
+        ]
     manifest = "\n".join(
         f'<item id="c{i}" href="{href}" media-type="application/xhtml+xml"/>'
         for i, (href, _, _) in enumerate(chapters, 1)
@@ -76,6 +95,8 @@ def build(chapters=CHAPTERS, title=TITLE, author=AUTHOR, fixed_layout=False):
         + "</li>"
         for href, label, _ in chapters
     )
+    if navigation:
+        toc += '<li><a href="missing.xhtml">Missing chapter</a></li>'
     layout = (
         '<meta property="rendition:layout">pre-paginated</meta>' if fixed_layout else ""
     )
@@ -141,11 +162,17 @@ if __name__ == "__main__":
     parser.add_argument("title", nargs="?", default=TITLE)
     parser.add_argument("noise", nargs="?", type=int, default=0)
     parser.add_argument("--fixed-layout", action="store_true")
+    parser.add_argument("--navigation", action="store_true")
     args = parser.parse_args()
     chapters = CHAPTERS
     if args.noise:
         filler = "<p>" + os.urandom(args.noise // 2).hex() + "</p>"
         chapters = [*CHAPTERS, ("noise.xhtml", "Noise", filler)]
     Path(args.output).write_bytes(
-        build(chapters, args.title, fixed_layout=args.fixed_layout)
+        build(
+            chapters,
+            args.title,
+            fixed_layout=args.fixed_layout,
+            navigation=args.navigation,
+        )
     )

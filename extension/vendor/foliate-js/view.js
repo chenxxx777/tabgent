@@ -313,11 +313,11 @@ export class View extends HTMLElement {
     }
     async init({ lastLocation, showTextStart }) {
         const resolved = lastLocation ? this.resolveNavigation(lastLocation) : null
-        if (resolved) {
-            await this.renderer.goTo(resolved)
-            this.history.pushState(lastLocation)
+        if (resolved && this.book.sections[resolved.index]) {
+            if (await this.renderer.goTo(resolved) !== false)
+                this.history.pushState(lastLocation)
         }
-        else if (showTextStart) await this.goToTextStart()
+        else if (showTextStart || lastLocation) await this.goToTextStart()
         else {
             this.history.pushState(0)
             await this.next()
@@ -459,14 +459,15 @@ export class View extends HTMLElement {
     }
     async goTo(target) {
         const resolved = this.resolveNavigation(target)
-        await this.renderer.goTo(resolved)
+        if (!resolved) return
+        if (await this.renderer.goTo(resolved) === false) return
         this.history.pushState(target)
         return resolved
     }
     async goToFraction(frac) {
         const [index, anchor] = this.#sectionProgress.getSection(frac)
-        await this.renderer.goTo({ index, anchor })
-        this.history.pushState({ fraction: frac })
+        if (await this.renderer.goTo({ index, anchor }) !== false)
+            this.history.pushState({ fraction: frac })
     }
     async select(target) {
         try {

@@ -83,7 +83,9 @@ export function neutralize(markup, type) {
   }
   // Only head elements are removed, so body CFIs are unchanged.
   for (const meta of doc.querySelectorAll('head meta[http-equiv]')) meta.remove();
-  return new XMLSerializer().serializeToString(doc);
+  return type === 'text/html'
+    ? doc.documentElement.outerHTML
+    : new XMLSerializer().serializeToString(doc);
 }
 
 // Metadata values may be strings, language maps or contributor objects.
@@ -111,5 +113,7 @@ function chapterHtml(markup, type) {
     html.body.style.margin = '0';
     html.body.append(svg);
   } else html.replaceChild(html.importNode(parsed.documentElement, true), html.documentElement);
-  return '<!doctype html>\n' + html.documentElement.outerHTML;
+  // HTML raw-text parsing can expose markup that was text in the XHTML tree.
+  // Sanitize the final HTML tree as well, then use its HTML serializer.
+  return '<!doctype html>\n' + neutralize(html.documentElement.outerHTML, 'text/html');
 }

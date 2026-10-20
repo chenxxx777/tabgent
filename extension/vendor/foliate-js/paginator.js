@@ -1,4 +1,4 @@
-import { loadFrame } from './frame.js'
+import { loadFrame, cancelled } from './frame.js'
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
 
 const debounce = (f, wait, immediate) => {
@@ -209,6 +209,8 @@ const setStylesImportant = (el, styles) => {
 }
 
 class View {
+    #abort = new AbortController()
+    ready = false
     #observer = new ResizeObserver(() => this.expand())
     #element = document.createElement('div')
     #iframe = document.createElement('iframe')
@@ -252,7 +254,7 @@ class View {
         return this.#iframe.contentDocument
     }
     async load(src, afterLoad, beforeRender) {
-        const doc = await loadFrame(this.#iframe, src)
+        const doc = await loadFrame(this.#iframe, src, this.#abort.signal)
         afterLoad?.(doc)
 
         // it needs to be visible for Firefox to get computed style
@@ -270,6 +272,7 @@ class View {
         this.render(layout)
         this.#observer.observe(doc.body)
 
+        this.ready = true
         // the resize observer above doesn't work in Firefox
         // (see https://bugzilla.mozilla.org/show_bug.cgi?id=1832939)
         // until the bug is fixed we can at least account for font load
@@ -355,7 +358,9 @@ class View {
         }
     }
     expand() {
-        const { documentElement } = this.document
+        const doc = this.document
+        if (!doc?.body) return
+        const { documentElement } = doc
         if (this.#column) {
             const side = this.#vertical ? 'height' : 'width'
             const otherSide = this.#vertical ? 'width' : 'height'
@@ -411,7 +416,8 @@ class View {
         return this.#overlayer
     }
     destroy() {
-        if (this.document) this.#observer.unobserve(this.document.body)
+        this.#abort.abort()
+        this.#observer.disconnect()
     }
 }
 
@@ -435,6 +441,7 @@ export class Paginator extends HTMLElement {
     #index = -1
     #anchor = 0 // anchor view to a fraction (0-1), Range, or Element
     #justAnchored = false
+    #navigation = 0
     #locked = false // while true, prevent any further navigation
     #styles
     #styleMap = new WeakMap()
@@ -583,9 +590,9 @@ export class Paginator extends HTMLElement {
             const selRange = sel.getRangeAt(0)
             const backward = selectionIsBackward(sel)
             if (backward && selRange.compareBoundaryPoints(Range.START_TO_START, range) < 0)
-                this.prev()
+                this.prev().catch(() => {})
             else if (!backward && selRange.compareBoundaryPoints(Range.END_TO_END, range) > 0)
-                this.next()
+                this.next().catch(() => {})
         }, 700)
         this.addEventListener('load', ({ detail: { doc } }) => {
             let isPointerSelecting = false
@@ -595,7 +602,7 @@ export class Paginator extends HTMLElement {
             doc.addEventListener('keydown', () => isKeyboardSelecting = true)
             doc.addEventListener('keyup', () => isKeyboardSelecting = false)
             doc.addEventListener('selectionchange', () => {
-                if (this.scrolled) return
+                if (this.#view?.document !== doc || this.scrolled) return
                 const range = this.#lastVisibleRange
                 if (!range) return
                 const sel = doc.getSelection()
@@ -615,7 +622,7 @@ export class Paginator extends HTMLElement {
         })
 
         this.#mediaQueryListener = () => {
-            if (!this.#view) return
+            if (!this.#view?.document?.body) return
             this.#background.style.background = getBackground(this.#view.document)
         }
         this.#mediaQuery.addEventListener('change', this.#mediaQueryListener)
@@ -797,6 +804,7 @@ export class Paginator extends HTMLElement {
             element[scrollProp] + delta))
     }
     snap(vx, vy) {
+        if (!this.#view?.ready) return Promise.resolve(false)
         const velocity = this.#vertical ? vy : vx
         const [offset, a, b] = this.#scrollBounds
         const { start, end, pages, size } = this
@@ -807,13 +815,13 @@ export class Paginator extends HTMLElement {
             Math.max(min, Math.min(max, (start + end) / 2
                 + (isNaN(d) ? 0 : d))) / size)
 
-        this.#scrollToPage(page, 'snap').then(() => {
+        return this.#scrollToPage(page, 'snap').then(() => {
             const dir = page <= 0 ? -1 : page >= pages - 1 ? 1 : null
             if (dir) return this.#goTo({
                 index: this.#adjacentIndex(dir),
                 anchor: dir < 0 ? () => 1 : () => 0,
             })
-        })
+        }).catch(error => this.#loadError(error))
     }
     #onTouchStart(e) {
         const touch = e.changedTouches[0]
@@ -885,6 +893,7 @@ export class Paginator extends HTMLElement {
     }
     async #scrollTo(offset, reason, smooth) {
         const element = this.#container
+        const view = this.#view
         const { scrollProp, size } = this
         if (element[scrollProp] === offset) {
             this.#scrollBounds = [offset, this.atStart ? 0 : size, this.atEnd ? 0 : size]
@@ -897,6 +906,7 @@ export class Paginator extends HTMLElement {
             element[scrollProp], offset, 300, easeOutQuad,
             x => element[scrollProp] = x,
         ).then(() => {
+            if (this.#view !== view || !view?.document?.body) return
             this.#scrollBounds = [offset, this.atStart ? 0 : size, this.atEnd ? 0 : size]
             this.#afterScroll(reason)
         })
@@ -914,6 +924,9 @@ export class Paginator extends HTMLElement {
         return this.#scrollToAnchor(anchor, select ? 'selection' : 'navigation')
     }
     async #scrollToAnchor(anchor, reason = 'anchor') {
+        const doc = this.#view?.document
+        const anchorDoc = anchor?.ownerDocument ?? anchor?.startContainer?.ownerDocument
+        if (!doc?.body || anchorDoc && anchorDoc !== doc) return
         this.#anchor = anchor
         const rects = uncollapse(anchor)?.getClientRects?.()
         // if anchor is an element or a range
@@ -945,6 +958,7 @@ export class Paginator extends HTMLElement {
             this.start - size, this.end - size, this.#getRectMapper())
     }
     #afterScroll(reason) {
+        if (!this.#view?.document?.body) return
         const range = this.#getVisibleRange()
         this.#lastVisibleRange = range
         // don't set new anchor if relocation was to scroll to anchor
@@ -963,13 +977,15 @@ export class Paginator extends HTMLElement {
         }
         this.dispatchEvent(new CustomEvent('relocate', { detail }))
     }
-    async #display(promise) {
+    async #display(promise, navigation) {
         const { index, src, anchor, onLoad, select } = await promise
+        if (navigation !== this.#navigation) throw cancelled()
         this.#index = index
         const hasFocus = this.#view?.document?.hasFocus()
         if (src) {
             const view = this.#createView()
             const afterLoad = doc => {
+                if (navigation !== this.#navigation) return
                 if (doc.head) {
                     const $styleBefore = doc.createElement('style')
                     doc.head.prepend($styleBefore)
@@ -981,6 +997,7 @@ export class Paginator extends HTMLElement {
             }
             const beforeRender = this.#beforeRender.bind(this)
             await view.load(src, afterLoad, beforeRender)
+            if (navigation !== this.#navigation || this.#view !== view) throw cancelled()
             this.dispatchEvent(new CustomEvent('create-overlayer', {
                 detail: {
                     doc: view.document, index,
@@ -989,30 +1006,54 @@ export class Paginator extends HTMLElement {
             }))
             this.#view = view
         }
-        await this.scrollToAnchor((typeof anchor === 'function'
-            ? anchor(this.#view.document) : anchor) ?? 0, select)
+        if (navigation !== this.#navigation) throw cancelled()
+        try {
+            const target = typeof anchor === 'function' ? anchor(this.#view.document) : anchor
+            await this.scrollToAnchor(target ?? 0, select)
+        } catch (error) {
+            if (navigation !== this.#navigation) throw cancelled()
+            // Old CFIs can stop fitting after HTML normalization. Keep the chapter.
+            console.warn(error)
+            await this.scrollToAnchor(0, select)
+        }
+        if (navigation !== this.#navigation) throw cancelled()
         if (hasFocus) this.focusView()
     }
     #canGoToIndex(index) {
-        return index >= 0 && index <= this.sections.length - 1
+        return Number.isInteger(index) && index >= 0 && index <= this.sections.length - 1
     }
-    async #goTo({ index, anchor, select}) {
-        if (index === this.#index) await this.#display({ index, anchor, select })
-        else {
-            const oldIndex = this.#index
-            const onLoad = detail => {
-                this.sections[oldIndex]?.unload?.()
-                this.setStyles(this.#styles)
-                this.dispatchEvent(new CustomEvent('load', { detail }))
+    #loadError(error) {
+        if (error.name !== 'AbortError') this.dispatchEvent(new CustomEvent('load-error', {
+            detail: error, bubbles: true, composed: true,
+        }))
+    }
+    async #goTo({ index, anchor, select }) {
+        if (!this.#canGoToIndex(index)) return false
+        const navigation = ++this.#navigation
+        try {
+            if (index === this.#index && this.#view?.ready)
+                await this.#display({ index, anchor, select }, navigation)
+            else {
+                const oldIndex = this.#index
+                const src = await this.sections[index].load()
+                if (navigation !== this.#navigation) return false
+                const onLoad = detail => {
+                    if (oldIndex !== index) this.sections[oldIndex]?.unload?.()
+                    this.setStyles(this.#styles)
+                    this.dispatchEvent(new CustomEvent('load', { detail }))
+                }
+                await this.#display({ index, src, anchor, onLoad, select }, navigation)
             }
-            await this.#display(Promise.resolve(this.sections[index].load())
-                .then(src => ({ index, src, anchor, onLoad, select })))
+            return navigation === this.#navigation
+        } catch (error) {
+            if (navigation === this.#navigation) this.#loadError(error)
+            return false
         }
     }
     async goTo(target) {
-        if (this.#locked) return
         const resolved = await target
-        if (this.#canGoToIndex(resolved.index)) return this.#goTo(resolved)
+        if (resolved) return this.#goTo(resolved)
+        return false
     }
     #scrollPrev(distance) {
         if (!this.#view) return true
@@ -1048,16 +1089,21 @@ export class Paginator extends HTMLElement {
             if (this.sections[index]?.linear !== 'no') return index
     }
     async #turnPage(dir, distance) {
-        if (this.#locked) return
+        if (this.#locked || this.#view && !this.#view.ready) return
         this.#locked = true
-        const prev = dir === -1
-        const shouldGo = await (prev ? this.#scrollPrev(distance) : this.#scrollNext(distance))
-        if (shouldGo) await this.#goTo({
-            index: this.#adjacentIndex(dir),
-            anchor: prev ? () => 1 : () => 0,
-        })
-        if (shouldGo || !this.hasAttribute('animated')) await wait(100)
-        this.#locked = false
+        const navigation = this.#navigation
+        try {
+            const prev = dir === -1
+            const shouldGo = await (prev ? this.#scrollPrev(distance) : this.#scrollNext(distance))
+            if (navigation !== this.#navigation) return
+            if (shouldGo) await this.#goTo({
+                index: this.#adjacentIndex(dir),
+                anchor: prev ? () => 1 : () => 0,
+            })
+            if (shouldGo || !this.hasAttribute('animated')) await wait(100)
+        } catch (error) {
+            if (navigation === this.#navigation) this.#loadError(error)
+        } finally { this.#locked = false }
     }
     prev(distance) {
         return this.#turnPage(-1, distance)
@@ -1107,13 +1153,14 @@ export class Paginator extends HTMLElement {
 
         // needed because the resize observer doesn't work in Firefox
         view?.document?.fonts?.ready?.then(() => {
-            if (this.#view === view) view.expand()
+            if (this.#view === view && view?.document?.body) view.expand()
         })
     }
     focusView() {
         this.#view.document.defaultView.focus()
     }
     destroy() {
+        ++this.#navigation
         this.#observer.unobserve(this)
         this.#view?.destroy()
         this.#view = null

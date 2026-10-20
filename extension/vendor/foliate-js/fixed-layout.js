@@ -1,4 +1,4 @@
-import { loadFrame } from './frame.js'
+import { loadFrame, cancelled } from './frame.js'
 const parseViewport = str => str
     ?.split(/[,;\s]/) // NOTE: technically, only the comma is valid
     ?.filter(x => x)
@@ -35,6 +35,9 @@ export class FixedLayout extends HTMLElement {
     #root = this.attachShadow({ mode: 'closed' })
     #observer = new ResizeObserver(() => this.#render())
     #spreads
+    #navigation = 0
+    #abort
+    #loading = false
     #index = -1
     defaultViewport
     spread
@@ -89,7 +92,7 @@ export class FixedLayout extends HTMLElement {
         iframe.setAttribute('part', 'filter')
         this.#root.append(element)
         if (!src) return { blank: true, element, iframe }
-        const doc = await loadFrame(iframe, src)
+        const doc = await loadFrame(iframe, src, this.#abort.signal)
         this.dispatchEvent(new CustomEvent('load', { detail: { doc, index } }))
         const { width, height } = getViewport(doc, this.defaultViewport)
         return {
@@ -160,18 +163,24 @@ export class FixedLayout extends HTMLElement {
             transform(right)
         }
     }
-    async #showSpread({ left, right, center, side }) {
+    async #showSpread({ left, right, center, side }, navigation) {
         this.#root.replaceChildren()
         this.#left = null
         this.#right = null
         this.#center = null
         if (center) {
-            this.#center = await this.#createFrame(center)
+            const frame = await this.#createFrame(center)
+            if (navigation !== this.#navigation) throw cancelled()
+            this.#center = frame
             this.#side = 'center'
             this.#render()
         } else {
-            this.#left = await this.#createFrame(left)
-            this.#right = await this.#createFrame(right)
+            const leftFrame = await this.#createFrame(left)
+            if (navigation !== this.#navigation) throw cancelled()
+            const rightFrame = await this.#createFrame(right)
+            if (navigation !== this.#navigation) throw cancelled()
+            this.#left = leftFrame
+            this.#right = rightFrame
             this.#side = this.#left.blank ? 'right'
                 : this.#right.blank ? 'left' : side
             this.#render()
@@ -260,27 +269,44 @@ export class FixedLayout extends HTMLElement {
         }
     }
     async goToSpread(index, side, reason) {
-        if (index < 0 || index > this.#spreads.length - 1) return
-        if (index === this.#index) {
+        if (!Number.isInteger(index) || index < 0 || index > this.#spreads.length - 1) return false
+        if (index === this.#index && !this.#loading) {
             this.#render(side)
-            return
+            return true
         }
-        this.#index = index
-        const spread = this.#spreads[index]
-        if (spread.center) {
-            const index = this.book.sections.indexOf(spread.center)
-            const src = await spread.center?.load?.()
-            await this.#showSpread({ center: { index, src } })
-        } else {
-            const indexL = this.book.sections.indexOf(spread.left)
-            const indexR = this.book.sections.indexOf(spread.right)
-            const srcL = await spread.left?.load?.()
-            const srcR = await spread.right?.load?.()
-            const left = { index: indexL, src: srcL }
-            const right = { index: indexR, src: srcR }
-            await this.#showSpread({ left, right, side })
+        const navigation = ++this.#navigation
+        this.#loading = true
+        try {
+            const spread = this.#spreads[index]
+            let frames
+            if (spread.center) {
+                const index = this.book.sections.indexOf(spread.center)
+                const src = await spread.center.load()
+                frames = { center: { index, src } }
+            } else {
+                const indexL = this.book.sections.indexOf(spread.left)
+                const indexR = this.book.sections.indexOf(spread.right)
+                const srcL = await spread.left?.load?.()
+                const srcR = await spread.right?.load?.()
+                frames = { left: { index: indexL, src: srcL }, right: { index: indexR, src: srcR }, side }
+            }
+            if (navigation !== this.#navigation) return false
+            this.#abort?.abort()
+            this.#abort = new AbortController()
+            this.#index = index
+            await this.#showSpread(frames, navigation)
+            if (navigation !== this.#navigation) return false
+            this.#reportLocation(reason)
+            return true
+        } catch (error) {
+            if (navigation === this.#navigation && error.name !== 'AbortError')
+                this.dispatchEvent(new CustomEvent('load-error', {
+                    detail: error, bubbles: true, composed: true,
+                }))
+            return false
+        } finally {
+            if (navigation === this.#navigation) this.#loading = false
         }
-        this.#reportLocation(reason)
     }
     async select(target) {
         await this.goTo(target)
@@ -289,10 +315,10 @@ export class FixedLayout extends HTMLElement {
     async goTo(target) {
         const { book } = this
         const resolved = await target
-        const section = book.sections[resolved.index]
-        if (!section) return
+        const section = book.sections[resolved?.index]
+        if (!section) return false
         const { index, side } = this.getSpreadOf(section)
-        await this.goToSpread(index, side)
+        return this.goToSpread(index, side)
     }
     async next() {
         const s = this.rtl ? this.#goLeft() : this.#goRight()
@@ -309,6 +335,8 @@ export class FixedLayout extends HTMLElement {
         }))
     }
     destroy() {
+        ++this.#navigation
+        this.#abort?.abort()
         this.#observer.unobserve(this)
     }
 }

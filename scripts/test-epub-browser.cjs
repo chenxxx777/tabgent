@@ -31,7 +31,8 @@ async function until(check, ms = 10000) {
     book = path.join(temp, 'small-book.epub'),
     second = path.join(temp, 'second-book.epub'),
     large = path.join(temp, 'large-book.epub'),
-    fixed = path.join(temp, 'fixed-book.epub');
+    fixed = path.join(temp, 'fixed-book.epub'),
+    navigationBook = path.join(temp, 'navigation-book.epub');
   fs.mkdirSync(home);
   const fixture = path.join(extension, 'tests/fixtures/epub_fixture.py');
   for (const args of [
@@ -39,6 +40,7 @@ async function until(check, ms = 10000) {
     [second, 'Second Book'],
     [large, 'Large Book', '40000000'],
     [fixed, 'Fixed Layout Book', '--fixed-layout'],
+    [navigationBook, 'Navigation Book', '--navigation'],
   ]) {
     const built = spawnSync(python, [fixture, ...args]);
     assert.equal(built.status, 0, String(built.stderr));
@@ -241,6 +243,40 @@ async function until(check, ms = 10000) {
       await page.mouse.up();
       await page.waitForSelector('#toolbar:popover-open');
     }
+    async function hasChapter(title) {
+      return until(async () => {
+        for (const frame of page.frames())
+          if (
+            frame.url() === 'about:srcdoc' &&
+            (await frame.evaluate(() => document.title)) === title
+          )
+            return true;
+        return false;
+      });
+    }
+    async function overlappingNavigation(first, last) {
+      await page.evaluate(() => {
+        const add = EventTarget.prototype.addEventListener;
+        globalThis.blockedChapter = false;
+        EventTarget.prototype.addEventListener = function (type, ...args) {
+          if (this instanceof HTMLIFrameElement && type === 'load' && !globalThis.blockedChapter) {
+            globalThis.blockedChapter = true;
+            EventTarget.prototype.addEventListener = add;
+            return;
+          }
+          return add.call(this, type, ...args);
+        };
+      });
+      await page.click(`#toc button:text-is("${first}")`);
+      assert(await until(() => page.evaluate(() => globalThis.blockedChapter)));
+      await page.click(`#toc button:text-is("${last}")`);
+      assert(await hasChapter(last));
+      await wait(16000); // A cancelled frame must not fail after the old 15 s deadline.
+      assert(await page.isVisible('#viewer'));
+      assert(await hasChapter(last));
+      assert(!(await page.isVisible('#start')));
+      assert.notEqual(await page.textContent('#status'), await message('epubLoading'));
+    }
     const anchorsFile = () => path.join(vault, 'Books', documentId, 'anchors.json');
     const saved = () => JSON.parse(fs.readFileSync(anchorsFile(), 'utf8'));
     let documentId;
@@ -335,6 +371,13 @@ async function until(check, ms = 10000) {
     );
     assert(logs.some((line) => /img-src/.test(line) && line.includes('example.invalid')));
     console.log('PASS EPUB scripts, handlers, javascript: links and remote images are blocked');
+
+    await page.click('#contentsButton');
+    await overlappingNavigation('Chapter Two: Repetition', 'Chapter Three: Endings');
+    await page.click('#toc button:text-is("Chapter One: Beginnings")');
+    assert(await hasChapter('Chapter One: Beginnings'));
+    await page.click('#contentsButton');
+    console.log('PASS superseded chapter loads remain cancelled beyond their old timeout');
 
     // Highlight: saved with an EPUB anchor and painted.
     await select('independence from others');
@@ -574,6 +617,20 @@ async function until(check, ms = 10000) {
     // A newer open supersedes one still loading: the books never mix in state or uploads.
     await openReader();
     await page.waitForSelector('#books a.item');
+    await page.evaluate(() => {
+      const read = Blob.prototype.arrayBuffer;
+      let delayHeader = true;
+      globalThis.restoreFileReads = () => {
+        Blob.prototype.arrayBuffer = read;
+      };
+      Blob.prototype.arrayBuffer = async function () {
+        if (delayHeader && this.size === 1024) {
+          delayHeader = false;
+          await new Promise((resolve) => setTimeout(resolve, 250));
+        }
+        return read.call(this);
+      };
+    });
     await page.setInputFiles('#file', large);
     await page.evaluate(async (base64) => {
       const transfer = new DataTransfer();
@@ -581,6 +638,7 @@ async function until(check, ms = 10000) {
       dispatchEvent(new DragEvent('drop', { dataTransfer: transfer, cancelable: true }));
     }, fs.readFileSync(second).toString('base64'));
     assert(await text('#status', 'epubSaved'), 'The second book is imported');
+    await page.evaluate(() => globalThis.restoreFileReads());
     await wait(3000); // Let a superseded open reach its next step.
     assert.equal(await page.title(), 'Second Book');
     assert.equal(await page.locator('#toc button').count(), 4);
@@ -609,6 +667,133 @@ async function until(check, ms = 10000) {
     assert.equal(await page.textContent('#status'), '', 'A stale import does not report here');
     console.log('PASS non-EPUB drops keep the opening book; the library shows no stale status');
 
+    // Broken targets and saved CFIs remain tolerant; they are not chapter failures.
+    await page.setInputFiles('#file', navigationBook);
+    assert(await text('#status', 'epubSaved'));
+    assert.deepEqual(
+      await (
+        await chapter()
+      ).evaluate(() => ({
+        handlers: document.querySelectorAll('[onerror], [onclick]').length,
+        exposedImage: !!document.querySelector('#raw-text-image'),
+        scripts: [...document.scripts].every(
+          (script) => script.type === 'application/x-tabgent-disabled',
+        ),
+      })),
+      { handlers: 0, exposedImage: true, scripts: true },
+    );
+    assert.equal(await page.evaluate(() => globalThis.tabgentRawTextRan), undefined);
+    const navigationId = new URL(page.url()).searchParams.get('book');
+    const navigationDigest = crypto
+      .createHash('sha256')
+      .update(fs.readFileSync(navigationBook))
+      .digest('hex');
+    await page.click('#contentsButton');
+    await page.click('#toc button:text-is("Missing chapter")');
+    assert(await hasChapter('Chapter One: Beginnings'));
+    assert(await page.isVisible('#viewer'));
+    await page.click('#contentsButton');
+    for (const cfi of ['epubcfi(/6/4!/4/9998/1:0)', 'epubcfi(/6/9998!/4/2/1:0)']) {
+      await worker.evaluate(
+        async ([sha, cfi]) => {
+          const { epubPositions = {} } = await chrome.storage.local.get('epubPositions');
+          epubPositions[sha] = { cfi };
+          await chrome.storage.local.set({ epubPositions });
+        },
+        [navigationDigest, cfi],
+      );
+      await page.close();
+      await openReader('?book=' + navigationId);
+      assert(await hasChapter('Chapter One: Beginnings'));
+      assert(await page.isVisible('#viewer'));
+      assert(await until(async () => (await page.textContent('#status')) === ''));
+    }
+    console.log('PASS missing TOC targets and stale saved CFIs keep the book readable');
+
+    // Book links go through the reader recovery too, not foliate's console-only catch.
+    await page.evaluate(() => {
+      const prototype = HTMLIFrameElement.prototype;
+      const descriptor = Object.getOwnPropertyDescriptor(prototype, 'contentDocument');
+      globalThis.restoreFrames = () =>
+        Object.defineProperty(prototype, 'contentDocument', descriptor);
+      Object.defineProperty(prototype, 'contentDocument', {
+        ...descriptor,
+        get() {
+          return this.srcdoc ? null : descriptor.get.call(this);
+        },
+      });
+    });
+    await (await chapter()).click('#next-chapter');
+    const linkFailure = await message('epubOpenFailed', 'The chapter document is not accessible');
+    assert(await until(async () => (await page.textContent('#status')) === linkFailure));
+    assert(await page.isVisible('#start'));
+    assert(fs.existsSync(path.join(vault, 'Books', navigationId, 'original.epub')));
+    await page.evaluate(() => globalThis.restoreFrames());
+    console.log('PASS in-chapter link failures show the same recoverable error');
+
+    // A renderer-originated page turn reports its error and releases the lock.
+    // Observe one event locally so we can exercise the same renderer after repair.
+    await page.setInputFiles('#file', navigationBook);
+    assert(await text('#status', 'epubSaved'));
+    assert.equal(
+      await page.evaluate(async () => {
+        const view = document.querySelector('foliate-view');
+        const renderer = view.renderer;
+        let failed = false;
+        renderer.addEventListener(
+          'load-error',
+          (event) => {
+            failed = true;
+            event.stopPropagation();
+          },
+          { once: true },
+        );
+        await renderer.scrollToAnchor(1);
+        const prototype = HTMLIFrameElement.prototype;
+        const descriptor = Object.getOwnPropertyDescriptor(prototype, 'contentDocument');
+        Object.defineProperty(prototype, 'contentDocument', {
+          ...descriptor,
+          get() {
+            return this.srcdoc ? null : descriptor.get.call(this);
+          },
+        });
+        try {
+          await view.next();
+        } finally {
+          Object.defineProperty(prototype, 'contentDocument', descriptor);
+        }
+        if (!failed) throw Error('The failed page turn did not report a renderer error');
+        await view.goTo('OEBPS/ch1.xhtml');
+        await renderer.scrollToAnchor(1);
+        await view.next();
+        return renderer.getContents()[0].doc.title;
+      }),
+      'Chapter Two: Repetition',
+    );
+    console.log('PASS a failed page turn reports its error and releases the paging lock');
+
+    // Touch snap starts its own navigation rather than calling reader.navigate().
+    await page.evaluate(async () => {
+      const view = document.querySelector('foliate-view');
+      await view.goTo('OEBPS/ch1.xhtml');
+      await view.renderer.scrollToAnchor(1);
+      const prototype = HTMLIFrameElement.prototype;
+      const descriptor = Object.getOwnPropertyDescriptor(prototype, 'contentDocument');
+      globalThis.restoreFrames = () =>
+        Object.defineProperty(prototype, 'contentDocument', descriptor);
+      Object.defineProperty(prototype, 'contentDocument', {
+        ...descriptor,
+        get() {
+          return this.srcdoc ? null : descriptor.get.call(this);
+        },
+      });
+      await view.renderer.snap(10000, 0);
+    });
+    assert(await until(async () => (await page.textContent('#status')) === linkFailure));
+    assert(await page.isVisible('#start'));
+    await page.evaluate(() => globalThis.restoreFrames());
+    console.log('PASS touch-snap chapter failures reach the reader recovery');
+
     // Fixed-layout books use foliate's other renderer and the same srcdoc adapter.
     await page.setInputFiles('#file', fixed);
     assert(await text('#status', 'epubSaved'), 'Fixed-layout import finished');
@@ -618,20 +803,12 @@ async function until(check, ms = 10000) {
       fs.readFileSync(path.join(vault, 'Books', fixedId, 'original.epub')),
       fs.readFileSync(fixed),
     );
-    const hasChapter = (title) =>
-      until(async () => {
-        for (const frame of page.frames())
-          if (
-            frame.url() === 'about:srcdoc' &&
-            (await frame.evaluate(() => document.title)) === title
-          )
-            return true;
-        return false;
-      });
     assert(await hasChapter('Chapter One: Beginnings'));
     await page.click('#contentsButton');
     await page.click('#toc button:text-is("Chapter Two: Repetition")');
     assert(await hasChapter('Chapter Two: Repetition'));
+    await overlappingNavigation('Chapter Three: Endings', 'Chapter One: Beginnings');
+    await page.click('#toc button:text-is("Chapter Two: Repetition")');
     console.log('PASS fixed-layout chapters render, import and navigate');
 
     // A chapter can also fail after a successful import. Navigation must recover

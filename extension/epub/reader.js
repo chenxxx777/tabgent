@@ -63,6 +63,7 @@ addEventListener('drop', (event) => {
   void openFile(event.dataTransfer?.files?.[0]);
 });
 $('#library').onclick = () => {
+  acceptedFile = ++fileChoice;
   opening++;
   status('');
   closeBook();
@@ -148,16 +149,28 @@ function libraryItem(item, seen) {
 // Each open (or a return to the library) supersedes the ones still loading, which stop
 // at their next step so two books never share the reader state or an upload.
 let opening = 0;
+let fileChoice = 0,
+  acceptedFile = 0;
 
 async function openFile(file) {
   if (!file) return;
+  const choice = ++fileChoice;
   // An EPUB is a ZIP archive; a PDF has %PDF- in its first 1024 bytes. Other files are
   // refused without cancelling a book still opening.
   const head = new Uint8Array(await file.slice(0, 1024).arrayBuffer());
   if (head[0] !== 0x50 || head[1] !== 0x4b) {
-    if (new TextDecoder('latin1').decode(head).includes('%PDF-')) return openPdf(file);
+    if (new TextDecoder('latin1').decode(head).includes('%PDF-')) {
+      if (file.size > PDF_LIMIT) return openPdf(file);
+      if (choice < acceptedFile) return;
+      acceptedFile = choice;
+      return openPdf(file);
+    }
     return toast(t('libraryNotSupported'));
   }
+  // Header reads can finish out of order. A later accepted file still wins,
+  // while an unsupported drop does not cancel a valid file being opened.
+  if (choice < acceptedFile) return;
+  acceptedFile = choice;
   const token = ++opening;
   const bytes = new Uint8Array(await file.arrayBuffer());
   if (token !== opening) return;
@@ -203,6 +216,7 @@ async function openPdf(file) {
   }
 }
 async function openFromVault(documentId) {
+  acceptedFile = ++fileChoice;
   const token = ++opening;
   status(loadTimeData.getStringF('epubLoadingVault', ''));
   try {
@@ -280,6 +294,11 @@ async function showBook(file, sha256, token) {
     const on = (name, handler) =>
       view.addEventListener(name, (event) => state.view === view && handler(event));
     on('load', onSectionLoad);
+    on('load-error', ({ detail }) => void bookFailed(detail));
+    view.addEventListener('link', (event) => {
+      event.preventDefault();
+      if (state.view === view) void navigate((view) => view.goTo(event.detail.href));
+    });
     on('relocate', onRelocate);
     // foliate attaches the chapter's overlayer just after this event; paint a microtask later.
     on('create-overlay', ({ detail }) => queueMicrotask(() => paintSection(detail.index)));
@@ -312,6 +331,8 @@ async function showBook(file, sha256, token) {
 }
 
 async function bookFailed(error) {
+  if (error?.name === 'AbortError') return;
+  opening++; // Invalidate pending initialization before closing its renderer.
   const message = loadTimeData.getStringF('epubOpenFailed', error?.message || error);
   closeBook();
   history.replaceState(null, '', location.pathname);
@@ -327,7 +348,9 @@ async function navigate(action) {
     await action(view);
     return state.view === view;
   } catch (error) {
-    if (state.view === view) await bookFailed(error);
+    // Renderer load errors use load-error, including foliate's internal turns.
+    // A stale target or cancelled navigation must not close a readable book.
+    if (error?.name !== 'AbortError') console.warn(error);
     return false;
   }
 }
