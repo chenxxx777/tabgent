@@ -30,6 +30,8 @@ flowchart LR
 | `extension/file-access.html`      | Explains Chrome's "Allow access to file URLs" setting, opened once.         |
 | `extension/epub/`                 | Library and EPUB reader page: vault documents, imports, books, highlights.  |
 | `extension/epub-routing.js`       | EPUB reader port registry and sender checks.                                |
+| `extension/clipper.js`            | Clipping a page: injection, the replace prompt, bounds and the vault save.  |
+| `extension/clip/`                 | Clipping script injected on demand and the shared sanitizer settings.       |
 | `extension/reading-companion.js`  | Highlight and page conversations: reading context and saved turns.          |
 | `extension/reading.js`            | Reading context parts, turn records, and vault append parameters.           |
 | `extension/session-config.js`     | Browser tool schema and agent instructions.                                 |
@@ -109,7 +111,9 @@ and `Books/`. Web pages live in `Articles/article-<title slug>-<URL hash>/`, PDF
 documents in `Books/paper-<title slug>-<URL hash>/`, and EPUB books in `Books/` (see [EPUB reader](#epub-reader)). A PDF imported from the computer is a `paper-*` document
 named `urn:sha256:<hex>` (see [Library and local PDFs](#library-and-local-pdfs)). URLs are
 matched without their fragment, as in page history, through `.tabgent/index.json`, which
-is rebuilt from the folders if missing. `vault/documents/list` lists every document.
+is rebuilt from the folders if missing. `vault/documents/list` lists every document. A
+clipped webpage also has `article.md`, `article.html` and `article.json` in its folder (see
+[Web clips](#web-clips)).
 
 `anchors.json` is the machine record: anchors, highlight IDs (`h001`, never reused),
 the user's notes on highlights, and discussion turns, which are idempotent on thread
@@ -400,6 +404,66 @@ web address, so **Open in Chrome viewer** is hidden and `pdfFallback` is refused
 imported PDF is not in the vault any more when the vault folder is changed; the viewer
 then reports that it cannot be opened.
 
+## Web clips
+
+**Clip this page** (the toolbar button's and the page's context menus, the `clip-page`
+command, Alt+Shift+S by default, and the side panel's Reading notes menu) saves a webpage's
+main text into the page's own vault document. The page and its clip are one document named
+by the URL, as for highlights, so highlights, notes and discussions belong to both.
+
+`clipper.js` runs in the service worker. It takes the tab's top-frame URL and document from
+`webNavigation.getFrame`, refuses anything but HTTP(S) pages outside incognito, and injects
+`vendor/defuddle/defuddle.js`, `vendor/turndown/turndown.js`, the UMD build of DOMPurify,
+`clip/sanitize-config.js` and `clip/clip-content.js` into frame 0 with
+`chrome.scripting.executeScript`. Nothing is loaded into pages that are not clipped. Each
+later call checks that the injection result's `documentId` is still the frame's, so a page
+that navigated mid-clip saves nothing. A single-page app can change its address without a
+new document, so the worker also reads the frame again after each prompt and the clipping
+script compares `location` with the address it was asked to clip; a page that moved stops
+the clip and says so, and a prompt closes when the page's address changes. If the document
+already has a clip, the page shows a prompt (a closed shadow root on a top-layer popover,
+like the reading toolbar) and only **Replace** continues. **Clip selected text** from the
+side panel checks that the page still selects the quote attached in the conversation. An
+address whose vault document is a PDF (Chrome's own viewer) is refused.
+
+`clip-content.js` runs Defuddle's synchronous `parse()` with `useAsync: false` and a
+`fetch` that always rejects, so no extractor contacts a third party. Defuddle normalizes
+some attributes of the document it is given, so it reads `document.cloneNode(true)`:
+elements that `checkVisibility()` reports as not displayed are marked `hidden` in the copy,
+and images keep their displayed size, so the page the user reads is never modified. On
+`x.com` and `twitter.com`, single posts use Defuddle's X extractor with
+`includeReplies: false` (the post and the author's thread loaded on the page); X articles
+use its article extractor; timelines and profiles are refused. The result is parsed into an
+inert `DOMParser` document. Images keep only their address in `data-remote-src` (the best
+`srcset` candidate up to 2048 pixels, `pbs.twimg.com` at `name=large`; tracking pixels and
+`data:` images are dropped), frames and media become links, links become absolute HTTP(S)
+or mail addresses or in-page fragments, and DOMPurify then removes everything else with the
+allowlist in `sanitize-config.js` (no scripts, styles, `style` or `class` attributes, forms,
+frames, SVG or media). Turndown converts the cleaned HTML with Tabgent's rules for images,
+fenced code with its language, strikethrough, MathML with LaTeX, and GFM tables (tables with
+merged cells become lines of text). The HTML is cut at a block boundary to 4 MiB and the
+Markdown at a paragraph break (else a line break, never inside a surrogate pair) to 3 MiB
+(UTF-8); a code fence the cut left open is closed, and each ends with a note. When little text
+is found, the page offers **Save whole page** (Defuddle on `body` without low-score
+removal) or, with a selection, the selected text only.
+
+The worker treats the result as untrusted: `cleanClip` refuses oversized or empty text and
+bounds every field before `vault/clip/save`. The vault writes `article.html` (the cleaned
+HTML in a page whose policy, `default-src 'none'`, blocks scripts and remote loads if the
+file is opened directly), then `article.md` (front matter with `source`, `clipped` and the
+page metadata, then the text), and last `article.json`, the record naming both files with
+their SHA-256 and size. A clip is complete when the files have the recorded sizes. A
+document with a clip conflicts unless the request says `replace` and `expected` still
+names its `clippedAt`, so two tabs cannot overwrite each other silently. An `article.md`
+whose hash differs from the record (edited by the user) is renamed to
+`article-edited-<time>.md` before it is replaced. All extraction happens in the browser;
+under the vault lock the connector only writes and renames files. `vault/document/resolve`
+and `vault/documents/list` report the clip, the side panel offers **Clip this page again**,
+and the reading context of any message about the page names its `article.md`.
+
+Images are not downloaded yet: `article.md` links them at their web addresses. Clipping
+covers the top frame's light DOM, not frames or shadow DOM.
+
 ## Files from the computer
 
 Tabgent works on files the user opens in Chrome from the computer, typically by
@@ -540,12 +604,13 @@ sandbox already allows reading the vault folder, but in Ask for approval mode Co
 asks before every shell command, including `rg` and `cat`. The connector therefore
 adds a `reading_vault` dynamic tool next to `read_attachment`. The host answers it
 locally on the vault queue: `list` names the documents, `search` ranks lines of
-`highlights.md` and `source.md` by matching keywords, optionally within one `document`.
+`highlights.md`, `source.md` and clipped pages' `article.md` by matching keywords (the
+user's notes first), optionally within one `document`.
 A book's `chapters/*.md` and an imported PDF's `pages/*.md` are searched only when
 `document` names that book or paper, and its notes still rank first, so their text never
 crowds out the user's notes and a search never scans the whole library. `read` returns
 numbered lines of the vault's `AGENTS.md`, a document's `highlights.md`, `source.md` or
-`anchors.json`, an imported book's `chapters/NN-<title>.md`, or an imported PDF's
+`anchors.json`, a clipped page's `article.md` (only under `Articles/article-*`), an imported book's `chapters/NN-<title>.md`, or an imported PDF's
 `pages/NNN.md` (only under `Books/book-*` and `Books/paper-*` respectively). The vault folder may be shared, for example
 with Obsidian or the home folder, so no other file is readable. Each file must sit at
 its exact place under `Articles/` or `Books/` with Tabgent's file names and no symlink

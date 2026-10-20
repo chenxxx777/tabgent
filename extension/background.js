@@ -31,6 +31,7 @@ import {
   cleanEpubAnchor,
 } from './vault-client.js';
 import { createReadingCompanion } from './reading-companion.js';
+import { createClipper } from './clipper.js';
 startPdfRouting();
 const sessions = new Map(),
   requests = new Map(),
@@ -113,6 +114,16 @@ const reading = createReadingCompanion({
     return epubDocument(tab) !== undefined
       ? epubCommand(tabId, message)
       : chrome.tabs.sendMessage(tabId, message, { frameId: 0 });
+  },
+});
+// Clipping a page saves its text into the page's vault document (clipper.js); views of the
+// tab refresh their reading notes menu.
+const clipper = createClipper({
+  vault,
+  changed: async (tabId) => {
+    await loaded;
+    for (const s of sessions.values())
+      if (s.tabId === tabId) for (const p of s.ports) event(p, 'codex-reading-changed');
   },
 });
 const readingMessages = new Set([
@@ -1257,6 +1268,21 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     }
     if (!sender.url?.startsWith(chrome.runtime.getURL(''))) throw Error('Invalid sender');
     if (readingMessages.has(msg.type)) return reading.message(msg, sender);
+    if (msg.type === 'clipPage') {
+      // From the side panel: the page it is beside, as for its reading notes.
+      await loaded;
+      const source = sessions.get(msg.conversationKey);
+      if (!source) throw Error('Conversation not found');
+      const tabId = sender.tab
+        ? (agentCompanions.get(sender.tab.id) ?? source.tabId)
+        : (msg.companionTabId ?? source.tabId);
+      // A selection clip must still be the quote attached in this conversation.
+      const selection = msg.mode === 'selection';
+      return clipper.clip(tabId, {
+        mode: selection ? 'selection' : 'article',
+        expected: selection ? source.selection?.text || '' : '',
+      });
+    }
     if (msg.type === 'openLibrary') {
       // From the side panel: the library opens next to the page it is beside.
       const tab = Number.isInteger(msg.companionTabId)
@@ -1579,10 +1605,31 @@ chrome.runtime.onInstalled.addListener(() => {
       title: chrome.i18n.getMessage('libraryOpen'),
       contexts: ['action'],
     });
+    // Clipping saves the page's text in the vault. The page item is not offered on a
+    // selection, so the selection's own item is never grouped into a submenu with it.
+    chrome.contextMenus.create({
+      id: 'clip-page',
+      title: chrome.i18n.getMessage('clipPage'),
+      contexts: ['action'],
+    });
+    chrome.contextMenus.create({
+      id: 'clip-page-context',
+      title: chrome.i18n.getMessage('clipPage'),
+      contexts: ['page'],
+      documentUrlPatterns: ['http://*/*', 'https://*/*'],
+    });
   });
+});
+chrome.commands?.onCommand.addListener((command, tab) => {
+  if (command === 'clip-page' && Number.isInteger(tab?.id))
+    void clipper.clip(tab.id).catch(console.warn);
 });
 chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId === 'open-epub-reader') return void openEpubReader(tab).catch(console.warn);
+  if (info.menuItemId === 'clip-page' || info.menuItemId === 'clip-page-context') {
+    if (Number.isInteger(tab?.id)) void clipper.clip(tab.id).catch(console.warn);
+    return;
+  }
   if (info.menuItemId !== 'quote-selection' || !info.selectionText || !tab?.id || tab.incognito)
     return;
   // Invoke synchronously while Chrome's context-menu user gesture is active.

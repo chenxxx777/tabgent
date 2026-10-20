@@ -31,7 +31,9 @@ guards, selection ownership, DOM range capture, native disconnect reporting,
 upload validation, and the chat UI with a controlled bridge. It also covers web
 anchor build and restore, the highlight toolbar, and vault requests with a fake
 connector port. EPUB checks cover anchors, script neutralization, reader routing,
-vault import and chapter extraction with a generated fixture book. Browser tests launch headless Chromium and use local fixtures.
+vault import and chapter extraction with a generated fixture book. Clipping checks cover
+extraction from generated pages (including a synthetic X thread), the worker's prompts and
+bounds, and `vault/clip/save` with `reading_vault`. Browser tests launch headless Chromium and use local fixtures.
 They do not authenticate or call a real model. `CHROME_PATH` can override the
 headless binary too.
 
@@ -75,6 +77,7 @@ These are deliberately excluded from `npm test`:
 | `npm run test:pdf-highlights`                | Same isolation, fixture app-server for Codex; PDF.js highlights, saved turns, and restore.   |
 | `npm run test:epub`                          | Playwright Chromium and Python; the real connector with temporary `HOME` and `CODEX_HOME`.   |
 | `npm run test:library`                       | Same isolation, fixture app-server for Codex; library, local PDF import, reopen and restore. |
+| `npm run test:clip`                          | Same isolation, fixture app-server for Codex; clipping pages into the vault.                 |
 | `npm run test:local-files`                   | Same isolation, fixture app-server for Codex; files opened from the computer (`file://`).    |
 | `npm run test:agent-tab`                     | Same isolation, fixture app-server for Codex; an Agent tab after its source page closes.     |
 
@@ -86,6 +89,18 @@ disabled, so no app-server or account is used.
 generated PDF and EPUB from the library, highlights and asks about the PDF (saving a turn
 from the fixture app-server), opens the library from the side panel, opens every kind of
 document from it, restarts the browser and checks drag and drop.
+
+`npm run test:clip` highlights a generated article and clips it from the side panel. It checks
+`article.md`, `article.html` and `article.json` in the page's folder, that the page is not
+changed and nothing is fetched, that `reading_vault` finds the text and that a question about
+the page names `article.md`. It then clips again (the page asks first and an edited
+`article.md` is kept), clips a page that enforces Trusted Types, and saves a short page whole.
+Every request outside `127.0.0.1` is refused.
+
+Clipping real sites cannot be tested offline. After updating Defuddle, clip by hand, in a
+signed-in browser: a single X post, a thread, a long post and an X article; a post with images
+and a video; a WeChat article; a Substack post; and a technical blog post with code. Check the
+text, the image addresses and the thread's posts in `article.md`.
 
 `npm run test:local-files` generates a PDF, Markdown, text and HTML files in the temporary
 folder and opens them by `file://` URL. It checks that a PDF goes straight to the PDF.js

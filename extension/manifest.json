@@ -79,5 +79,13 @@
       "resources": ["pdf/file.html"],
       "matches": ["file:///*"]
     }
-  ]
+  ],
+  "commands": {
+    "clip-page": {
+      "suggested_key": {
+        "default": "Alt+Shift+S"
+      },
+      "description": "__MSG_clipCommand__"
+    }
+  }
 }
