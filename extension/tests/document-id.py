@@ -65,6 +65,13 @@ SLUGS = {
 for title, slug in SLUGS.items():
     assert vault._slug(title) == slug, (title, vault._slug(title))
 assert vault._slug("文" * 80) == "文" * vault.SLUG_MAX
+plain = OSError("plain")
+assert plain.errno is None and vault._os_code(plain) == "io_error"
+assert vault._os_code(PermissionError("Permission denied")) == "vault_unwritable"
+assert vault._os_code(OSError(errno.ENOSPC, "No space")) == "disk_full"
+# A missing EDQUOT is None. An OSError with no errno must not become disk_full.
+with patch.object(errno, "EDQUOT", None, create=True):
+    assert vault._os_code(OSError("plain")) == "io_error"
 
 with tempfile.TemporaryDirectory(prefix="tabgent-document-id-") as directory:
     base = Path(directory)
@@ -254,14 +261,80 @@ with tempfile.TemporaryDirectory(prefix="tabgent-document-id-") as directory:
             assert "/" not in reply["error"]["message"], reply
             assert "Permission denied" not in reply["error"]["message"]
             assert ".." not in reply["error"].get("folder", "")
-        full = base / "full-disk"
-        error = OSError(errno.ENOSPC, "No space left on device")
-        error.filename = str(full / "Articles")
-        with patch.object(Path, "mkdir", side_effect=error):
-            reply = vault.handle(settings, "vault/configure", {"path": str(full)})
+        named = base / "named-folder"
+        call(settings, "vault/configure", {"path": str(named)})
+        (named / "Articles").rmdir()
+        original_mkdir = Path.mkdir
+
+        def fail_articles(self, *args, **kwargs):
+            if self.name == "Articles":
+                full = OSError(errno.ENOSPC, "No space left on device")
+                # A temp-file name must not be shown as the folder.
+                full.filename = str(named / ".anchors.json.3f9a1b2c4d5e.tmp")
+                raise full
+            return original_mkdir(self, *args, **kwargs)
+
+        with patch.object(Path, "mkdir", fail_articles):
+            reply = vault.handle(settings, "vault/configure", {"path": str(named)})
         assert reply["error"]["code"] == "disk_full", reply
         assert reply["error"]["folder"] == "Articles", reply
-        assert str(full) not in reply["error"]["message"]
+        assert ".tmp" not in reply["error"]["folder"]
+        assert str(named) not in reply["error"]["message"]
         assert "/" not in reply["error"]["message"]
         assert "No space" not in reply["error"]["message"]
+
+        real_open = open
+
+        def fail_temp(file, mode="r", *args, **kwargs):
+            if isinstance(mode, str) and "x" in mode and str(file).endswith(".tmp"):
+                denied = PermissionError(errno.EACCES, "Permission denied")
+                denied.filename = str(file)
+                raise denied
+            return real_open(file, mode, *args, **kwargs)
+
+        with patch("builtins.open", fail_temp):
+            reply = vault.handle(
+                settings,
+                "vault/highlight/create",
+                {
+                    "url": "https://example.test/write-denied",
+                    "title": "耳夹式无线耳机体验",
+                    "kind": "web",
+                    "text": "耳夹",
+                    "anchor": web_anchor("耳夹"),
+                },
+            )
+        assert reply["error"]["code"] == "vault_unwritable", reply
+        label = reply["error"].get("folder", "")
+        assert vault.DOCUMENT_ID.fullmatch(label), reply
+        assert label.startswith("article-耳夹式无线耳机体验-"), reply
+        assert ".tmp" not in label and not label.startswith("."), reply
+        assert "Permission denied" not in reply["error"]["message"]
+        assert "/" not in reply["error"]["message"]
+
+        original_open = os.open
+
+        def fail_lock(path, flags, mode=0o777):
+            if Path(path).name == "lock":
+                denied = PermissionError(errno.EACCES, "Permission denied")
+                denied.filename = os.fspath(path)
+                raise denied
+            return original_open(path, flags, mode)
+
+        with patch.object(os, "open", fail_lock):
+            reply = vault.handle(
+                settings,
+                "vault/highlight/create",
+                {
+                    "url": "https://example.test/lock-denied",
+                    "title": "锁",
+                    "kind": "web",
+                    "text": "锁",
+                    "anchor": web_anchor("锁"),
+                },
+            )
+        assert reply["error"]["code"] == "vault_unwritable", reply
+        assert "folder" not in reply["error"], reply
+        assert "lock" not in reply["error"]["message"].lower()
+        assert "Permission denied" not in reply["error"]["message"]
         print("PASS folder errors name a folder and hide the path")

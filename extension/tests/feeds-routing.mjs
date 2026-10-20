@@ -11,6 +11,7 @@ import readline from 'node:readline';
 // The worker's reader routing reads extension addresses.
 globalThis.chrome = { runtime: { getURL: (file) => 'chrome-extension://test/' + file } };
 const { registerClipPort, clipViewerUrl } = await import('../clip-routing.js');
+import { CLIP_LIMIT } from '../clipper.js';
 import {
   FEED_LIMIT,
   createFeeds,
@@ -600,11 +601,39 @@ try {
         ),
       );
   };
-  await assert.rejects(feeds.commit(77, 'https://other.test/story'), /no text to save/);
-  assert.deepEqual(
-    told.filter((message) => message.type !== 'command').map((message) => message.type),
-    ['feedSaveFailed'],
-  );
+  let emptyError;
+  await assert.rejects(feeds.commit(77, 'https://other.test/story'), (error) => {
+    emptyError = error;
+    return true;
+  });
+  assert.equal(emptyError.code, 'no_text');
+  assert.match(emptyError.message, /no text to save/);
+  const failed = told.filter((message) => message.type === 'feedSaveFailed');
+  assert.equal(failed.length, 1);
+  assert.equal(failed[0].code, 'no_text');
+  told.length = 0;
+  const huge = 'a'.repeat(CLIP_LIMIT.markdown + 1);
+  port.postMessage = (message) => {
+    told.push(message);
+    if (message.type === 'command')
+      queueMicrotask(() =>
+        portListeners.forEach((fn) =>
+          fn({
+            type: 'reply',
+            id: message.id,
+            result: { method: 'feed', result: { ok: true, markdown: huge, html: '<p>x</p>' } },
+          }),
+        ),
+      );
+  };
+  let longError;
+  await assert.rejects(feeds.commit(77, 'https://other.test/huge'), (error) => {
+    longError = error;
+    return true;
+  });
+  assert.equal(longError.code, 'too_long');
+  assert.match(longError.message, /too long to save/);
+  assert.equal(told.find((message) => message.type === 'feedSaveFailed')?.code, 'too_long');
   console.log('PASS the reader opens, fetches images and full text, and saves feed items');
 
   // Unsubscribing everything removes the alarms.

@@ -462,7 +462,10 @@ with tempfile.TemporaryDirectory(prefix="tabgent-vault-") as directory:
             (None, {}, "unknown_method"),
             ("vault/status", [], "invalid_params"),
             ("vault/configure", {}, "invalid_params"),
-            ("vault/configure", {"path": "relative/vault"}, "invalid_params"),
+            ("vault/configure", {"path": ""}, "path_empty"),
+            ("vault/configure", {"path": "  "}, "path_empty"),
+            ("vault/configure", {"path": "ok\0no"}, "invalid_params"),
+            ("vault/configure", {"path": "relative/vault"}, "path_not_absolute"),
             ("vault/document/resolve", {**source, "url": ""}, "invalid_params"),
             (
                 "vault/document/resolve",

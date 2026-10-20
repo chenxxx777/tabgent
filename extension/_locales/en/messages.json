@@ -1489,6 +1489,18 @@
   "errorInvalidParams": {
     "message": "That request was not valid"
   },
+  "errorPathNotAbsolute": {
+    "message": "Enter a full folder path that starts with / or ~"
+  },
+  "errorPathEmpty": {
+    "message": "Enter a folder path"
+  },
+  "errorNoText": {
+    "message": "This item is empty"
+  },
+  "errorTooLong": {
+    "message": "The text is too long"
+  },
   "errorInvalidHighlight": {
     "message": "This highlight cannot be used"
   },

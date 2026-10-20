@@ -15,6 +15,10 @@ const keys = [
   'errorDiskFullFolder',
   'errorNotFound',
   'errorInvalidParams',
+  'errorPathNotAbsolute',
+  'errorPathEmpty',
+  'errorNoText',
+  'errorTooLong',
   'errorInvalidHighlight',
   'errorIo',
   'errorTimeout',
@@ -43,6 +47,10 @@ const codes = [
   'disk_full',
   'not_found',
   'invalid_params',
+  'path_not_absolute',
+  'path_empty',
+  'no_text',
+  'too_long',
   'invalid_highlight',
   'io_error',
   'timeout',
@@ -60,7 +68,10 @@ for (const [name, messages] of Object.entries(locales)) {
       { code, message: 'Permission denied: /tmp/secret/ReadingVault/Articles' },
       t,
     );
-    assert.doesNotMatch(text, leaked, `${name} ${code}: ${text}`);
+    // The full-path hint itself contains a slash. It must still hide the rejected path.
+    if (code === 'path_not_absolute') {
+      assert.doesNotMatch(text, /tmp|secret|ReadingVault|Permission denied/);
+    } else assert.doesNotMatch(text, leaked, `${name} ${code}: ${text}`);
     if (!['internal_error', 'unknown_method'].includes(code))
       assert.notEqual(text, messages.errorGeneric.message, `${name} ${code}`);
   }
@@ -102,7 +113,50 @@ for (const [name, messages] of Object.entries(locales)) {
   );
   assert.equal(explain({ message: 'Disk is busy' }, t), 'Disk is busy');
   assert.equal(explain({ code: 'io_error', message: 'Disk is busy' }, t), messages.errorIo.message);
+  assert.equal(
+    explain({ code: 'path_not_absolute', message: 'path must be absolute: /Users/me/notes' }, t),
+    messages.errorPathNotAbsolute.message,
+  );
+  assert.doesNotMatch(
+    explain({ code: 'path_not_absolute', message: 'path must be absolute: /Users/me/notes' }, t),
+    /Users|must be absolute/,
+  );
+  assert.equal(
+    explain({ code: 'path_empty', message: 'path must be a non-empty string' }, t),
+    messages.errorPathEmpty.message,
+  );
+  assert.equal(
+    explain({ code: 'no_text', message: 'The item has no text to save' }, t),
+    messages.errorNoText.message,
+  );
+  assert.equal(
+    explain({ code: 'too_long', message: 'The item is too long to save' }, t),
+    messages.errorTooLong.message,
+  );
+  assert.equal(
+    explain({ message: 'path must be absolute' }, t),
+    messages.errorPathNotAbsolute.message,
+  );
+  assert.equal(
+    explain({ message: 'The item has no text to save' }, t),
+    messages.errorNoText.message,
+  );
+  assert.equal(
+    explain({ message: 'The item is too long to save' }, t),
+    messages.errorTooLong.message,
+  );
+  assert.notEqual(messages.errorNoText.message, messages.errorInvalidParams.message);
+  assert.notEqual(messages.errorTooLong.message, messages.errorInvalidParams.message);
+  assert.notEqual(messages.errorPathEmpty.message, messages.errorInvalidParams.message);
 }
 assert.equal(locales.zh_CN.errorDisconnected.message, '连接器不可用');
 assert.equal(locales.zh_CN.errorVaultUnwritableFolder.message, '无法写入文件夹“$1”');
+assert.equal(locales.zh_CN.errorNoText.message, '条目为空');
+assert.equal(locales.zh_CN.errorTooLong.message, '正文过长');
+assert.equal(locales.zh_CN.errorPathNotAbsolute.message, '请填写以 / 或 ~ 开头的完整路径');
+assert.equal(locales.zh_CN.errorPathEmpty.message, '请填写资料库文件夹');
+assert.equal(
+  locales.en.errorPathNotAbsolute.message,
+  'Enter a full folder path that starts with / or ~',
+);
 console.log('PASS connector errors are explained by code in English and Chinese');

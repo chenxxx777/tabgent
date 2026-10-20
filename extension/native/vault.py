@@ -226,11 +226,13 @@ def status(settings, params):
 
 def configure(settings, params):
     value = params.get("path")
-    if not isinstance(value, str) or not value.strip() or "\0" in value:
+    if not isinstance(value, str) or "\0" in value:
         raise VaultError("invalid_params", "path must be a non-empty string")
+    if not value.strip():
+        raise VaultError("path_empty", "path must be a non-empty string")
     path = os.path.expanduser(value.strip())
     if not os.path.isabs(path):
-        raise VaultError("invalid_params", "path must be absolute")
+        raise VaultError("path_not_absolute", "path must be absolute")
     root = Path(os.path.normpath(path))
     with _locked(root):
         _scaffold(root)
@@ -1210,9 +1212,20 @@ def _error_body(error):
     return body
 
 
+# Atomic writes use .<name>.<12 hex>.tmp. That name is a file, not a folder.
+_TEMP_FILE = re.compile(r"^\..+\.[0-9a-f]{12}\.tmp$")
+
+
 def _os_code(error):
     number = getattr(error, "errno", None)
-    if number in (errno.ENOSPC, getattr(errno, "EDQUOT", None)):
+    # EDQUOT is missing on some platforms. getattr then returns None, and an OSError
+    # whose errno is also None must not be treated as a full disk.
+    full = tuple(
+        value
+        for value in (errno.ENOSPC, getattr(errno, "EDQUOT", None))
+        if value is not None
+    )
+    if number in full:
         return "disk_full"
     if isinstance(error, PermissionError) or number in (
         errno.EACCES,
@@ -1224,15 +1237,18 @@ def _os_code(error):
 
 
 def _folder_label(path):
-    """The last path component, or None. Never an absolute path."""
+    """The last path component of a folder, or None. Never an absolute path or a file."""
     if isinstance(path, bytes):
         path = os.fsdecode(path)
+    if isinstance(path, Path):
+        path = os.fspath(path)
     if not isinstance(path, str) or not path:
         return None
     name = Path(path).name
     if (
         not name
         or name in {".", ".."}
+        or name.startswith(".")
         or ".." in name
         or len(name) > 180
         or any(ord(char) < 32 or ord(char) == 127 or char in "/\\" for char in name)
@@ -1241,15 +1257,45 @@ def _folder_label(path):
     return name
 
 
+def _error_folder(path):
+    """A folder name for an OS error. Temp files, the lock, and other files name their parent."""
+    if isinstance(path, bytes):
+        path = os.fsdecode(path)
+    if isinstance(path, Path):
+        path = os.fspath(path)
+    if not isinstance(path, str) or not path:
+        return None
+    candidate = Path(path)
+    if (
+        _TEMP_FILE.fullmatch(candidate.name)
+        or candidate.name == "lock"
+        or candidate.suffix
+    ):
+        candidate = candidate.parent
+    # Connector files live under .tabgent. That directory is not one the user named.
+    if ".tabgent" in candidate.parts:
+        return None
+    return _folder_label(candidate)
+
+
 def _os_vault_error(error, folder=True):
-    """A vault error for an OS failure. The message has no path."""
+    """A vault error for an OS failure. The message has no path.
+
+    folder=True reads a directory from the OS error. Pass a directory path when the
+    caller was creating that directory. folder=False omits the name (settings, lock).
+    """
     code = _os_code(error)
     messages = {
         "disk_full": "The disk is full",
         "vault_unwritable": "The folder cannot be written",
         "io_error": "The folder could not be read or written",
     }
-    label = _folder_label(getattr(error, "filename", None)) if folder else None
+    if folder is False:
+        label = None
+    elif folder is True:
+        label = _error_folder(getattr(error, "filename", None))
+    else:
+        label = _folder_label(folder)
     return VaultError(code, messages[code], label)
 
 
@@ -1302,7 +1348,8 @@ def _ensure_dir(path):
     try:
         path.mkdir(parents=True, exist_ok=True)
     except OSError as error:
-        raise _os_vault_error(error) from error
+        # Name the directory being created, not whatever file the OS error mentions.
+        raise _os_vault_error(error, folder=path) from error
 
 
 @contextlib.contextmanager
@@ -1312,7 +1359,8 @@ def _locked(root):
         try:
             descriptor = os.open(root / ".tabgent/lock", os.O_RDWR | os.O_CREAT, 0o600)
         except OSError as error:
-            raise _os_vault_error(error) from error
+            # The lock is a file. It has no document folder to name.
+            raise _os_vault_error(error, folder=False) from error
         try:
             deadline = time.monotonic() + LOCK_TIMEOUT
             while True:

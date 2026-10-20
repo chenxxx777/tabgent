@@ -7,6 +7,7 @@ import { pageContextPrefix, readingContextPrefix } from './session-config.js';
 import { selectionContextPrefix } from './ui/user-input.js';
 import { documentUrl } from './vault-client.js';
 import { isLocalFileUrl } from './local-files.js';
+import { isChapterFile } from './document-id.js';
 import {
   appendParams,
   clip,
@@ -522,7 +523,7 @@ export function createReadingCompanion({
             ...(clipSource(tab?.url) ? { view: 'clip' } : {}),
             anchor: highlight.anchor || null,
             // The EPUB reader names the chapter file Codex reads instead of the reader tab.
-            ...(/^chapters\/[^/\\]+\.md$/.test(context?.chapterFile || '')
+            ...(isChapterFile(context?.chapterFile)
               ? { chapterFile: `${resolved.document.folder}/${context.chapterFile}` }
               : {}),
             capturedAt: new Date().toISOString(),

@@ -8,6 +8,10 @@
     disk_full: 'errorDiskFull',
     not_found: 'errorNotFound',
     invalid_params: 'errorInvalidParams',
+    path_not_absolute: 'errorPathNotAbsolute',
+    path_empty: 'errorPathEmpty',
+    no_text: 'errorNoText',
+    too_long: 'errorTooLong',
     invalid_highlight: 'errorInvalidHighlight',
     io_error: 'errorIo',
     timeout: 'errorTimeout',
@@ -18,6 +22,10 @@
   };
   // English phrases the connector used to return. Mapped when a code was dropped.
   const PHRASES = [
+    [/path must be absolute/i, 'errorPathNotAbsolute'],
+    [/path must be a non-empty string/i, 'errorPathEmpty'],
+    [/no text to save/i, 'errorNoText'],
+    [/too long to save/i, 'errorTooLong'],
     [/invalid highlight/i, 'errorInvalidHighlight'],
     [/highlight not found/i, 'errorNotFound'],
     [/permission denied|cannot create the folder|cannot lock|read-only/i, 'errorVaultUnwritable'],
