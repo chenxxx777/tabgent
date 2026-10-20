@@ -1198,6 +1198,15 @@
   "clipNavigated": {
     "message": "The page changed while it was being clipped. Clip it again."
   },
+  "clipSavingImages": {
+    "message": "Clipping… images $1 of $2"
+  },
+  "clipImagesSaved": {
+    "message": "$1 images saved."
+  },
+  "clipImagesFailed": {
+    "message": "$1 images could not be saved and stay linked online."
+  },
   "fileAccessTitle": {
     "message": "Let Tabgent read files you open in Chrome"
   },

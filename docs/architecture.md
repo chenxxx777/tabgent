@@ -31,6 +31,7 @@ flowchart LR
 | `extension/epub/`                 | Library and EPUB reader page: vault documents, imports, books, highlights.  |
 | `extension/epub-routing.js`       | EPUB reader port registry and sender checks.                                |
 | `extension/clipper.js`            | Clipping a page: injection, the replace prompt, bounds and the vault save.  |
+| `extension/clip-images.js`        | A clip's images: download, type and size checks, uploads, Markdown links.   |
 | `extension/clip/`                 | Clipping script injected on demand and the shared sanitizer settings.       |
 | `extension/feeds.js`              | Subscriptions: scheduled feed fetches and the library's feed messages.      |
 | `extension/reading-companion.js`  | Highlight and page conversations: reading context and saved turns.          |
@@ -463,8 +464,30 @@ under the vault lock the connector only writes and renames files. `vault/documen
 and `vault/documents/list` report the clip, the side panel offers **Clip this page again**,
 and the reading context of any message about the page names its `article.md`.
 
-Images are not downloaded yet: `article.md` links them at their web addresses. Clipping
-covers the top frame's light DOM, not frames or shadow DOM.
+Images are saved by the worker (`clip-images.js`), not the page. The clipping script writes
+each image in the Markdown as a placeholder named by a random per-clip token, which the page
+cannot read from the isolated world. The worker fetches each distinct address once with its
+host access (no CORS), `referrerPolicy: 'no-referrer'`, and cookies only for the page's own
+site and only on the first request (a same-site image is fetched with `redirect: 'manual'`,
+and a redirect is followed again without cookies; the site test is an approximation without
+the Public Suffix List), four at a time within 15 seconds each and 45 seconds overall. It keeps JPEG, PNG, GIF,
+WebP and AVIF by their first bytes (never by `Content-Type`; SVG is not saved), up to 50
+images, 5 MiB each and 30 MiB together, one file per SHA-256. Each image is uploaded with
+`vault/clip/asset` in 2 MiB chunks, one request at a time, so other vault requests wait for
+at most one chunk; the upload is staged in `.tabgent/uploads/asset-<sha256>.ready` after its
+hash is checked. Placeholders then become `assets/<first 16 hex digits>.<ext>`, or the web
+address for images that were not saved. `vault/clip/save` refuses (`missing_asset`) a clip
+whose images are neither staged nor already in the folder before it writes anything, copies
+staged images into `assets/` (refusing a linked `assets` folder; the staged copy stays for
+other clips that share the image and is pruned after a day), records each image's file,
+hash, type and source in `article.json`, and removes images the previous clip recorded that
+the new one does not use, unless a kept `article-edited-*.md` still links them;
+other files in `assets/` are kept. Images the size limits cut away are not downloaded, and if
+web addresses would make the Markdown too long, unsaved images keep only their description. Failed images are listed with
+the reason. `article.html` keeps every image's address in `data-remote-src`; the reader maps
+addresses to saved files through `article.json`.
+
+Clipping covers the top frame's light DOM, not frames or shadow DOM.
 
 ## Subscriptions
 

@@ -96,6 +96,9 @@ async function until(check, ms = 10000) {
           '--remote-debugging-port=0',
           '--no-first-run',
           '--no-default-browser-check',
+          // Chrome otherwise looks for a keychain in the temporary HOME and pops a
+          // macOS dialog on every restart; Playwright's own launches pass this too.
+          '--use-mock-keychain',
           // Headless by default so repeated restarts never steal focus; EPUB_HEADED=1
           // shows the window. EPUB_HEADLESS=1 stays accepted as the old spelling.
           ...(process.env.EPUB_HEADED === '1' && process.env.EPUB_HEADLESS !== '1'

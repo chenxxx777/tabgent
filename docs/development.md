@@ -38,6 +38,9 @@ They do not authenticate or call a real model. `CHROME_PATH` can override the
 headless binary too. Browser tests run headless by default, including the
 directly launched Chrome for Testing of `npm run test:epub`; set `EPUB_HEADED=1`
 to watch its window instead (the older `EPUB_HEADLESS=1` still forces headless).
+Tests that launch the browser directly (rather than through Playwright) pass
+`--use-mock-keychain`, avoiding the repeated macOS "no keychain to store Chromium"
+dialogs that a temporary `HOME` would otherwise trigger.
 
 JavaScript/HTML/CSS/JSON/Markdown use Prettier. Python uses Black and four-space indentation.
 To format Python, use a development virtual environment:
@@ -94,10 +97,12 @@ from the fixture app-server), opens the library from the side panel, opens every
 document from it, restarts the browser and checks drag and drop.
 
 `npm run test:clip` highlights a generated article and clips it from the side panel. It checks
-`article.md`, `article.html` and `article.json` in the page's folder, that the page is not
-changed and nothing is fetched, that `reading_vault` finds the text and that a question about
+`article.md`, `article.html`, `article.json` and the saved image in the page's folder, that a
+forbidden and an SVG image stay linked, that the page is not changed and only its images are
+fetched, that `reading_vault` finds the text and that a question about
 the page names `article.md`. It then clips again (the page asks first and an edited
-`article.md` is kept), clips a page that enforces Trusted Types, and saves a short page whole.
+`article.md` is kept), clips a page that enforces Trusted Types, saves a short page whole, and checks that a
+highlight in another tab saves within two seconds while a clip saves about 18 MB of images.
 Every request outside `127.0.0.1` is refused.
 
 Clipping real sites cannot be tested offline. After updating Defuddle, clip by hand, in a

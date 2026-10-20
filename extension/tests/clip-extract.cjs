@@ -20,7 +20,14 @@ const paragraphs = (n, prefix) =>
     (_, i) =>
       `<p>${prefix} paragraph ${i + 1} explains why careful readers return to difficult passages and write down what they notice about the argument.</p>`,
   ).join('\n');
+// One long image address used many times: its placeholders could ask for more room than
+// the Markdown limit.
+const longImage = `https://cdn.clip.test/${'signed-'.repeat(560)}.png`;
 const pages = {
+  '/many-images': `<!doctype html><html><head><title>Many images</title></head><body><main>
+<h1>Many images</h1><p>${'A paragraph about the images. '.repeat(40)}</p>
+${Array.from({ length: 900 }, (_, i) => `<p>Figure ${i}</p><img src="${longImage}" width="400" height="300" alt="Figure ${i}">`).join('\n')}
+</main></body></html>`,
   '/blog/autonomy': `<!doctype html><html lang="en"><head><title>On Autonomy | Fixture Blog</title>
     <meta name="author" content="Fixture Author"><meta property="og:site_name" content="Fixture Blog">
     <meta property="article:published_time" content="2026-10-01T08:00:00Z"></head><body>
@@ -166,8 +173,11 @@ function xThread() {
     assert.match(md, /Merged heading\n\nLeft · Right/);
     assert.match(md, /```python\nprint\("endorse"\)\n```/);
     assert.match(md, /~~removed~~/);
-    assert.match(md, /!\[Lazy figure\]\(https:\/\/clip\.test\/img\/lazy\.jpg\)/);
-    assert.match(md, /!\[Responsive\]\(https:\/\/clip\.test\/img\/large\.jpg\)/);
+    // Images are placeholders named by a per-clip token; the worker fills them in.
+    assert.match(article.imageToken, /^[0-9a-f]{32}$/);
+    const image = (n) => `\\(tabgent-image-${article.imageToken}-${n}\\)`;
+    assert.match(md, new RegExp(`!\\[Lazy figure\\]${image(0)}`));
+    assert.match(md, new RegExp(`!\\[Responsive\\]${image(1)}`));
     assert.match(
       md,
       /\[clipEmbedded\(video\.example\.test\)\]\(https:\/\/video\.example\.test\/embed\/1\)/,
@@ -242,7 +252,15 @@ function xThread() {
     assert.match(thread.markdown, /Second post in the thread/);
     assert.match(thread.markdown, /Third post in the thread/);
     assert.doesNotMatch(thread.markdown, /should not be clipped/);
-    assert.match(thread.markdown, /pbs\.twimg\.com\/media\/FIXTURE\?format=jpg&name=large/);
+    assert.deepEqual(
+      thread.images.map((image) => image.url),
+      ['https://pbs.twimg.com/media/FIXTURE?format=jpg&name=large'],
+    );
+    assert.match(
+      thread.markdown,
+      new RegExp(`!\\[Chart\\]\\(tabgent-image-${thread.imageToken}-0\\)`),
+    );
+    assert.notEqual(thread.imageToken, article.imageToken);
     assert.equal(thread.posts, 3);
     assert.deepEqual(requests, []);
     // Timelines and profiles are not clipped as articles.
@@ -294,6 +312,22 @@ function xThread() {
     const fenced = await cut(`Intro.\n\n\`\`\`js\n${'const line = 1;\n'.repeat(2000)}`, 6000);
     assert.match(fenced.markdown, /\nconst line = 1;\n?\n\`\`\`\n\n\*clipTruncated\*$/);
     assert.deepEqual(await cut('Short.', 6000), { markdown: 'Short.', truncated: false });
+    // A cap of zero or less ends at once with no text, never in a loop.
+    for (const cap of [0, -5000]) {
+      const empty = await cut('Some text.\n\nMore text.', cap);
+      assert.equal(empty.truncated, true);
+      assert(!empty.markdown.includes('text'), JSON.stringify(empty));
+    }
+    // Hundreds of uses of one long image address: the page is clipped quickly and within the
+    // limit, its text kept.
+    await open('/many-images');
+    const startedMany = Date.now();
+    const many = await run({ mode: 'page', url: 'https://clip.test/many-images' });
+    assert(Date.now() - startedMany < 20000, `took ${Date.now() - startedMany} ms`);
+    assert.equal(many.ok, true, JSON.stringify(many).slice(0, 300));
+    assert.match(many.markdown, /A paragraph about the images/);
+    assert(Buffer.byteLength(many.markdown) <= 3 * 1024 * 1024);
+    assert.equal(many.images.filter((image) => image.url).length, 1);
 
     // The prompt resolves with the chosen action; Escape cancels.
     const choice = page.evaluate(() =>

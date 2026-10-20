@@ -126,6 +126,7 @@ with tempfile.TemporaryDirectory(prefix="tabgent-clip-vault-") as directory:
             "found": 2,
             "saved": 0,
             "remote": 2,
+            "failed": [],
         }
         assert record["assets"] == [] and record["truncated"] is False
         # The machine record has the document; no highlights.md until a highlight.
