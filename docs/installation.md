@@ -22,6 +22,21 @@ Enable Developer mode and choose Load unpacked. Pin the extension, then click
 its icon to show or hide the Agent sidebar. No Chrome Web Store installation is provided by this
 repository yet.
 
+### Files from your Mac
+
+To highlight and ask about PDFs, Markdown, text and HTML files that you open in Chrome
+(for example by double-clicking them in Finder when Chrome is your default app), allow
+Tabgent to read files once:
+
+1. Open `chrome://extensions` and click **Details** under Tabgent.
+2. Turn on **Allow access to file URLs**.
+
+Chrome reloads Tabgent; files that are already open start working without a reload. The
+first time you open such a file without this setting, Tabgent opens a page with these steps
+and a button to its settings, and the sidebar shows a reminder on the file. Chrome may
+already have this setting on for an extension you loaded unpacked. To stop Tabgent reading
+local files, turn the setting off.
+
 The installer registers the native host in the standard macOS profile locations
 for Chrome, Chrome for Testing, Chromium, Edge, and Brave. Only Chrome is the
 primary tested browser. A custom browser profile may need its own native-host
@@ -92,6 +107,8 @@ not change the Tabgent installation path. `Install.command` opens
 | Sign-in is requested                                    | Complete Codex sign-in. The extension checks for the updated account state; use Retry if needed.                         |
 | The sidebar is closed on a new tab                      | Click the toolbar icon to reopen the sidebar.                                                                            |
 | A file cannot be read                                   | Check its size and format. Scanned PDFs need OCR elsewhere; this connector does not extract text from every binary file. |
+| Selecting text in a file from your Mac shows no toolbar | Turn on **Allow access to file URLs** for Tabgent (see [Files from your Mac](#files-from-your-mac)).                     |
+| A PDF from your Mac opens in Chrome's own viewer        | Turn on file access. If you chose **Open in Chrome viewer** for that tab, open the file again in a new tab.              |
 | A conversation is missing from the desktop project list | Add `~/.codex/projects/tabgent` as a project directory in the desktop app. Shared history remains in the Codex home.     |
 
 ## Uninstall

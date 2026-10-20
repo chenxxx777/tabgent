@@ -1802,6 +1802,8 @@ addWebUiListener('codex-context', (value) => {
     void reading.refresh();
   }
   $('context').hidden = !value.page;
+  // A file from the computer that Chrome does not let Tabgent read yet.
+  $('fileAccess').hidden = value.fileAccess !== false;
   // An Agent tab outlives its page: the closed page keeps its last known address.
   const name = value.page ? value.page.title || value.page.url : '';
   for (const [id, text] of [
@@ -1813,6 +1815,7 @@ addWebUiListener('codex-context', (value) => {
   }
   if (!value.page) $('contextDetails').hidePopover();
 });
+$('fileAccessOpen').onclick = () => bridge.send('openFileAccess');
 $('setupPrimary').onclick = () => {
   if ($('setup').dataset.helper === 'missing') bridge.send('helperHelp');
   else if (setupMode === 'install')

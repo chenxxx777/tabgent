@@ -5,6 +5,7 @@ import { openBook, label } from './book.js';
 import * as epubAnchor from './anchor.js';
 import * as library from './library.js';
 import { pdfViewerUrl } from '../pdf-routing.js';
+import { isLocalFileUrl } from '../local-files.js';
 
 const $ = (selector) => document.querySelector(selector);
 const COLOR = 'rgb(255 200 60)';
@@ -99,9 +100,12 @@ const host = (url) => {
     return '';
   }
 };
-// Where a vault document opens: a webpage at its URL, a PDF in the PDF.js viewer (from the
-// web, or from the vault copy of an imported file), and an EPUB in this reader.
+// Where a vault document opens: a webpage at its URL, a Markdown, text or HTML file from the
+// computer at its file:// URL, a PDF in the PDF.js viewer (from the web, or from the vault copy
+// of an imported or highlighted local file), and an EPUB in this reader.
 function destination(item) {
+  if (item.kind === 'web' && isLocalFileUrl(item.url))
+    return { label: 'libraryKindFile', href: item.url };
   if (item.kind === 'web') return { label: 'libraryKindWeb', href: web(item.url) && item.url };
   if (item.kind === 'pdf' && LOCAL_PDF.test(item.url))
     return { label: 'libraryKindLocalPdf', href: item.source && pdfViewerUrl(item.url) };
@@ -125,6 +129,21 @@ function libraryItem(item, seen) {
   entry.dataset.document = item.id;
   if (href) entry.href = href;
   else entry.title = t('libraryNoCopy');
+  // A page cannot follow a link to a file:// URL; the tabs API opens it, while Chrome lets
+  // Tabgent access file URLs.
+  if (href && isLocalFileUrl(href)) {
+    const open = (event) => {
+      if (event.button > 1) return;
+      event.preventDefault();
+      const opened =
+        event.button === 1 || event.metaKey || event.ctrlKey
+          ? chrome.tabs.create({ url: href, active: false })
+          : chrome.tabs.getCurrent().then((tab) => chrome.tabs.update(tab.id, { url: href }));
+      opened.catch(() => ($('#booksStatus').textContent = t('fileAccessNotice')));
+    };
+    entry.addEventListener('click', open);
+    entry.addEventListener('auxclick', open);
+  }
   title.className = 'title';
   title.textContent = item.title || t('epubUntitled');
   meta.className = 'meta';

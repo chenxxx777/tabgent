@@ -3,6 +3,13 @@
 (() => {
   if (globalThis.tabgentHighlightsInstalled || window.top !== window || !globalThis.CSS?.highlights)
     return;
+  // A file from the computer gets the reading layer when Chrome shows it as a text document
+  // (Markdown, plain text or HTML). A PDF there opens in Tabgent's viewer instead.
+  if (
+    location.protocol === 'file:' &&
+    !/^(?:text\/|application\/(?:xhtml\+xml|xml|json)$)/.test(document.contentType)
+  )
+    return;
   globalThis.tabgentHighlightsInstalled = true;
   const anchors = globalThis.tabgentWebAnchor,
     notes = globalThis.tabgentHighlightNote;

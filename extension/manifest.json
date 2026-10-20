@@ -18,7 +18,7 @@
     "contextMenus",
     "declarativeNetRequestWithHostAccess"
   ],
-  "host_permissions": ["http://*/*", "https://*/*"],
+  "host_permissions": ["http://*/*", "https://*/*", "file:///*"],
   "background": {
     "service_worker": "background.js",
     "type": "module"
@@ -51,7 +51,20 @@
       "run_at": "document_idle"
     },
     {
-      "matches": ["http://*/*", "https://*/*"],
+      "matches": ["file:///*"],
+      "exclude_globs": ["*/"],
+      "js": ["selection-content.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["file:///*"],
+      "exclude_globs": ["*/"],
+      "js": ["local-pdf.js"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["http://*/*", "https://*/*", "file:///*"],
+      "exclude_globs": ["file:///*/"],
       "js": ["web-anchor.js", "highlight-note.js", "highlight-content.js"],
       "css": ["highlight.css"],
       "run_at": "document_idle"
@@ -61,6 +74,10 @@
     {
       "resources": ["pdf/viewer.html"],
       "matches": ["http://*/*", "https://*/*"]
+    },
+    {
+      "resources": ["pdf/file.html"],
+      "matches": ["file:///*"]
     }
   ]
 }

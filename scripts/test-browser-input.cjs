@@ -29,6 +29,7 @@ const root = process.cwd(),
       'browser-input.js',
       'agent-pointer.js',
       'pdf-routing.js',
+      'local-files.js',
     ])
       fs.copyFileSync(root + '/extension/' + file, ext + '/' + file);
     browser = await chromium.launchPersistentContext(temp + '/profile', {

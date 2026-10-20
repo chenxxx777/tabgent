@@ -1,6 +1,15 @@
 import { cleanAnnotations } from './ui/annotations.js';
 import { createUrlHistory } from './url-history.js';
-import { startPdfRouting, pdfSource, isLocalPdf, isCurrentPdfSender } from './pdf-routing.js';
+import {
+  startPdfRouting,
+  pdfSource,
+  isLocalPdf,
+  isFilePdf,
+  filePdfUrl,
+  filePdfDocument,
+  isCurrentPdfSender,
+} from './pdf-routing.js';
+import { isLocalFileUrl, startLocalFiles, fileAccessSettingsUrl } from './local-files.js';
 import {
   registerEpubPort,
   isEpubReaderUrl,
@@ -95,6 +104,7 @@ const reading = createReadingCompanion({
   event,
   vault,
   pdfSource,
+  filePdfDocument,
   epubDocument,
   isEpubReaderUrl,
   // Highlight commands reach webpage content scripts or the EPUB reader page.
@@ -730,6 +740,14 @@ chrome.runtime.onConnect.addListener((port) => {
       }
       if (msg.name === 'helperHelp')
         await chrome.tabs.create({ url: chrome.runtime.getURL('setup.html') });
+      // The side panel's reminder on a file Tabgent cannot read yet.
+      if (msg.name === 'openFileAccess') {
+        const tab = await chrome.tabs.get(port.companionTabId).catch(() => null);
+        await chrome.tabs.create({
+          url: fileAccessSettingsUrl(),
+          ...(tab ? { windowId: tab.windowId, index: tab.index + 1 } : {}),
+        });
+      }
       if (msg.name === 'codexOpenSetupUrl') {
         const u = new URL(arg);
         if (
@@ -794,15 +812,16 @@ async function updateNote(tabId, documentId, highlightId, note) {
     if (s.tabId === tabId) for (const p of s.ports) event(p, 'codex-reading-changed');
   return { highlight: result.highlight || null };
 }
-// Highlights belong to top-level HTTP(S) documents named by Chrome's sender metadata, or to
-// the current PDF.js viewer, whose document is the original PDF URL.
+// Highlights belong to top-level HTTP(S) documents and files from the computer (file://, not
+// a directory listing) named by Chrome's sender metadata, or to the current PDF.js viewer,
+// whose document is the original PDF URL, or the file's hash for a PDF from the computer.
 async function highlightMessage(msg, sender) {
   const pdf = pdfSource(sender.url);
   if (
     !sender.tab ||
     sender.tab.incognito ||
     sender.frameId !== 0 ||
-    (!pdf && !/^https?:/.test(sender.url || ''))
+    (!pdf && !/^https?:/.test(sender.url || '') && !isLocalFileUrl(sender.url))
   )
     throw Error('Invalid highlight sender');
   const tabId = sender.tab.id;
@@ -818,12 +837,15 @@ async function highlightMessage(msg, sender) {
   if (pdf) {
     // Chrome hides extension documents from webNavigation.getFrame.
     if (!(await isCurrentPdfSender(sender))) throw Error('Stale PDF viewer');
+    // A PDF from the computer is named by the hash of the bytes its viewer read.
+    if (isFilePdf(pdf)) pageUrl = await filePdfUrl(tabId);
   } else {
     const frame = await chrome.webNavigation.getFrame({ tabId, frameId: 0 });
     if (!frame || (sender.documentId && frame.documentId !== sender.documentId))
       throw Error('Stale page');
     // sender.url keeps the load-time URL; the frame URL follows same-document (SPA) navigation.
-    pageUrl = /^https?:/.test(frame.url || '') ? frame.url : sender.url;
+    pageUrl =
+      /^https?:/.test(frame.url || '') || isLocalFileUrl(frame.url) ? frame.url : sender.url;
   }
   const url = documentUrl(pageUrl),
     kind = pdf ? 'pdf' : 'web';
@@ -1128,10 +1150,37 @@ async function pdfLocalRead(msg, sender) {
     { timeout: 60000 },
   );
 }
+// A PDF from the computer is copied into the vault once it has notes, so the library can
+// reopen it and Codex can read its pages after the file moves. The document is the hash its
+// viewer announced for this tab, never one the page names; the vault checks the bytes.
+async function pdfFileSave(msg, sender) {
+  const source = pdfSource(sender.url);
+  if (!isFilePdf(source) || !sender.tab || sender.tab.incognito || sender.frameId !== 0)
+    throw Error('Invalid PDF viewer sender');
+  if (!(await isCurrentPdfSender(sender))) throw Error('Stale PDF viewer');
+  const url = await filePdfUrl(sender.tab.id);
+  return vault.request(
+    'vault/source/save',
+    {
+      url,
+      title: pageText(msg.title, 500),
+      kind: 'pdf',
+      meta: cleanPageMeta(msg.meta),
+      sha256: url.slice('urn:sha256:'.length),
+      size: msg.size,
+      offset: msg.offset,
+      data: pageText(msg.data, 6000000),
+      name: pageText(msg.name, 255),
+    },
+    { timeout: 120000 },
+  );
+}
+// Answered in pdf-routing.js.
+const pdfRoutingMessages = new Set(['pdfFallback', 'localPdfOpen']);
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
-  if (sender.id !== chrome.runtime.id || msg.type === 'pdfFallback') return;
-  if (msg.type === 'pdfLocalRead') {
-    pdfLocalRead(msg, sender).then(reply, (e) =>
+  if (sender.id !== chrome.runtime.id || pdfRoutingMessages.has(msg.type)) return;
+  if (msg.type === 'pdfLocalRead' || msg.type === 'pdfFileSave') {
+    (msg.type === 'pdfLocalRead' ? pdfLocalRead : pdfFileSave)(msg, sender).then(reply, (e) =>
       reply({ error: e.message, code: e.code || 'error' }),
     );
     return true;
@@ -1145,10 +1194,12 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   (async () => {
     if (msg.type === 'pageSelection' || msg.type === 'pageSelectionCleared') {
       const epub = isEpubReaderUrl(sender.url);
+      // A file from the computer: its top frame only, since local frames can load other files.
+      const file = isLocalFileUrl(sender.url) && sender.frameId === 0;
       if (
         !sender.tab ||
         sender.tab.incognito ||
-        (!/^https?:/.test(sender.url || '') && !pdfSource(sender.url) && !epub) ||
+        (!/^https?:/.test(sender.url || '') && !pdfSource(sender.url) && !epub && !file) ||
         (msg.type === 'pageSelection' && (typeof msg.text !== 'string' || !msg.text.trim()))
       )
         throw Error('Invalid selection');
@@ -1497,6 +1548,9 @@ chrome.webNavigation.onCommitted.addListener(async (detail) => {
     }
   }
 });
+// Files the user opens from the computer (file://): the one-time access prompt, and files that
+// were open before Tabgent could read them.
+startLocalFiles();
 loaded.then(() => {
   connect();
   void reading.flush().catch(console.warn);
