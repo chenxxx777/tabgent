@@ -19,6 +19,12 @@ for (const file of [...walk('extension'), ...walk('scripts')]) {
     if (result.status !== 0) process.exit(result.status || 1);
   }
   if (file.endsWith('.json')) JSON.parse(fs.readFileSync(file, 'utf8'));
+  // Noncharacters and specials are invisible in diffs and tools may strip them: escape them.
+  if (/\.(?:js|cjs|mjs|json|html|css|py)$/.test(file))
+    assert(
+      !/[\uFDD0-\uFDEF\uFFF0-\uFFFF]/.test(fs.readFileSync(file, 'utf8')),
+      `Write U+FDD0-U+FDEF and U+FFF0-U+FFFF as escapes in ${file}`,
+    );
   if (file.endsWith('.py')) {
     const result = spawnSync(
       process.env.PYTHON || 'python3',
@@ -39,4 +45,6 @@ assert.equal(
   JSON.parse(fs.readFileSync('package.json')).version,
   JSON.parse(fs.readFileSync('extension/manifest.json')).version,
 );
-console.log('PASS syntax, JSON, localization references, and release version');
+console.log(
+  'PASS syntax, JSON, escaped noncharacters, localization references, and release version',
+);

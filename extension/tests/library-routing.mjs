@@ -9,7 +9,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
-import { readingContextPrefix } from '../session-config.js';
+import { pdfInfo } from '../pdf/pdf-info.js';
+import { instructions, readingContextPrefix } from '../session-config.js';
 
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'tabgent-library-'));
 const vaultPath = path.join(temp, 'ReadingVault');
@@ -469,6 +470,49 @@ try {
     !sent.some((m) => m.op === 'rpc' && m.message.method !== 'turn/start'),
     'No other Codex calls',
   );
+
+  // The import and the viewer name a PDF by its metadata title. A title with a hyphen is
+  // kept; one with a character from U+FFF0-U+FFFF (a broken decode) uses the Info title.
+  const metadataPdf = (title, Title = 'Info title') => ({
+    getMetadata: async () => ({
+      info: { Title, Author: ' A. Author ' },
+      metadata: { get: (key) => (key === 'dc:title' ? title : null) },
+    }),
+  });
+  assert.deepEqual(await pdfInfo(metadataPdf('Self-trust - a survey'), urn, 'companion.pdf'), {
+    title: 'Self-trust - a survey',
+    meta: { author: 'A. Author', siteName: '' },
+  });
+  for (const broken of ['Broken \uFFF0 title', 'Broken \uFFFF title', 'Untitled'])
+    assert.equal((await pdfInfo(metadataPdf(broken), urn, 'companion.pdf')).title, 'Info title');
+  assert.equal(
+    (await pdfInfo(metadataPdf('Broken \uFFFE', ' '), urn, 'companion.pdf')).title,
+    'companion.pdf',
+  );
+  assert.equal(
+    (await pdfInfo(metadataPdf(undefined), 'https://example.test/a.pdf', 'a.pdf')).meta.siteName,
+    'example.test',
+  );
+  assert.deepEqual(
+    await pdfInfo({ getMetadata: () => Promise.reject(Error('bad')) }, urn, 'companion.pdf'),
+    { title: 'companion.pdf', meta: {} },
+  );
+  console.log('PASS PDF titles keep hyphens and skip titles with U+FFF0-U+FFFF');
+
+  // "These links" must still follow the online-PDF #page=N&search= link guidance; the
+  // imported-PDF guidance comes after the PDF.js block and does not split it.
+  const sentences = instructions.split(/(?<=\.) /);
+  const linkNote = sentences.indexOf(
+    'These links show temporary search highlights, not saved annotations.',
+  );
+  assert.match(sentences[linkNote - 1], /^Prefer a short distinctive passage;/);
+  assert.match(sentences[linkNote - 2], /^Preserve the original query string/);
+  const importedRule = sentences.findIndex((s) => s.startsWith('A PDF imported from the user'));
+  assert(importedRule > linkNote, 'Imported-PDF guidance follows the online-PDF links');
+  assert.match(sentences[importedRule - 1], /^Native PDF selections from Quote in Agent/);
+  assert.match(sentences[importedRule + 1], /^Its text is also in the vault/);
+  assert.doesNotMatch(sentences[importedRule + 2], /^These\b/);
+  console.log('PASS imported-PDF instructions do not split the online-PDF link guidance');
 } finally {
   python.stdin.end();
   fs.rmSync(temp, { recursive: true, force: true });

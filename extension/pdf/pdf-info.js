@@ -5,7 +5,8 @@ export async function pdfInfo(pdfDocument, source, name) {
   try {
     const { info, metadata } = await pdfDocument.getMetadata();
     const value = metadata?.get('dc:title');
-    const title = value && value !== 'Untitled' && !/[￰-￿]/.test(value) ? value : info?.Title;
+    const title =
+      value && value !== 'Untitled' && !/[\uFFF0-\uFFFF]/.test(value) ? value : info?.Title;
     return {
       title: (typeof title === 'string' && title.trim()) || name,
       meta: {
