@@ -29,7 +29,12 @@ export const fileAccessSettingsUrl = () => `chrome://extensions/?id=${chrome.run
 const prompt = () => chrome.runtime.getURL('file-access.html');
 // Content scripts declared in the manifest, for files that were open before Tabgent could
 // read them. local-pdf.js hands a PDF in Chrome's viewer to Tabgent's viewer.
-const readingLayer = ['web-anchor.js', 'highlight-note.js', 'highlight-content.js'];
+const readingLayer = [
+  'web-anchor.js',
+  'user-error.js',
+  'highlight-note.js',
+  'highlight-content.js',
+];
 async function adoptOpenFiles(withText) {
   if (!(await fileAccessAllowed())) return;
   for (const tab of await chrome.tabs.query({ url: 'file:///*' })) {

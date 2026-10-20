@@ -499,7 +499,11 @@ export function createFeeds({
   // cleaned text, as the clipping script returns it for a page.
   async function saveItem(url, { result, method }) {
     const clip = cleanClip(result);
-    if (!clip) throw Error('The item has no text to save');
+    if (!clip) {
+      const error = Error('The item has no text to save');
+      error.code = 'invalid_params';
+      throw error;
+    }
     const { item: entry, source } = await item(url);
     const link = /^https?:/i.test(entry.link || '') ? entry.link : '';
     const stored = await storeClip(
@@ -523,7 +527,11 @@ export function createFeeds({
         fetch: fetchImpl,
       },
     );
-    if (!stored.ok) throw Error('The item is too long to save');
+    if (!stored.ok) {
+      const error = Error('The item is too long to save');
+      error.code = 'invalid_params';
+      throw error;
+    }
     // The page was clipped already: the item joins that document.
     await request('vault/feeds/saved', { url });
     opened.delete(url);
@@ -547,7 +555,12 @@ export function createFeeds({
       clipNotify(tabId, { type: 'feedSaved' });
       return saved;
     } catch (error) {
-      clipNotify(tabId, { type: 'feedSaveFailed', message: error?.message || String(error) });
+      clipNotify(tabId, {
+        type: 'feedSaveFailed',
+        message: error?.message || String(error),
+        ...(error?.code ? { code: error.code } : {}),
+        ...(typeof error?.folder === 'string' && error.folder ? { folder: error.folder } : {}),
+      });
       throw error;
     }
   }

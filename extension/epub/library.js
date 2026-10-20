@@ -53,7 +53,11 @@ export async function send(message, retry = true) {
     connect();
     return send(message, false);
   }
-  if (reply?.error) throw Object.assign(Error(reply.error), { code: reply.code });
+  if (reply?.error)
+    throw Object.assign(Error(reply.error), {
+      code: reply.code,
+      ...(reply.folder ? { folder: reply.folder } : {}),
+    });
   return reply;
 }
 

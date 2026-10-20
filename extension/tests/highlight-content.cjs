@@ -116,6 +116,7 @@ const assert = require('node:assert/strict'),
         },
       );
     });
+    await page.addScriptTag({ path: path.resolve(__dirname, '../user-error.js') });
     await page.addScriptTag({ path: path.resolve(__dirname, '../highlight-note.js') });
     await page.addScriptTag({ path: path.resolve(__dirname, '../highlight-content.js') });
     const painted = () => page.evaluate(() => CSS.highlights.get('tabgent-highlight').size);
@@ -583,6 +584,7 @@ const assert = require('node:assert/strict'),
       };
     });
     await prerendered.addScriptTag({ path: path.resolve(__dirname, '../web-anchor.js') });
+    await prerendered.addScriptTag({ path: path.resolve(__dirname, '../user-error.js') });
     await prerendered.addScriptTag({ path: path.resolve(__dirname, '../highlight-note.js') });
     await prerendered.addScriptTag({ path: path.resolve(__dirname, '../highlight-content.js') });
     await prerendered.waitForTimeout(500);

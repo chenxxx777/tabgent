@@ -1470,5 +1470,44 @@
   },
   "feedsSavedNotice": {
     "message": "已保存到资料库，高亮和笔记会和它保存在一起。"
+  },
+  "errorVaultUnwritable": {
+    "message": "无法写入资料库文件夹"
+  },
+  "errorVaultUnwritableFolder": {
+    "message": "无法写入文件夹“$1”"
+  },
+  "errorDiskFull": {
+    "message": "磁盘已满，无法保存"
+  },
+  "errorDiskFullFolder": {
+    "message": "磁盘已满，无法保存到“$1”"
+  },
+  "errorNotFound": {
+    "message": "找不到这条高亮或文档"
+  },
+  "errorInvalidParams": {
+    "message": "请求无效"
+  },
+  "errorInvalidHighlight": {
+    "message": "这条高亮无法使用"
+  },
+  "errorIo": {
+    "message": "无法读写资料库"
+  },
+  "errorTimeout": {
+    "message": "连接器响应超时"
+  },
+  "errorDisconnected": {
+    "message": "连接器不可用"
+  },
+  "errorHostMissing": {
+    "message": "尚未安装 Tabgent 连接器"
+  },
+  "errorInternal": {
+    "message": "出了点问题"
+  },
+  "errorGeneric": {
+    "message": "出了点问题"
   }
 }

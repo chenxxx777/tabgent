@@ -1,6 +1,7 @@
 // Reading companion: conversations bound to ReadingVault documents and highlights.
 // Pure helpers shared by the service worker and tests. They are generic over the
 // document kind, so web, PDF and EPUB readers bind conversations the same way.
+import { isDocumentId } from './document-id.js';
 import { pageContextPrefix, readingContextPrefix } from './session-config.js';
 import { normalizeUserInput } from './ui/user-input.js';
 import { documentUrl } from './vault-client.js';
@@ -24,10 +25,7 @@ export function clip(value, limit) {
 // The highlight a quoted selection was saved as, from any reader's hand-off payload.
 export function selectionHighlight(selection) {
   const value = selection?.highlight;
-  if (
-    !/^(?:article|paper|book)-[\w-]{1,160}$/.test(string(value?.documentId)) ||
-    !/^h\d{3,9}$/.test(string(value?.highlightId))
-  )
+  if (!isDocumentId(value?.documentId) || !/^h\d{3,9}$/.test(string(value?.highlightId)))
     return null;
   return { documentId: value.documentId, highlightId: value.highlightId };
 }
@@ -182,9 +180,9 @@ export function appendParams(record, threadId, turn) {
   )
     return null;
   const highlightId = reading.saving === 'highlight' ? string(reading.highlight?.id) || null : null;
-  if (reading.saving === 'highlight' && (!highlightId || !document.id)) return null;
+  if (reading.saving === 'highlight' && (!highlightId || !isDocumentId(document.id))) return null;
   return {
-    ...(document.id ? { documentId: document.id } : {}),
+    ...(isDocumentId(document.id) ? { documentId: document.id } : {}),
     url: document.url,
     title: string(document.title),
     kind: document.kind,
@@ -201,7 +199,8 @@ export function appendParams(record, threadId, turn) {
 // forked without one (for example after a browser restart cleared session state).
 export function recordedBinding(reading) {
   const document = reading?.document;
-  if (!document?.url || !documentKinds.includes(document.kind) || !document.id) return null;
+  if (!document?.url || !documentKinds.includes(document.kind) || !isDocumentId(document.id))
+    return null;
   if (reading.saving === 'highlight' && /^h\d{3,9}$/.test(string(reading.highlight?.id)))
     return {
       documentId: document.id,

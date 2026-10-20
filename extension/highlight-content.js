@@ -14,6 +14,7 @@
   const anchors = globalThis.tabgentWebAnchor,
     notes = globalThis.tabgentHighlightNote;
   const t = (key, ...values) => chrome.i18n.getMessage(key, values.map(String)) || key;
+  const shown = (error) => globalThis.tabgentExplainError?.(error, t) || t('errorGeneric');
   const paint = new Highlight(),
     focused = new Highlight();
   focused.priority = 1;
@@ -65,7 +66,11 @@
       throw error;
     }
     if (!response) throw Error('No response');
-    if (response.error) throw Object.assign(Error(response.error), { code: response.code });
+    if (response.error)
+      throw Object.assign(Error(response.error), {
+        code: response.code,
+        ...(response.folder ? { folder: response.folder } : {}),
+      });
     return response;
   }
 
@@ -467,11 +472,17 @@
         });
         observe();
       }
-      if (response.vaultError) notify(t('highlightSaveFailed', response.vaultError));
+      if (response.vaultError)
+        notify(
+          t(
+            'highlightSaveFailed',
+            shown({ code: response.code, message: response.vaultError, folder: response.folder }),
+          ),
+        );
       else if (ask && response.panelOpened === false) notify(t('highlightOpenPanel'));
     } catch (error) {
       records.delete(pending.id);
-      notify(t(ask ? 'highlightAskFailed' : 'highlightSaveFailed', error.message));
+      notify(t(ask ? 'highlightAskFailed' : 'highlightSaveFailed', shown(error)));
     }
     repaint();
     report();
@@ -494,7 +505,7 @@
       const response = await request;
       if (response.panelOpened === false) notify(t('highlightOpenPanel'));
     } catch (error) {
-      notify(t('highlightAskFailed', error.message));
+      notify(t('highlightAskFailed', shown(error)));
     }
   }
   async function remove(record) {
@@ -509,7 +520,7 @@
       });
     } catch (error) {
       // Already deleted elsewhere (another tab or the vault itself).
-      if (error.code !== 'not_found') return void notify(t('highlightDeleteFailed', error.message));
+      if (error.code !== 'not_found') return void notify(t('highlightDeleteFailed', shown(error)));
     }
     records.delete(record.highlight.id);
     if (noteTarget === record) closeEditor();

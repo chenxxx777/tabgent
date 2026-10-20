@@ -99,7 +99,10 @@
       try {
         await save(input.value.trim());
       } catch (failure) {
-        error.textContent = t('highlightNoteFailed', failure?.message || String(failure));
+        error.textContent = t(
+          'highlightNoteFailed',
+          globalThis.tabgentExplainError?.(failure, t) || t('errorGeneric'),
+        );
         error.hidden = false;
         input.focus();
       } finally {

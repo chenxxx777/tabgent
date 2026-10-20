@@ -174,6 +174,10 @@ export async function readingRequest(type, params = {}) {
     companionTabId: state.companionTabId,
     ...params,
   });
-  if (result?.error) throw Error(result.error);
+  if (result?.error)
+    throw Object.assign(Error(result.error), {
+      code: result.code,
+      ...(result.folder ? { folder: result.folder } : {}),
+    });
   return result;
 }

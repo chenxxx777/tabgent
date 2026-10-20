@@ -57,6 +57,7 @@ const quote = "endorsement of one's own actions";
     'agent-pointer.js',
     'i18n.js',
     'web-anchor.js',
+    'user-error.js',
     'highlight-note.js',
     'vault-client.js',
     'highlight.css',

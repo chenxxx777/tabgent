@@ -1470,5 +1470,44 @@
   },
   "feedsSavedNotice": {
     "message": "Saved to your library. Highlights and notes are kept with it."
+  },
+  "errorVaultUnwritable": {
+    "message": "The reading folder cannot be written"
+  },
+  "errorVaultUnwritableFolder": {
+    "message": "The folder “$1” cannot be written"
+  },
+  "errorDiskFull": {
+    "message": "The disk is full, so this could not be saved"
+  },
+  "errorDiskFullFolder": {
+    "message": "The disk is full, so “$1” could not be saved"
+  },
+  "errorNotFound": {
+    "message": "That highlight or document was not found"
+  },
+  "errorInvalidParams": {
+    "message": "That request was not valid"
+  },
+  "errorInvalidHighlight": {
+    "message": "This highlight cannot be used"
+  },
+  "errorIo": {
+    "message": "The reading folder could not be read or written"
+  },
+  "errorTimeout": {
+    "message": "The connector took too long to answer"
+  },
+  "errorDisconnected": {
+    "message": "The connector is unavailable"
+  },
+  "errorHostMissing": {
+    "message": "The Tabgent connector is not installed"
+  },
+  "errorInternal": {
+    "message": "Something went wrong"
+  },
+  "errorGeneric": {
+    "message": "Something went wrong"
   }
 }

@@ -20,6 +20,7 @@ const { chromium } = require('playwright');
     'agent-pointer.js',
     'i18n.js',
     'web-anchor.js',
+    'user-error.js',
     'highlight-note.js',
     'highlight.css',
   ])

@@ -30,6 +30,7 @@ import {
   bookUrl,
   cleanEpubAnchor,
 } from './vault-client.js';
+import { isChapterFile } from './document-id.js';
 import { createReadingCompanion } from './reading-companion.js';
 import { createClipper } from './clipper.js';
 import {
@@ -831,6 +832,11 @@ const highlightMessages = new Set([
   'highlightStatus',
 ]);
 const pageText = (value, limit) => (typeof value === 'string' ? value.slice(0, limit) : '');
+function reportedError(error) {
+  const body = { error: error?.message || String(error || ''), code: error?.code || 'error' };
+  if (typeof error?.folder === 'string' && error.folder) body.folder = error.folder;
+  return body;
+}
 // The user's own note on a saved highlight; the side panel's highlight list shows it too.
 async function updateNote(tabId, documentId, highlightId, note) {
   if (typeof note !== 'string') throw new VaultError('invalid_params', 'Invalid note');
@@ -963,7 +969,13 @@ async function highlightMessage(msg, sender) {
       document,
       highlight,
       ...(panel ? { panelOpened: await panel } : {}),
-      ...(failure ? { vaultError: failure.message, code: failure.code } : {}),
+      ...(failure
+        ? {
+            vaultError: failure.message,
+            code: failure.code,
+            ...(failure.folder ? { folder: failure.folder } : {}),
+          }
+        : {}),
     };
   }
   // Existing highlights are checked against the vault record for this page's URL.
@@ -1100,7 +1112,7 @@ async function epubMessage(msg, sender) {
     before: pageText(msg.context?.before, 2000),
     after: pageText(msg.context?.after, 2000),
   };
-  const chapterFile = /^chapters\/[^/\\]+\.md$/.test(msg.chapterFile) ? msg.chapterFile : '';
+  const chapterFile = isChapterFile(msg.chapterFile) ? msg.chapterFile : '';
   // Codex reads the chapter from the vault instead of receiving the whole book.
   const locator = (anchor, document) => ({
     kind: 'epub',
@@ -1145,7 +1157,13 @@ async function epubMessage(msg, sender) {
     return {
       document,
       highlight,
-      ...(failure ? { vaultError: failure.message, code: failure.code } : {}),
+      ...(failure
+        ? {
+            vaultError: failure.message,
+            code: failure.code,
+            ...(failure.folder ? { folder: failure.folder } : {}),
+          }
+        : {}),
     };
   }
   const resolved = await vaultRequest('vault/document/resolve', book);
@@ -1288,19 +1306,17 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   if (sender.id !== chrome.runtime.id || pdfRoutingMessages.has(msg.type)) return;
   if (msg.type === 'pdfLocalRead' || msg.type === 'pdfFileSave') {
     (msg.type === 'pdfLocalRead' ? pdfLocalRead : pdfFileSave)(msg, sender).then(reply, (e) =>
-      reply({ error: e.message, code: e.code || 'error' }),
+      reply(reportedError(e)),
     );
     return true;
   }
   if (clipMessages.has(msg.type)) {
-    clipMessage(msg, sender).then(reply, (e) =>
-      reply({ error: e.message, code: e.code || 'error' }),
-    );
+    clipMessage(msg, sender).then(reply, (e) => reply(reportedError(e)));
     return true;
   }
   if (highlightMessages.has(msg.type) || epubMessages.has(msg.type)) {
     (epubMessages.has(msg.type) ? epubMessage : highlightMessage)(msg, sender).then(reply, (e) =>
-      reply({ error: e.message, code: e.code || 'error' }),
+      reply(reportedError(e)),
     );
     return true;
   }
@@ -1310,7 +1326,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
       .then((current) =>
         current ? feeds.reader(msg, sender) : Promise.reject(Error('Invalid clipped page reader')),
       )
-      .then(reply, (e) => reply({ error: e.message, code: e.code || 'error' }));
+      .then(reply, (e) => reply(reportedError(e)));
     return true;
   }
   if (feedMessages.has(msg.type)) {
@@ -1318,7 +1334,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     (isCurrentEpubSender(sender)
       ? feeds.message(msg)
       : Promise.reject(Error('Invalid EPUB reader sender'))
-    ).then(reply, (e) => reply({ error: e.message, code: e.code || 'error' }));
+    ).then(reply, (e) => reply(reportedError(e)));
     return true;
   }
   (async () => {
@@ -1636,7 +1652,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
       await persist();
       return { conversationKey: id };
     }
-  })().then(reply, (e) => reply({ error: e.message }));
+  })().then(reply, (e) => reply(reportedError(e)));
   return true;
 });
 chrome.tabs.onRemoved.addListener(async (id) => {

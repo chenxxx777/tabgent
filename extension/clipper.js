@@ -4,6 +4,7 @@
 // vault/clip/save. The page and its clipped copy are one vault document, named by its URL.
 import { cleanPageMeta, documentUrl } from './vault-client.js';
 import { fetchImages, localizeMarkdown, uploadImages } from './clip-images.js';
+import './user-error.js';
 
 const FILES = [
   'vendor/defuddle/defuddle.js',
@@ -261,8 +262,9 @@ export function createClipper({ vault, changed = () => {}, fetch = globalThis.fe
         await say(tabId, { text: t('clipNavigated'), tone: 'error' });
         return { ok: false, reason: error.reason };
       }
-      await say(tabId, { text: t('clipSaveFailed', error?.message || ''), tone: 'error' });
-      return { ok: false, reason: 'error', message: error?.message || String(error) };
+      const detail = globalThis.tabgentExplainError?.(error, t) || t('errorGeneric');
+      await say(tabId, { text: t('clipSaveFailed', detail), tone: 'error' });
+      return { ok: false, reason: 'error', message: detail };
     } finally {
       running.delete(tabId);
     }

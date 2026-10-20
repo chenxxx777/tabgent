@@ -6,6 +6,7 @@
 // under a policy that allows no remote loads, web frames or forms.
 import DOMPurify from '../vendor/dompurify/purify.js';
 import { localize, t, loadTimeData } from '../i18n.js';
+import '../user-error.js';
 
 const { config, remote } = globalThis.tabgentClipSanitize;
 const $ = (id) => document.getElementById(id);
@@ -51,7 +52,7 @@ function connect() {
         savedNow();
         notice(t('feedsSavedNotice'));
       } else if (message?.type === 'feedSaveFailed' && feed)
-        notice(loadTimeData.getStringF('feedsSaveFailed', String(message.message || '')));
+        notice(loadTimeData.getStringF('feedsSaveFailed', shown(message)));
     }),
   );
   current.onDisconnect.addListener(() => {
@@ -76,7 +77,11 @@ async function send(message, retry = true) {
     connect();
     return send(message, false);
   }
-  if (reply?.error) throw Object.assign(Error(reply.error), { code: reply.code });
+  if (reply?.error)
+    throw Object.assign(Error(reply.error), {
+      code: reply.code,
+      ...(reply.folder ? { folder: reply.folder } : {}),
+    });
   return reply;
 }
 async function readAll(type, fields = {}) {
@@ -244,6 +249,13 @@ async function setSize(value) {
   await chrome.storage.local.set({ [SETTINGS]: { size } });
 }
 
+function shown(error) {
+  return (
+    globalThis.tabgentExplainError?.(error, (key, ...args) =>
+      args.length ? loadTimeData.getStringF(key, ...args) : t(key),
+    ) || t('errorGeneric')
+  );
+}
 function fail(message) {
   $('status').hidden = false;
   $('status').replaceChildren(message);
@@ -301,7 +313,7 @@ async function showClip() {
   try {
     loaded = await readAll('clipRead');
   } catch (error) {
-    return fail(error.code === 'not_found' ? t('clipNotFound') : error.message);
+    return fail(error.code === 'not_found' ? t('clipNotFound') : shown(error));
   }
   const { reply, bytes } = loaded;
   const clip = reply.clip;
@@ -423,7 +435,7 @@ async function show() {
   try {
     opened = await send({ type: 'feedOpen' });
   } catch (error) {
-    if (error.code !== 'not_found') return fail(error.message);
+    if (error.code !== 'not_found') return fail(shown(error));
   }
   if (opened) {
     feed = { item: opened.item, source: opened.source, saved: opened.saved };
@@ -455,7 +467,7 @@ $('delete').onclick = async () => {
     $('delete').hidden = true;
     fail(t('clipDeleted'));
   } catch (error) {
-    fail(error.message);
+    fail(shown(error));
   }
 };
 $('fullText').onclick = async () => {
@@ -478,7 +490,7 @@ $('save').onclick = async () => {
     notice(t('feedsSavedNotice'));
   } catch (error) {
     $('save').disabled = false;
-    notice(loadTimeData.getStringF('feedsSaveFailed', error.message));
+    notice(loadTimeData.getStringF('feedsSaveFailed', shown(error)));
   }
 };
 for (const state of ['later', 'archive'])
@@ -488,7 +500,7 @@ for (const state of ['later', 'archive'])
       await send({ type: 'feedState', state: next });
       pressed(next);
     } catch (error) {
-      notice(error.message);
+      notice(shown(error));
     }
   };
 const stored = (await chrome.storage.local.get(SETTINGS))[SETTINGS];

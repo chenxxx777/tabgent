@@ -28,6 +28,10 @@ const article = `<!doctype html><html><head><title>Closing Article</title>
 </head><body><h1>Spaced practice</h1>
 <p id="a">Spacing study sessions over days helps memory more than one long session.</p>
 <p id="b">Retrieval practice makes the memory durable.</p></body></html>`;
+const zhArticle = `<!doctype html><html><head><meta charset="utf-8"><title>耳夹式无线耳机体验</title>
+<style>body { font: 20px/1.6 Georgia, serif; max-width: 640px; margin: 40px auto }</style>
+</head><body><h1>耳夹式无线耳机体验</h1>
+<p id="a">耳夹式无线耳机体验比入耳式更轻，适合长时间通勤。</p></body></html>`;
 const paper = textPdf(
   [
     ['Page one of the closing paper.'],
@@ -52,7 +56,7 @@ const paper = textPdf(
   const python = process.env.PYTHON || execSync('command -v python3').toString().trim();
   const server = http.createServer((request, response) => {
     response.setHeader('content-type', 'text/html; charset=utf-8');
-    response.end(article);
+    response.end((request.url || '').startsWith('/zh/') ? zhArticle : article);
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const articleUrl = `http://127.0.0.1:${server.address().port}/articles/spacing`;
@@ -98,10 +102,12 @@ const paper = textPdf(
       headless: true,
       channel: 'chromium',
       viewport: { width: 1100, height: 900 },
+      env: { ...process.env, HOME: home, CODEX_HOME: codexHome },
       args: [
         `--disable-extensions-except=${extension}`,
         `--load-extension=${extension}`,
         '--remote-debugging-port=0',
+        '--use-mock-keychain',
       ],
     });
     context.on('page', (opened) => {
@@ -380,6 +386,25 @@ const paper = textPdf(
     assert(saved.every((turn) => turn.threadId === webThread && turn.highlightId === 'h001'));
     await closeLastAgentTab(agent, webThread);
     console.log('PASS webpage: history and highlights remain; the final Agent tab closes it');
+
+    // A Chinese title keeps the Ask AI turn on that highlight (h001), not the document.
+    const zhUrl = `http://127.0.0.1:${server.address().port}/zh/earbuds`;
+    const beforeArticles = new Set(folder('Articles'));
+    page = await context.newPage();
+    await page.goto(zhUrl);
+    await wait(1500);
+    await drag('耳夹式');
+    await press('ask');
+    const zhFolder = await until(() => folder('Articles').find((dir) => !beforeArticles.has(dir)));
+    assert(zhFolder, 'Ask AI saves the Chinese-titled highlight');
+    assert.match(path.basename(zhFolder), /^article-耳夹式无线耳机体验-[0-9a-f]{8}$/);
+    panel = await sidePanel();
+    await askInPanel(panel, '这副耳机适合通勤吗？');
+    assert(await until(() => anchors(zhFolder).turns.length === 1), 'The Chinese turn saves');
+    assert.equal(anchors(zhFolder).turns[0].highlightId, 'h001');
+    panel.close();
+    await page.close();
+    console.log('PASS Chinese title: Ask AI binds the turn to h001');
 
     // --- An imported PDF: the same after its viewer tab closes, reading its vault pages.
     page = await context.newPage();

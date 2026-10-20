@@ -1,0 +1,267 @@
+"""Unicode document ids, and the same accept/reject rules in Python and JavaScript."""
+
+import errno
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+import tempfile
+from unittest.mock import patch
+
+NATIVE = Path(__file__).resolve().parents[1] / "native"
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(NATIVE))
+import vault
+
+
+def call(settings, method, params):
+    reply = vault.handle(settings, method, params)
+    assert set(reply) == {"result"}, (method, reply)
+    return reply["result"]
+
+
+def web_anchor(exact):
+    return {
+        "kind": "web",
+        "quote": {"exact": exact, "prefix": "", "suffix": ""},
+        "position": {"start": 0, "end": len(exact)},
+    }
+
+
+JS = r"""
+import { isChapterFile, isDocumentId } from './extension/document-id.js';
+const payload = JSON.parse(await new Promise((resolve) => {
+  let data = '';
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', (chunk) => (data += chunk));
+  process.stdin.on('end', () => resolve(data));
+}));
+const bad = [];
+for (const id of payload.accept) if (!isDocumentId(id)) bad.push(['accept', id]);
+for (const id of payload.reject) if (isDocumentId(id)) bad.push(['reject', id]);
+for (const file of payload.chapters) if (!isChapterFile(file)) bad.push(['chapter', file]);
+for (const file of payload.badChapters) if (isChapterFile(file)) bad.push(['badChapter', file]);
+if (bad.length) {
+  console.error(JSON.stringify(bad));
+  process.exit(1);
+}
+"""
+
+SLUGS = {
+    "耳夹式无线耳机体验": "耳夹式无线耳机体验",
+    "TDS REVIEW｜vivo Buds Clip 耳夹式无线耳机体验 - 少数派": (
+        "tds-review-vivo-buds-clip-耳夹式无线耳机体验-少数派"
+    ),
+    "こんにちは世界": "こんにちは世界",
+    "Hello 🎉 World": "hello-world",
+    "📚読書": "読書",
+    "Mixed 中文 and 日本語 😀": "mixed-中文-and-日本語",
+    "a/b\\c..d": "a-b-c-d",
+    "   ": "",
+    "—": "",
+}
+for title, slug in SLUGS.items():
+    assert vault._slug(title) == slug, (title, vault._slug(title))
+assert vault._slug("文" * 80) == "文" * vault.SLUG_MAX
+
+with tempfile.TemporaryDirectory(prefix="tabgent-document-id-") as directory:
+    base = Path(directory)
+    settings = base / "codex/vault.json"
+    default = base / "ReadingVault"
+    with patch.object(vault, "default_path", lambda: default):
+        made = []
+        cases = [
+            ("web", "https://example.test/earbuds", "耳夹式无线耳机体验"),
+            (
+                "web",
+                "https://sspai.test/buds",
+                "TDS REVIEW｜vivo Buds Clip 耳夹式无线耳机体验 - 少数派",
+            ),
+            ("web", "https://example.test/ja", "こんにちは世界"),
+            ("web", "https://example.test/emoji", "Hello 🎉 World"),
+            ("web", "https://example.test/book-emoji", "📚読書"),
+            ("web", "https://example.test/mix", "Mixed 中文 and 日本語 😀"),
+            ("pdf", "https://example.test/paper.pdf", "动机研究"),
+            ("epub", "https://example.test/book.epub", "第一章 开始"),
+            ("web", "https://example.test/long", "文" * 80),
+        ]
+        prefix = {"web": "article", "pdf": "paper", "epub": "book"}
+        for kind, url, title in cases:
+            ident = call(
+                settings,
+                "vault/document/resolve",
+                {"url": url, "title": title, "kind": kind},
+            )["document"]["id"]
+            slug = vault._slug(title) or "untitled"
+            assert re.fullmatch(
+                rf"{prefix[kind]}-{re.escape(slug)}-[0-9a-f]{{8}}", ident
+            ), ident
+            assert vault.DOCUMENT_ID.fullmatch(ident), ident
+            assert "🎉" not in ident and "📚" not in ident and "😀" not in ident
+            made.append(ident)
+        assert re.fullmatch(r"article-耳夹式无线耳机体验-[0-9a-f]{8}", made[0])
+        long_slug = made[-1][len("article-") :].rsplit("-", 1)[0]
+        assert long_slug == "文" * vault.SLUG_MAX
+
+        rounds = [
+            (
+                "web",
+                "https://example.test/zh-note",
+                "耳夹式无线耳机体验",
+                web_anchor("耳夹"),
+                "耳夹",
+            ),
+            (
+                "pdf",
+                "https://example.test/zh.pdf",
+                "动机研究",
+                {"kind": "pdf", "page": 1, "quote": {"exact": "动机"}},
+                "动机",
+            ),
+            (
+                "epub",
+                "urn:sha256:" + "ab" * 32,
+                "第一章 开始",
+                {
+                    "kind": "epub",
+                    "cfi": "epubcfi(/6/2!/4/2)",
+                    "quote": {"exact": "开始"},
+                },
+                "开始",
+            ),
+        ]
+        for kind, url, title, anchor, text in rounds:
+            created = call(
+                settings,
+                "vault/highlight/create",
+                {
+                    "url": url,
+                    "title": title,
+                    "kind": kind,
+                    "text": text,
+                    "anchor": anchor,
+                },
+            )
+            ident = created["document"]["id"]
+            assert created["highlight"]["id"] == "h001", ident
+            assert ident.startswith(prefix[kind] + "-"), ident
+            noted = call(
+                settings,
+                "vault/highlight/update",
+                {"documentId": ident, "highlightId": "h001", "note": "笔记"},
+            )
+            assert noted["highlight"]["note"] == "笔记"
+            call(
+                settings,
+                "vault/discussion/append",
+                {
+                    "documentId": ident,
+                    "highlightId": "h001",
+                    "threadId": "thread-zh",
+                    "turnId": "turn-zh",
+                    "user": "问题",
+                    "assistant": "回答",
+                },
+            )
+            stored = json.loads(
+                (Path(created["document"]["folder"]) / "anchors.json").read_text()
+            )
+            assert stored["turns"][0]["highlightId"] == "h001"
+            assert stored["highlights"][0]["note"] == "笔记"
+            made.append(ident)
+        print("PASS Unicode titles make document ids and bind notes and discussions")
+
+        rejected = [
+            "article-a/b",
+            "article-a\\b",
+            "article-..",
+            "article-a b",
+            "article-" + "a" * 161,
+            "article-" + "中" * 161,
+            "../article-ok",
+            "article-hello-🎉-abcd1234",
+            "article-",
+            "paper-hello world",
+        ]
+        for bad in rejected:
+            reply = vault.handle(settings, "vault/highlights/list", {"documentId": bad})
+            assert reply["error"]["code"] == "invalid_params", bad
+            assert "/" not in reply["error"]["message"], reply
+            assert "\\" not in reply["error"]["message"], reply
+        accepted = made + [
+            "article-" + "a" * 160,
+            "article-" + "中" * 160,
+            "book-こんにちは世界-abcdef12",
+            "paper-mixed-中文-and-日本語-0123abcd",
+            "article-a_b-0123abcd",
+        ]
+        for ident in accepted:
+            assert vault.DOCUMENT_ID.fullmatch(ident), ident
+        for bad in rejected:
+            assert vault.DOCUMENT_ID.fullmatch(bad) is None, bad
+        chapters = [
+            "chapters/01-chapter-one.md",
+            "chapters/01-第一章.md",
+            "chapters/02-こんにちは.md",
+            "chapters/99-linked.md",
+        ]
+        bad_chapters = [
+            "chapters/1-a.md",
+            "chapters/01-chapter one.md",
+            "chapters/01-a/b.md",
+            "chapters/01-..md",
+            "chapters/notes.md",
+            "01-chapter-one.md",
+        ]
+        for file in chapters:
+            assert vault.CHAPTER_FILE.fullmatch(file.split("/", 1)[1]), file
+        for file in bad_chapters:
+            if not file.startswith("chapters/"):
+                continue
+            assert vault.CHAPTER_FILE.fullmatch(file.split("/", 1)[1]) is None, file
+        payload = json.dumps(
+            {
+                "accept": accepted,
+                "reject": rejected,
+                "chapters": chapters,
+                "badChapters": bad_chapters,
+            }
+        )
+        compared = subprocess.run(
+            ["node", "--input-type=module", "-e", JS],
+            input=payload,
+            text=True,
+            cwd=ROOT,
+            capture_output=True,
+            check=False,
+        )
+        assert compared.returncode == 0, compared.stderr or compared.stdout
+        print("PASS JavaScript and Python accept the same document ids")
+
+        if os.geteuid() != 0:
+            locked = base / "locked"
+            locked.mkdir()
+            locked.chmod(0o500)
+            try:
+                reply = vault.handle(
+                    settings, "vault/configure", {"path": str(locked / "V")}
+                )
+            finally:
+                locked.chmod(0o755)
+            assert reply["error"]["code"] == "vault_unwritable", reply
+            assert "/" not in reply["error"]["message"], reply
+            assert "Permission denied" not in reply["error"]["message"]
+            assert ".." not in reply["error"].get("folder", "")
+        full = base / "full-disk"
+        error = OSError(errno.ENOSPC, "No space left on device")
+        error.filename = str(full / "Articles")
+        with patch.object(Path, "mkdir", side_effect=error):
+            reply = vault.handle(settings, "vault/configure", {"path": str(full)})
+        assert reply["error"]["code"] == "disk_full", reply
+        assert reply["error"]["folder"] == "Articles", reply
+        assert str(full) not in reply["error"]["message"]
+        assert "/" not in reply["error"]["message"]
+        assert "No space" not in reply["error"]["message"]
+        print("PASS folder errors name a folder and hide the path")

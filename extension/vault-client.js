@@ -34,14 +34,14 @@ export function createVaultClient(connect, { timeout = 15000 } = {}) {
     if (!entry) return true;
     pending.delete(message.id);
     clearTimeout(entry.timer);
-    if (message.error)
-      entry.reject(
-        new VaultError(
-          String(message.error.code || 'io_error'),
-          String(message.error.message || 'Vault request failed'),
-        ),
+    if (message.error) {
+      const error = new VaultError(
+        String(message.error.code || 'io_error'),
+        String(message.error.message || 'Vault request failed'),
       );
-    else entry.resolve(message.result ?? {});
+      if (typeof message.error.folder === 'string') error.folder = message.error.folder;
+      entry.reject(error);
+    } else entry.resolve(message.result ?? {});
     return true;
   }
   function disconnect(reason = '') {
