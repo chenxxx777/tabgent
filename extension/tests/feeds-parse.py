@@ -189,6 +189,11 @@ def test_limits_and_encodings():
         b"<rss><channel>" + b"<item/>" * (feeds.ELEMENT_LIMIT + 1) + b"</channel></rss>"
     )
     expect_error(lambda: feeds.parse(many), "too many")
+    # Tens of thousands of siblings separated by text: parsing stays linear.
+    started = time.monotonic()
+    wide = b"<rss><channel><title>t</title>" + b"<x/>\n" * 90_000 + b"</channel></rss>"
+    assert feeds.parse(wide)["title"] == "t"
+    assert time.monotonic() - started < 5, time.monotonic() - started
     deep = b"<rss>" + b"<a>" * 200 + b"</a>" * 200 + b"</rss>"
     expect_error(lambda: feeds.parse(deep), "nested")
     expect_error(lambda: feeds.parse(b"<html><body>no</body></html>"), "Not an RSS")
@@ -226,6 +231,11 @@ def test_keys_and_dates():
     assert (
         feeds.identity("https://a.example/p?a=1&utm_medium=x&fbclid=y#f")
         == "https://a.example/p?a=1"
+    )
+    # Other parameters stay exactly as written.
+    assert (
+        feeds.identity("https://a.example/p?a&b=%20+c&UTM_Source=x&d=%2F")
+        == "https://a.example/p?a&b=%20+c&d=%2F"
     )
 
 

@@ -362,8 +362,12 @@ export function createFeeds({
     const list = Array.isArray(outlines) ? outlines.slice(0, 500) : [];
     for (const [index, outline] of list.entries()) {
       try {
+        // Normalized as addresses typed in the library are, so an OPML entry that differs
+        // only in case or encoding is the same subscription.
+        const url = feedAddress(outline?.url);
+        if (!url) throw Error('Not a web address');
         const result = await request('vault/feeds/subscribe', {
-          url: text(outline?.url, 4096),
+          url,
           title: text(outline?.title, 500),
           category: text(outline?.category, 200),
           siteUrl: text(outline?.siteUrl, 4096),

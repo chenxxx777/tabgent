@@ -740,7 +740,10 @@ def handle(message):
     op = message.get("op")
     if op == "vault":
         # Local files only: independent of warm config, sessions and the app-server.
-        if message.get("method") in feeds.PARSE_ONLY | feeds.PARSING:
+        method = message.get("method")
+        # Only a string can name a feed method; anything else goes to vault.handle,
+        # which refuses it.
+        if isinstance(method, str) and method in feeds.PARSE_ONLY | feeds.PARSING:
             FEED_POOL.submit(feed_request, message)
         else:
             VAULT_POOL.submit(vault_request, message)

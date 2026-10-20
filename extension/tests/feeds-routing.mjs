@@ -100,6 +100,12 @@ const respond = (data, headers = {}, status = 200, url) => {
   };
 };
 
+// A temporary vault: the personal ~/ReadingVault is never used, and is checked unchanged.
+const vaultPath = path.join(temp, 'ReadingVault');
+const personal = path.join(os.homedir(), 'ReadingVault', '.tabgent', 'feeds.db');
+const personalBefore = fs.existsSync(personal) ? fs.statSync(personal).mtimeMs : null;
+await request('vault/configure', { path: vaultPath });
+
 try {
   // Helpers.
   assert.equal(feedAddress('example.test/feed#x'), 'https://example.test/feed');
@@ -318,9 +324,10 @@ try {
     });
   const imported = await feeds.message({
     type: 'feedsImport',
-    outlines: [...outlines, { url: 'x' }],
+    // Not a web address; and one that differs from a subscription only in case.
+    outlines: [...outlines, { url: 'ftp://files.test/x' }, { url: 'HTTPS://FEED.TEST/a.xml' }],
   });
-  assert.deepEqual(imported, { created: 12, existing: 0, failed: 1 });
+  assert.deepEqual(imported, { created: 12, existing: 1, failed: 1 });
   // The import starts a run for the first ten; two wait a minute.
   await until(async () => (await request('vault/feeds/items', {})).total === 13);
   assert.ok(maxInFlight <= FEED_LIMIT.parallel, `at most 3 at once (${maxInFlight})`);
@@ -530,6 +537,15 @@ try {
   assert.equal(alarms.size, 0);
   await assert.rejects(feeds.message({ type: 'feedsNope' }), /Unknown subscription message/);
   console.log('PASS unsubscribing the last feed stops the schedule');
+  assert(
+    fs.existsSync(path.join(vaultPath, '.tabgent', 'feeds.db')),
+    'The temporary vault is used',
+  );
+  assert.equal(
+    fs.existsSync(personal) ? fs.statSync(personal).mtimeMs : null,
+    personalBefore,
+    'The personal ReadingVault is not touched',
+  );
 } finally {
   python.stdin.end();
   fs.rmSync(temp, { recursive: true, force: true });
