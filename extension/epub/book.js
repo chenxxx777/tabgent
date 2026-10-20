@@ -25,6 +25,22 @@ export async function openBook(file) {
   }).init();
   if (!book.sections?.length) throw Error('The book has no readable sections');
   disableScripts(book);
+  // Chromium's automatic JS optimizer policy can isolate extension blob navigations
+  // in a separate renderer. srcdoc inherits the reader's context, so foliate can
+  // measure the chapter and attach selections/overlays without browser flags.
+  for (const section of book.sections) {
+    const load = section.load;
+    section.load = async () => {
+      const url = await load();
+      if (!url) throw Error('The chapter has no readable content');
+      const response = await fetch(url);
+      if (!response.ok) throw Error('The chapter could not be read');
+      const type = response.headers.get('content-type')?.split(';')[0];
+      if (type?.startsWith('image/') && type !== 'image/svg+xml')
+        return { srcdoc: `<!doctype html><html><body><img src="${url}"></body></html>` };
+      return { srcdoc: chapterHtml(await response.text(), type) };
+    };
+  }
   return book;
 }
 
@@ -67,7 +83,9 @@ export function neutralize(markup, type) {
   }
   // Only head elements are removed, so body CFIs are unchanged.
   for (const meta of doc.querySelectorAll('head meta[http-equiv]')) meta.remove();
-  return new XMLSerializer().serializeToString(doc);
+  return type === 'text/html'
+    ? doc.documentElement.outerHTML
+    : new XMLSerializer().serializeToString(doc);
 }
 
 // Metadata values may be strings, language maps or contributor objects.
@@ -77,4 +95,25 @@ export function label(value) {
   if (Array.isArray(value)) return value.map(label).filter(Boolean).join(', ');
   if (value.name) return label(value.name);
   return label(Object.values(value)[0]);
+}
+
+// srcdoc is HTML. Serialize an HTML-owned tree so empty XHTML elements such as
+// <script/> and <div/> receive end tags instead of swallowing the following text.
+function chapterHtml(markup, type) {
+  const parsed = new DOMParser().parseFromString(markup, MARKUP.has(type) ? type : 'text/html');
+  if (parsed.querySelector('parsererror')) throw Error('The chapter contains invalid markup');
+  const html = document.implementation.createHTMLDocument();
+  if (parsed.documentElement.localName === 'svg') {
+    const svg = html.importNode(parsed.documentElement, true);
+    const [, , width, height] = svg.getAttribute('viewBox')?.split(/[\s,]+/) || [];
+    const viewport = html.createElement('meta');
+    viewport.name = 'viewport';
+    viewport.content = `width=${width || 1000},height=${height || 1000}`;
+    html.head.append(viewport);
+    html.body.style.margin = '0';
+    html.body.append(svg);
+  } else html.replaceChild(html.importNode(parsed.documentElement, true), html.documentElement);
+  // HTML raw-text parsing can expose markup that was text in the XHTML tree.
+  // Sanitize the final HTML tree as well, then use its HTML serializer.
+  return '<!doctype html>\n' + neutralize(html.documentElement.outerHTML, 'text/html');
 }

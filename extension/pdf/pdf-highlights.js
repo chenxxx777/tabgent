@@ -35,7 +35,8 @@ async function send(message) {
   return response;
 }
 
-export async function startHighlights({ app, frame, source, name }) {
+// onDocument runs whenever the PDF has a saved vault document (notes or a saved turn).
+export async function startHighlights({ app, frame, source, name, onDocument }) {
   const win = frame.contentWindow,
     doc = frame.contentDocument;
   if (!win.CSS?.highlights || !win.Highlight) return;
@@ -529,6 +530,7 @@ export async function startHighlights({ app, frame, source, name }) {
       if (response.highlight) {
         // A write returns the saved document; its ID replaces any provisional one.
         if (response.document?.id) documentId = response.document.id;
+        if (response.document?.createdAt) onDocument?.();
         records.set(response.highlight.id, {
           highlight: response.highlight,
           segments,
@@ -660,6 +662,7 @@ export async function startHighlights({ app, frame, source, name }) {
     attempts = 0;
     // An unsaved document has a provisional ID (createdAt null) that may still change.
     documentId = response.document?.createdAt ? response.document.id : null;
+    if (documentId) onDocument?.();
     // A refresh keeps restored highlights (and an open popover) whose anchor is unchanged.
     const previous = records;
     records = new Map();

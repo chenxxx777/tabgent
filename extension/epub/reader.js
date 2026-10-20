@@ -5,6 +5,7 @@ import { openBook, label } from './book.js';
 import * as epubAnchor from './anchor.js';
 import * as library from './library.js';
 import { pdfViewerUrl } from '../pdf-routing.js';
+import { isLocalFileUrl } from '../local-files.js';
 
 const $ = (selector) => document.querySelector(selector);
 const COLOR = 'rgb(255 200 60)';
@@ -63,6 +64,7 @@ addEventListener('drop', (event) => {
   void openFile(event.dataTransfer?.files?.[0]);
 });
 $('#library').onclick = () => {
+  acceptedFile = ++fileChoice;
   opening++;
   status('');
   closeBook();
@@ -98,9 +100,12 @@ const host = (url) => {
     return '';
   }
 };
-// Where a vault document opens: a webpage at its URL, a PDF in the PDF.js viewer (from the
-// web, or from the vault copy of an imported file), and an EPUB in this reader.
+// Where a vault document opens: a webpage at its URL, a Markdown, text or HTML file from the
+// computer at its file:// URL, a PDF in the PDF.js viewer (from the web, or from the vault copy
+// of an imported or highlighted local file), and an EPUB in this reader.
 function destination(item) {
+  if (item.kind === 'web' && isLocalFileUrl(item.url))
+    return { label: 'libraryKindFile', href: item.url };
   if (item.kind === 'web') return { label: 'libraryKindWeb', href: web(item.url) && item.url };
   if (item.kind === 'pdf' && LOCAL_PDF.test(item.url))
     return { label: 'libraryKindLocalPdf', href: item.source && pdfViewerUrl(item.url) };
@@ -124,6 +129,21 @@ function libraryItem(item, seen) {
   entry.dataset.document = item.id;
   if (href) entry.href = href;
   else entry.title = t('libraryNoCopy');
+  // A page cannot follow a link to a file:// URL; the tabs API opens it, while Chrome lets
+  // Tabgent access file URLs.
+  if (href && isLocalFileUrl(href)) {
+    const open = (event) => {
+      if (event.button > 1) return;
+      event.preventDefault();
+      const opened =
+        event.button === 1 || event.metaKey || event.ctrlKey
+          ? chrome.tabs.create({ url: href, active: false })
+          : chrome.tabs.getCurrent().then((tab) => chrome.tabs.update(tab.id, { url: href }));
+      opened.catch(() => ($('#booksStatus').textContent = t('fileAccessNotice')));
+    };
+    entry.addEventListener('click', open);
+    entry.addEventListener('auxclick', open);
+  }
   title.className = 'title';
   title.textContent = item.title || t('epubUntitled');
   meta.className = 'meta';
@@ -148,16 +168,28 @@ function libraryItem(item, seen) {
 // Each open (or a return to the library) supersedes the ones still loading, which stop
 // at their next step so two books never share the reader state or an upload.
 let opening = 0;
+let fileChoice = 0,
+  acceptedFile = 0;
 
 async function openFile(file) {
   if (!file) return;
+  const choice = ++fileChoice;
   // An EPUB is a ZIP archive; a PDF has %PDF- in its first 1024 bytes. Other files are
   // refused without cancelling a book still opening.
   const head = new Uint8Array(await file.slice(0, 1024).arrayBuffer());
   if (head[0] !== 0x50 || head[1] !== 0x4b) {
-    if (new TextDecoder('latin1').decode(head).includes('%PDF-')) return openPdf(file);
+    if (new TextDecoder('latin1').decode(head).includes('%PDF-')) {
+      if (file.size > PDF_LIMIT) return openPdf(file);
+      if (choice < acceptedFile) return;
+      acceptedFile = choice;
+      return openPdf(file);
+    }
     return toast(t('libraryNotSupported'));
   }
+  // Header reads can finish out of order. A later accepted file still wins,
+  // while an unsupported drop does not cancel a valid file being opened.
+  if (choice < acceptedFile) return;
+  acceptedFile = choice;
   const token = ++opening;
   const bytes = new Uint8Array(await file.arrayBuffer());
   if (token !== opening) return;
@@ -203,6 +235,7 @@ async function openPdf(file) {
   }
 }
 async function openFromVault(documentId) {
+  acceptedFile = ++fileChoice;
   const token = ++opening;
   status(loadTimeData.getStringF('epubLoadingVault', ''));
   try {
@@ -256,57 +289,89 @@ async function importIntoVault(bytes, name, sha256) {
 
 async function showBook(file, sha256, token) {
   status(t('epubLoading'));
-  let book;
   try {
-    book = await openBook(file);
+    const book = await openBook(file);
+    if (token !== opening) {
+      book.destroy();
+      return false;
+    }
+    state.book = book;
+    state.sha256 = sha256;
+    state.title = label(book.metadata?.title) || file.name.replace(/\.epub$/i, '');
+    const author = label(book.metadata?.author);
+    state.meta = author ? { author } : {};
+    library.announce({ sha256, title: state.title });
+    document.title = state.title;
+    $('#bookTitle').textContent = state.title;
+    $('#start').hidden = true;
+    $('#viewer').hidden = $('#footer').hidden = $('#reading').hidden = false;
+    $('#contentsButton').disabled = false;
+    const view = document.createElement('foliate-view');
+    state.view = view;
+    $('#book').replaceChildren(view);
+    // A closed view can still finish loading; only the current view updates the reader.
+    const on = (name, handler) =>
+      view.addEventListener(name, (event) => state.view === view && handler(event));
+    on('load', onSectionLoad);
+    on('load-error', ({ detail }) => void bookFailed(detail));
+    view.addEventListener('link', (event) => {
+      event.preventDefault();
+      if (state.view === view) void navigate((view) => view.goTo(event.detail.href));
+    });
+    on('relocate', onRelocate);
+    // foliate attaches the chapter's overlayer just after this event; paint a microtask later.
+    on('create-overlay', ({ detail }) => queueMicrotask(() => paintSection(detail.index)));
+    on('draw-annotation', ({ detail }) => detail.draw(Overlayer.highlight, { color: COLOR }));
+    on('show-annotation', ({ detail }) => showHighlightMenu(detail));
+    view.addEventListener('external-link', (event) => {
+      event.preventDefault();
+      const href = event.detail.a.getAttribute('href') || '';
+      if (state.view === view && /^(?:https?|mailto):/i.test(href))
+        open(href, '_blank', 'noopener');
+    });
+    const highlights = loadHighlights(view);
+    await view.open(book);
+    if (state.view !== view) return false;
+    applySettings();
+    buildToc(book.toc || []);
+    const saved = await library.position(sha256);
+    await highlights;
+    if (state.view !== view) return false;
+    await view.init({ lastLocation: saved?.cfi, showTextStart: !saved?.cfi });
+    if (state.view !== view) return false;
+    status('');
+    void verifyAll();
+    return true;
   } catch (error) {
     if (token !== opening) return false;
-    status('');
-    failure('epubOpenFailed', error);
+    await bookFailed(error);
     return false;
   }
-  if (token !== opening) return false;
-  state.book = book;
-  state.sha256 = sha256;
-  state.title = label(book.metadata?.title) || file.name.replace(/\.epub$/i, '');
-  const author = label(book.metadata?.author);
-  state.meta = author ? { author } : {};
-  library.announce({ sha256, title: state.title });
-  document.title = state.title;
-  $('#bookTitle').textContent = state.title;
-  $('#start').hidden = true;
-  $('#viewer').hidden = $('#footer').hidden = $('#reading').hidden = false;
-  $('#contentsButton').disabled = false;
-  const view = document.createElement('foliate-view');
-  state.view = view;
-  $('#book').replaceChildren(view);
-  // A closed view can still finish loading; only the current view updates the reader.
-  const on = (name, handler) =>
-    view.addEventListener(name, (event) => state.view === view && handler(event));
-  on('load', onSectionLoad);
-  on('relocate', onRelocate);
-  // foliate attaches the chapter's overlayer just after this event; paint a microtask later.
-  on('create-overlay', ({ detail }) => queueMicrotask(() => paintSection(detail.index)));
-  on('draw-annotation', ({ detail }) => detail.draw(Overlayer.highlight, { color: COLOR }));
-  on('show-annotation', ({ detail }) => showHighlightMenu(detail));
-  view.addEventListener('external-link', (event) => {
-    event.preventDefault();
-    const href = event.detail.a.getAttribute('href') || '';
-    if (state.view === view && /^(?:https?|mailto):/i.test(href)) open(href, '_blank', 'noopener');
-  });
-  const highlights = loadHighlights(view);
-  await view.open(book);
-  if (state.view !== view) return false;
-  applySettings();
-  buildToc(book.toc || []);
-  const saved = await library.position(sha256);
-  await highlights;
-  if (state.view !== view) return false;
-  await view.init({ lastLocation: saved?.cfi, showTextStart: !saved?.cfi });
-  if (state.view !== view) return false;
-  status('');
-  void verifyAll();
-  return true;
+}
+
+async function bookFailed(error) {
+  if (error?.name === 'AbortError') return;
+  opening++; // Invalidate pending initialization before closing its renderer.
+  const message = loadTimeData.getStringF('epubOpenFailed', error?.message || error);
+  closeBook();
+  history.replaceState(null, '', location.pathname);
+  status(message); // Persist the error beside the picker, so the user can retry.
+  toast(message);
+  await showLibrary();
+}
+
+async function navigate(action) {
+  const view = state.view;
+  if (!view) return false;
+  try {
+    await action(view);
+    return state.view === view;
+  } catch (error) {
+    // Renderer load errors use load-error, including foliate's internal turns.
+    // A stale target or cancelled navigation must not close a readable book.
+    if (error?.name !== 'AbortError') console.warn(error);
+    return false;
+  }
 }
 
 function closeBook() {
@@ -374,9 +439,9 @@ $('#larger').onclick = () =>
   changeSettings({ fontSize: Math.min(200, state.settings.fontSize + 10) });
 $('#flow').onclick = () =>
   changeSettings({ flow: state.settings.flow === 'scrolled' ? 'paginated' : 'scrolled' });
-$('#prev').onclick = () => state.view?.goLeft();
-$('#next').onclick = () => state.view?.goRight();
-$('#progress').oninput = () => state.view?.goToFraction(Number($('#progress').value));
+$('#prev').onclick = () => navigate((view) => view.goLeft());
+$('#next').onclick = () => navigate((view) => view.goRight());
+$('#progress').oninput = () => navigate((view) => view.goToFraction(Number($('#progress').value)));
 
 function onKey(event) {
   if (!state.view || event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey)
@@ -394,8 +459,10 @@ function onKey(event) {
   if (event.target?.closest?.('input, textarea, [contenteditable], #drawer, .floating')) return;
   if (event.key === 'Escape') return void hideFloating();
   const paged = state.settings.flow !== 'scrolled';
-  if (event.key === 'ArrowLeft' || (paged && event.key === 'PageUp')) state.view.goLeft();
-  else if (event.key === 'ArrowRight' || (paged && event.key === 'PageDown')) state.view.goRight();
+  if (event.key === 'ArrowLeft' || (paged && event.key === 'PageUp'))
+    void navigate((view) => view.goLeft());
+  else if (event.key === 'ArrowRight' || (paged && event.key === 'PageDown'))
+    void navigate((view) => view.goRight());
   else return;
   event.preventDefault();
 }
@@ -430,7 +497,7 @@ function buildToc(items, parent = $('#toc')) {
     button.textContent = item.label?.trim() || t('epubUntitled');
     button.dataset.href = item.href || '';
     button.disabled = !item.href;
-    button.onclick = () => void state.view?.goTo(item.href);
+    button.onclick = () => void navigate((view) => view.goTo(item.href));
     li.append(button);
     if (item.subitems?.length) {
       const ol = document.createElement('ol');
@@ -503,7 +570,7 @@ function renderHighlightList() {
     button.append(meta);
     button.onclick = () => {
       if (entry.status === 'unanchored') return toast(t('epubUnanchoredHint'));
-      void state.view?.goTo(entry.cfi || entry.record.anchor.cfi);
+      void navigate((view) => view.goTo(entry.cfi || entry.record.anchor.cfi));
     };
     button.dataset.highlight = id;
     li.append(button);
@@ -918,8 +985,7 @@ library.handleCommands(async (command) => {
   const href = entry.record.anchor?.chapter?.href || '';
   if (command.action === 'jump') {
     if (entry.status === 'unanchored') return { found: false };
-    await state.view.goTo(entry.cfi || entry.record.anchor.cfi);
-    return { found: true };
+    return { found: await navigate((view) => view.goTo(entry.cfi || entry.record.anchor.cfi)) };
   }
   if (command.action !== 'context') throw Error('Unknown command');
   const index = state.book.sections.findIndex((section) => section.id === href);

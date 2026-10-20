@@ -16,6 +16,7 @@ for (const file of [
   'pdf-reading-routing.mjs',
   'library-routing.mjs',
   'clip-routing.mjs',
+  'local-file-routing.mjs',
   'attachments.py',
   'local-files.py',
   'vault.py',
