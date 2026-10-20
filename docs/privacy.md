@@ -108,10 +108,11 @@ only when you download the edited PDF.
 A PDF you choose or drop in the library is copied into the vault as
 `Books/paper-*/original.pdf`, with `source.json` recording its file name, size, SHA-256
 and import time, so it can be reopened later without the original file. The text of
-each page is saved beside it in `pages/NNN.md` (read locally with macOS PDFKit), so Codex
-can search and read the paper on request. Its notes name it `urn:sha256:<hash>` instead
-of a URL. Opening it does not send it to Codex. Delete the folder to remove it.
-The library lists the vault's documents locally; nothing is uploaded.
+each page is saved beside it in `pages/NNN.md` (read locally with macOS PDFKit; on other
+systems no page text is saved), so Codex can search and read the paper on request. Its
+notes name it `urn:sha256:<hash>` instead of a URL. Opening it does not send it to
+Codex. Delete the folder to remove it. The library lists the vault's documents locally;
+nothing is uploaded.
 
 The EPUB reader renders books locally in an extension page with book scripts and
 remote resources blocked. Opening a book copies it into the reading vault, with its
