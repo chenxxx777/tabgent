@@ -901,6 +901,114 @@ def save_clip_asset(settings, params):
     return {"complete": True, "received": size}
 
 
+def read_clip(settings, params):
+    """A clipped page's record and a chunk of its article.html, for Tabgent's reader. The
+    reader checks the whole file against the SHA-256 in the record."""
+    ident = _document_id(params.get("documentId"))
+    offset = _integer(params, "offset", 0, CLIP_HTML_LIMIT * 2, 0)
+    length = _integer(params, "length", 1, CHUNK_LIMIT, CHUNK_LIMIT)
+    root = _root(settings)
+    data = _existing(root, ident)
+    record = _clip_record(root, data)
+    if record is None:
+        raise VaultError("not_found", f"Document {ident} has no clipped copy")
+    raw = _clip_file(_folder(root, ident) / CLIP_HTML)
+    document = data["document"]
+    return {
+        "document": _public_document(root, document, document["createdAt"]),
+        "clip": {
+            key: record.get(key)
+            for key in (
+                "origin",
+                "title",
+                "author",
+                "siteName",
+                "publishedAt",
+                "language",
+                "direction",
+                "words",
+                "truncated",
+                "images",
+                "assets",
+            )
+        }
+        | {
+            "html": record["files"]["html"],
+            "summary": _clip_summary(root, data, record),
+        },
+        "offset": offset,
+        "size": len(raw),
+        "data": base64.b64encode(raw[offset : offset + length]).decode("ascii"),
+        "eof": offset + length >= len(raw),
+    }
+
+
+def read_clip_asset(settings, params):
+    """A chunk of one image the clip recorded, by its assets/ path."""
+    ident = _document_id(params.get("documentId"))
+    file = params.get("file")
+    if not (
+        isinstance(file, str)
+        and file.startswith("assets/")
+        and CLIP_ASSET_NAME.fullmatch(file[len("assets/") :])
+    ):
+        raise VaultError("invalid_params", "file must be an image in assets/")
+    offset = _integer(params, "offset", 0, CLIP_ASSET_LIMIT, 0)
+    length = _integer(params, "length", 1, CHUNK_LIMIT, CHUNK_LIMIT)
+    root = _root(settings)
+    data = _existing(root, ident)
+    record = _clip_record(root, data)
+    entry = next(
+        (
+            asset
+            for asset in (record or {}).get("assets") or []
+            if isinstance(asset, dict) and asset.get("file") == file
+        ),
+        None,
+    )
+    if entry is None:
+        raise VaultError("not_found", f"{file} is not an image of this clip")
+    raw = _clip_file(_folder(root, ident) / file)
+    return {
+        "file": file,
+        "mime": CLIP_ASSET_TYPES[file.rsplit(".", 1)[1]],
+        "offset": offset,
+        "size": len(raw),
+        "data": base64.b64encode(raw[offset : offset + length]).decode("ascii"),
+        "eof": offset + length >= len(raw),
+    }
+
+
+def delete_clip(settings, params):
+    """Deletes a page's clipped copy: article.html, article.json, the images it recorded and
+    article.md (kept as article-edited-<time>.md if the user edited it). The page's
+    highlights, notes and discussions stay."""
+    ident = _document_id(params.get("documentId"))
+    root = _root(settings)
+    if not _folder(root, ident).is_dir():
+        raise VaultError("not_found", f"Document {ident} does not exist")
+    with _locked(root):
+        data = _existing(root, ident)
+        folder = _folder(root, ident)
+        try:
+            current = _clip_record(root, data)
+        except VaultError:
+            current = {}
+        if current is None:
+            return {"ok": True, "backup": None}
+        backup = _clip_backup(folder, current)
+        # The record goes first, so an interrupted delete leaves no clip that looks whole.
+        for name in (CLIP_RECORD, CLIP_HTML, CLIP_MARKDOWN):
+            with contextlib.suppress(FileNotFoundError):
+                (folder / name).unlink()
+        _clip_prune_assets(folder, current, {"assets": []})
+        with contextlib.suppress(OSError):
+            (folder / "assets").rmdir()  # Only when empty; the user's files stay.
+        data["document"]["updatedAt"] = _now()
+        _save(root, data)
+    return {"ok": True, "backup": backup}
+
+
 METHODS = {
     "vault/status": status,
     "vault/configure": configure,
@@ -917,6 +1025,9 @@ METHODS = {
     "vault/documents/list": list_documents,
     "vault/clip/save": save_clip,
     "vault/clip/asset": save_clip_asset,
+    "vault/clip/read": read_clip,
+    "vault/clip/asset/read": read_clip_asset,
+    "vault/clip/delete": delete_clip,
 }
 
 
@@ -1705,6 +1816,13 @@ def _clip_assets(value):
     if total > CLIP_ASSETS_LIMIT:
         raise VaultError("invalid_params", "The images are too large together")
     return assets
+
+
+def _clip_file(path):
+    """The bytes of a clip file at its exact place: no symlink in it or its folder."""
+    if path.is_symlink() or path.parent.is_symlink() or not path.is_file():
+        raise VaultError("not_found", f"{path} is missing")
+    return path.read_bytes()
 
 
 def _clip_asset_name(asset):
