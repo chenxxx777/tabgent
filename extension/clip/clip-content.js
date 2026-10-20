@@ -308,19 +308,23 @@
     return total;
   }
   // Cuts long Markdown at a paragraph break (else a line break) until it fits, never inside
-  // a surrogate pair, closes a code fence the cut left open, and ends with a note.
+  // a surrogate pair, closes a code fence the cut left open, and ends with a note. Every pass
+  // makes the text shorter, so it ends even for a cap of zero or less.
   function cutMarkdown(markdown, cap) {
+    cap = Math.max(0, Math.floor(Number(cap) || 0));
     let truncated = false;
-    while (bytes(markdown) > cap) {
-      const size = Math.floor(
-        (markdown.length * (cap - Math.min(3072, cap / 4))) / bytes(markdown),
+    while (markdown && bytes(markdown) > cap) {
+      const size = Math.max(
+        0,
+        Math.floor((markdown.length * (cap - Math.min(3072, cap / 4))) / bytes(markdown)),
       );
       let at = markdown.lastIndexOf('\n\n', size);
       if (at <= size / 2) at = markdown.lastIndexOf('\n', size);
       if (at <= size / 2) at = size;
+      at = Math.min(at, markdown.length - 1);
       const code = markdown.charCodeAt(at - 1);
-      if (code >= 0xd800 && code <= 0xdbff) at--;
-      markdown = markdown.slice(0, at);
+      if (at > 0 && code >= 0xd800 && code <= 0xdbff) at--;
+      markdown = markdown.slice(0, Math.max(0, at));
       truncated = true;
     }
     if (!truncated) return { markdown, truncated };
@@ -394,7 +398,10 @@
     let markdown = converter(token, index).turndown(article).trim();
     // Long text is cut until it fits, leaving room for the image addresses the worker may put
     // in place of the placeholders.
-    const cut = cutMarkdown(markdown, LIMIT.markdown - 1024 - reserve(markdown, token, list));
+    // The room kept for addresses is bounded: one long address used many times (a signed
+    // CDN link, or a hostile page) must not leave no room for the text.
+    const room = Math.min(reserve(markdown, token, list), LIMIT.markdown / 2);
+    const cut = cutMarkdown(markdown, LIMIT.markdown - 1024 - room);
     markdown = cut.markdown;
     truncated ||= cut.truncated;
     const { words, chars, enough } = count(article.textContent);
