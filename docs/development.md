@@ -75,6 +75,7 @@ These are deliberately excluded from `npm test`:
 | `npm run test:pdf-highlights`                | Same isolation, fixture app-server for Codex; PDF.js highlights, saved turns, and restore.   |
 | `npm run test:epub`                          | Playwright Chromium and Python; the real connector with temporary `HOME` and `CODEX_HOME`.   |
 | `npm run test:library`                       | Same isolation, fixture app-server for Codex; library, local PDF import, reopen and restore. |
+| `npm run test:agent-tab`                     | Same isolation, fixture app-server for Codex; an Agent tab after its source page closes.     |
 
 `npm run test:epub` imports a generated book into a temporary vault, checks highlights,
 Ask AI, reopening, a browser restart and blocked book scripts. Codex discovery is
@@ -84,6 +85,13 @@ disabled, so no app-server or account is used.
 generated PDF and EPUB from the library, highlights and asks about the PDF (saving a turn
 from the fixture app-server), opens the library from the side panel, opens every kind of
 document from it, restarts the browser and checks drag and drop.
+
+`npm run test:agent-tab` opens a highlight discussion on a local webpage and on an imported
+PDF, expands each into an Agent tab and closes the page. The Agent tab must keep asking,
+reloading, steering and stopping without disconnecting, save its turns to the same highlight
+and thread, read the PDF's page files through `reading_vault`, report a browser read of the
+closed page as a tool error, keep page history, and close the session with its last tab. The
+fixture app-server follows `[hold]`, `[browser-read]` and `[vault-read:NNN]` in the message.
 
 Start a debug browser with:
 
@@ -113,8 +121,11 @@ Open the conversation in a new Agent tab. Check that messages, drafts, attachmen
 and approvals synchronize with the original sidebar and the original page remains
 the default context. The new Agent tab must not show another expand button.
 Its own sidebar must have an independent thread. Close either view and verify
-the remaining view keeps its conversation. Test the Agent + button creates an empty Agent tab with the same original page,
-model, effort and scope, but no shared history, draft or attachments.
+the remaining view keeps its conversation. With the original page closed, the Agent
+tab must keep answering, steering and stopping, show the page as closed, and keep
+saving a highlight discussion to that highlight. Test the Agent + button creates an
+empty Agent tab with the same original page, model, effort and scope, but no shared
+history, draft or attachments.
 Do not replace Chrome's native new-tab page or inject an Agent overlay into websites.
 The reading toolbar and highlight popover are the only webpage UI.
 
