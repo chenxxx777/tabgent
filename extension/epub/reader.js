@@ -1,6 +1,7 @@
 import '../vendor/foliate-js/view.js';
 import { Overlayer } from '../vendor/foliate-js/overlayer.js';
 import { localize, t, loadTimeData } from '../i18n.js';
+import '../user-error.js';
 import { openBook, label } from './book.js';
 import * as epubAnchor from './anchor.js';
 import * as library from './library.js';
@@ -40,7 +41,11 @@ function toast(message) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => element.hidePopover(), 5000);
 }
-const failure = (key, error) => toast(loadTimeData.getStringF(key, error?.message || error));
+const shown = (error) =>
+  globalThis.tabgentExplainError?.(error, (key, ...args) =>
+    args.length ? loadTimeData.getStringF(key, ...args) : t(key),
+  ) || t('errorGeneric');
+const failure = (key, error) => toast(loadTimeData.getStringF(key, shown(error)));
 const percent = (fraction) => `${Math.round(Math.max(0, Math.min(1, fraction)) * 100)}%`;
 const status = (text) => ($('#status').textContent = text);
 
@@ -124,7 +129,7 @@ async function showDocuments() {
     $('#booksStatus').textContent = documents.length ? '' : t('libraryEmpty');
     for (const item of documents) list.append(libraryItem(item, seen));
   } catch (error) {
-    $('#booksStatus').textContent = loadTimeData.getStringF('epubBooksUnavailable', error.message);
+    $('#booksStatus').textContent = loadTimeData.getStringF('epubBooksUnavailable', shown(error));
   }
 }
 
@@ -328,7 +333,7 @@ async function importIntoVault(bytes, name, sha256) {
       setTimeout(() => $('#status').textContent === t('epubSaved') && status(''), 4000);
     }
   } catch (error) {
-    if (current()) status(loadTimeData.getStringF('epubSaveFailed', error.message));
+    if (current()) status(loadTimeData.getStringF('epubSaveFailed', shown(error)));
   }
 }
 
@@ -399,7 +404,7 @@ async function showBook(file, sha256, token) {
 async function bookFailed(error) {
   if (error?.name === 'AbortError') return;
   opening++; // Invalidate pending initialization before closing its renderer.
-  const message = loadTimeData.getStringF('epubOpenFailed', error?.message || error);
+  const message = loadTimeData.getStringF('epubOpenFailed', shown(error));
   closeBook();
   history.replaceState(null, '', location.pathname);
   status(message); // Persist the error beside the picker, so the user can retry.
@@ -849,7 +854,13 @@ async function createHighlight(ask) {
       context: selected.context,
       chapterFile: chapterFile(selected.anchor.chapter.href),
     });
-    if (reply.vaultError) toast(loadTimeData.getStringF('highlightSaveFailed', reply.vaultError));
+    if (reply.vaultError)
+      toast(
+        loadTimeData.getStringF(
+          'highlightSaveFailed',
+          shown({ code: reply.code, message: reply.vaultError, folder: reply.folder }),
+        ),
+      );
     if (!reply.highlight || view !== state.view) return;
     state.documentId = reply.document.id;
     const record = reply.highlight;
@@ -947,7 +958,7 @@ async function saveNote() {
     renderHighlightList();
     toast(t(note ? 'highlightNoteSaved' : 'highlightNoteRemoved'));
   } catch (error) {
-    $('#noteError').textContent = loadTimeData.getStringF('highlightNoteFailed', error.message);
+    $('#noteError').textContent = loadTimeData.getStringF('highlightNoteFailed', shown(error));
     $('#noteError').hidden = false;
     $('#noteText').focus();
   } finally {

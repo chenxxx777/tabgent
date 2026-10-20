@@ -5,11 +5,13 @@
 // edits and the native fallback never asks about unsaved changes.
 import * as anchors from './pdf-anchor.js';
 import { pdfInfo } from './pdf-info.js';
+import '../user-error.js';
 import '../highlight-note.js';
 
 const notes = globalThis.tabgentHighlightNote;
 
 const t = (key, ...values) => chrome.i18n.getMessage(key, values.map(String)) || key;
+const shown = (error) => globalThis.tabgentExplainError?.(error, t) || t('errorGeneric');
 const limit = 20000;
 const clamp = (value, low, high) => Math.max(low, Math.min(value, high));
 const styles = `
@@ -31,7 +33,11 @@ async function send(message) {
   // Called synchronously from clicks: sendMessage carries the gesture for sidePanel.open.
   const response = await chrome.runtime.sendMessage(message);
   if (!response) throw Error('No response');
-  if (response.error) throw Object.assign(Error(response.error), { code: response.code });
+  if (response.error)
+    throw Object.assign(Error(response.error), {
+      code: response.code,
+      ...(response.folder ? { folder: response.folder } : {}),
+    });
   return response;
 }
 
@@ -538,11 +544,17 @@ export async function startHighlights({ app, frame, source, name, onDocument }) 
           resolved: true,
         });
       }
-      if (response.vaultError) notify(t('highlightSaveFailed', response.vaultError));
+      if (response.vaultError)
+        notify(
+          t(
+            'highlightSaveFailed',
+            shown({ code: response.code, message: response.vaultError, folder: response.folder }),
+          ),
+        );
       else if (ask && response.panelOpened === false) notify(t('highlightOpenPanel'));
     } catch (error) {
       records.delete(pending.id);
-      notify(t(ask ? 'highlightAskFailed' : 'highlightSaveFailed', error.message));
+      notify(t(ask ? 'highlightAskFailed' : 'highlightSaveFailed', shown(error)));
     }
     repaint();
     report();
@@ -561,7 +573,7 @@ export async function startHighlights({ app, frame, source, name, onDocument }) 
       const response = await request;
       if (response.panelOpened === false) notify(t('highlightOpenPanel'));
     } catch (error) {
-      notify(t('highlightAskFailed', error.message));
+      notify(t('highlightAskFailed', shown(error)));
     }
   }
   async function remove(record) {
@@ -576,7 +588,7 @@ export async function startHighlights({ app, frame, source, name, onDocument }) 
       });
     } catch (error) {
       // Already deleted elsewhere (another tab or the vault itself).
-      if (error.code !== 'not_found') return void notify(t('highlightDeleteFailed', error.message));
+      if (error.code !== 'not_found') return void notify(t('highlightDeleteFailed', shown(error)));
     }
     records.delete(record.highlight.id);
     if (noteTarget === record) closeEditor();

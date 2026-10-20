@@ -359,7 +359,12 @@ document.addEventListener('webviewerloaded', async (event) => {
   } catch (error) {
     clearTimeout(timer);
     if (local)
-      return void (status.textContent = loadTimeData.getStringF('pdfLocalFailed', error.message));
+      return void (status.textContent = loadTimeData.getStringF(
+        'pdfLocalFailed',
+        globalThis.tabgentExplainError?.(error, (key, ...args) =>
+          args.length ? loadTimeData.getStringF(key, ...args) : t(key),
+        ) || t('errorGeneric'),
+      ));
     status.textContent = t('pdfFailed');
     await fallback();
   }

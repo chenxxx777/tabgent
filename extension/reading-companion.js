@@ -7,6 +7,7 @@ import { pageContextPrefix, readingContextPrefix } from './session-config.js';
 import { selectionContextPrefix } from './ui/user-input.js';
 import { documentUrl } from './vault-client.js';
 import { isLocalFileUrl } from './local-files.js';
+import { isChapterFile } from './document-id.js';
 import {
   appendParams,
   clip,
@@ -311,6 +312,9 @@ export function createReadingCompanion({
       highlightId: params.highlightId,
       message: result.error?.message || '',
     };
+    if (result.error?.code) value.code = result.error.code;
+    if (typeof result.error?.folder === 'string' && result.error.folder)
+      value.folder = result.error.folder;
     if (result.document && !params.highlightId && !s.reading?.highlightId) {
       // A page discussion keeps saving to the document it created.
       s.reading = {
@@ -396,7 +400,11 @@ export function createReadingCompanion({
   async function focusHighlight(selection, view) {
     await loaded;
     const ref = selectionHighlight(selection);
-    if (!ref) throw Error('Invalid highlight');
+    if (!ref) {
+      const error = Error('Invalid highlight');
+      error.code = 'invalid_highlight';
+      throw error;
+    }
     let latest = null;
     try {
       const discussion = await vault.request('vault/discussion/get', ref, fast);
@@ -515,7 +523,7 @@ export function createReadingCompanion({
             ...(clipSource(tab?.url) ? { view: 'clip' } : {}),
             anchor: highlight.anchor || null,
             // The EPUB reader names the chapter file Codex reads instead of the reader tab.
-            ...(/^chapters\/[^/\\]+\.md$/.test(context?.chapterFile || '')
+            ...(isChapterFile(context?.chapterFile)
               ? { chapterFile: `${resolved.document.folder}/${context.chapterFile}` }
               : {}),
             capturedAt: new Date().toISOString(),
@@ -596,6 +604,10 @@ export function createReadingCompanion({
         target: savingTarget(source, document, bound, !!existing),
       },
       error: resolved?.error?.message || null,
+      ...(resolved?.error?.code ? { errorCode: resolved.error.code } : {}),
+      ...(typeof resolved?.error?.folder === 'string' && resolved.error.folder
+        ? { errorFolder: resolved.error.folder }
+        : {}),
     };
   }
 

@@ -556,7 +556,7 @@ try {
     for (const files of [
       'local-pdf.js',
       'selection-content.js',
-      'web-anchor.js,highlight-note.js,highlight-content.js',
+      'web-anchor.js,user-error.js,highlight-note.js,highlight-content.js',
     ])
       assert(
         adopted.some(([id, f]) => id === tabId && f === files),

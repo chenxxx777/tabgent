@@ -1,7 +1,10 @@
 // Reading notes in the side panel: the save toggle and vault folder in a composer menu,
 // and this page's highlights in the page drawer. Saving itself runs in the service worker.
+import '../user-error.js';
+
 export function createReading({ i18n, request, showError, selection, reload }) {
   const $ = (id) => document.getElementById(id);
+  const shown = (error) => globalThis.tabgentExplainError?.(error, i18n) || i18n('errorGeneric');
   let state = null,
     revision = 0,
     // The highlight whose note is being edited: { documentId, id, draft, error, busy }.
@@ -97,7 +100,12 @@ export function createReading({ i18n, request, showError, selection, reload }) {
       editing = null;
     list.replaceChildren();
     if (!state.highlights.length) {
-      list.textContent = state.error ? i18n('readingError', state.error) : i18n('highlightsEmpty');
+      list.textContent = state.error
+        ? i18n(
+            'readingError',
+            shown({ message: state.error, code: state.errorCode, folder: state.errorFolder }),
+          )
+        : i18n('highlightsEmpty');
       return;
     }
     for (const highlight of state.highlights) {
@@ -122,7 +130,7 @@ export function createReading({ i18n, request, showError, selection, reload }) {
           const result = await request('readingJump', { highlightId: highlight.id });
           if (!result.found) showError(i18n('highlightUnanchoredHint'));
         } catch (error) {
-          showError(error.message);
+          showError(shown(error));
         }
       };
       const meta = document.createElement('small');
@@ -149,7 +157,7 @@ export function createReading({ i18n, request, showError, selection, reload }) {
           });
           if (result.switched) reload();
         } catch (error) {
-          showError(error.message);
+          showError(shown(error));
         } finally {
           open.disabled = false;
         }
@@ -252,7 +260,7 @@ export function createReading({ i18n, request, showError, selection, reload }) {
         if (editing === target) close();
       } catch (failure) {
         target.busy = false;
-        target.error = i18n('highlightNoteFailed', failure.message);
+        target.error = i18n('highlightNoteFailed', shown(failure));
         if (editing === target) {
           render();
           $('highlightList').querySelector('.highlight-note-form textarea')?.focus();
@@ -266,7 +274,7 @@ export function createReading({ i18n, request, showError, selection, reload }) {
     try {
       await update('readingSave', { enabled: event.target.checked });
     } catch (error) {
-      showError(error.message);
+      showError(shown(error));
       render();
     }
   };
@@ -292,7 +300,7 @@ export function createReading({ i18n, request, showError, selection, reload }) {
       const result = await request('clipPage', { mode });
       if (result?.reason === 'unsupported') showError(i18n('clipUnsupported'));
     } catch (error) {
-      showError(error.message);
+      showError(shown(error));
     }
     void refresh();
   }
@@ -304,7 +312,7 @@ export function createReading({ i18n, request, showError, selection, reload }) {
     try {
       await request('clipOpenView');
     } catch (error) {
-      showError(error.message);
+      showError(shown(error));
     }
   };
   // The library lists every document in the vault and opens it, or imports a file.
@@ -313,7 +321,7 @@ export function createReading({ i18n, request, showError, selection, reload }) {
     try {
       await request('openLibrary');
     } catch (error) {
-      showError(error.message);
+      showError(shown(error));
     }
   };
   $('readingFolderForm').onsubmit = async (event) => {
@@ -325,7 +333,7 @@ export function createReading({ i18n, request, showError, selection, reload }) {
       await update('vaultConfigure', { path });
       $('readingFolderForm').hidden = true;
     } catch (error) {
-      $('readingError').textContent = error.message;
+      $('readingError').textContent = shown(error);
       $('readingError').hidden = false;
     }
   };
@@ -335,7 +343,12 @@ export function createReading({ i18n, request, showError, selection, reload }) {
     render: () => state && render(),
     saved(value) {
       if (value && !value.ok)
-        showError(i18n(value.queued ? 'readingSaveQueued' : 'readingSaveFailed', value.message));
+        showError(
+          i18n(
+            value.queued ? 'readingSaveQueued' : 'readingSaveFailed',
+            shown({ message: value.message, code: value.code, folder: value.folder }),
+          ),
+        );
       void refresh();
     },
   };

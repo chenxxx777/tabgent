@@ -23,8 +23,20 @@ for (const bad of [
   { highlight: null },
   { highlight: { documentId: '../escape', highlightId: 'h001' } },
   { highlight: { documentId: 'article-x', highlightId: '1' } },
+  { highlight: { documentId: 'article-a/b-12345678', highlightId: 'h001' } },
+  { highlight: { documentId: 'article-a\\b', highlightId: 'h001' } },
+  { highlight: { documentId: 'article-a b', highlightId: 'h001' } },
+  { highlight: { documentId: 'article-..', highlightId: 'h001' } },
+  { highlight: { documentId: 'article-' + 'a'.repeat(161), highlightId: 'h001' } },
+  { highlight: { documentId: 'article-hello-🎉-abcd1234', highlightId: 'h001' } },
 ])
   assert.equal(selectionHighlight(bad), null);
+for (const value of [
+  { documentId: 'article-耳夹式无线耳机体验-f634ae3a', highlightId: 'h001' },
+  { documentId: 'book-こんにちは世界-abcdef12', highlightId: 'h012' },
+  { documentId: 'paper-mixed-中文-and-日本語-0123abcd', highlightId: 'h100' },
+])
+  assert.deepEqual(selectionHighlight({ highlight: value }), value);
 const web = highlightBinding({
   highlight,
   url: 'https://example.test/a?x=1#part',
@@ -222,6 +234,26 @@ assert.equal(
   recordedBinding({ document: { url: 'https://x.test/', kind: 'web' }, saving: 'document' }),
   null,
   'Provisional documents are not bound',
+);
+assert.equal(
+  recordedBinding({
+    document: { id: '../escape', url: 'https://x.test/', kind: 'web' },
+    saving: 'document',
+  }),
+  null,
+  'A document id with a path is not bound',
+);
+assert.equal(
+  recordedBinding({
+    document: {
+      id: 'article-耳夹式无线耳机体验-f634ae3a',
+      url: 'https://x.test/zh',
+      title: '耳夹式无线耳机体验',
+      kind: 'web',
+    },
+    saving: 'document',
+  }).documentId,
+  'article-耳夹式无线耳机体验-f634ae3a',
 );
 assert.equal(recordedBinding({ ...record.reading, saving: 'off' }), null);
 console.log('PASS thread history recovers highlight and page bindings');

@@ -1,4 +1,4 @@
-import { cleanClip, storeClip } from './clipper.js';
+import { CLIP_LIMIT, cleanClip, storeClip } from './clipper.js';
 import { clipCommand, clipNotify, clipSource } from './clip-routing.js';
 import { sameSite, sniff } from './clip-images.js';
 import { withReferer } from './referer.js';
@@ -498,9 +498,22 @@ export function createFeeds({
   // Saves what the reader shows of an item as a vault document (article.md, article.html
   // and images, fetched without cookies), and links the item to it. result is the reader's
   // cleaned text, as the clipping script returns it for a page.
+  function oversized(result) {
+    if (result?.ok !== true) return false;
+    const markdown = typeof result.markdown === 'string' ? result.markdown : '';
+    const html = typeof result.html === 'string' ? result.html : '';
+    if (!markdown.trim() || !html.trim()) return false;
+    const size = (value) => new TextEncoder().encode(value).length;
+    return size(markdown) > CLIP_LIMIT.markdown || size(html) > CLIP_LIMIT.html;
+  }
   async function saveItem(url, { result, method }) {
     const clip = cleanClip(result);
-    if (!clip) throw Error('The item has no text to save');
+    if (!clip) {
+      const long = oversized(result);
+      const error = Error(long ? 'The item is too long to save' : 'The item has no text to save');
+      error.code = long ? 'too_long' : 'no_text';
+      throw error;
+    }
     const { item: entry, source } = await item(url);
     const link = /^https?:/i.test(entry.link || '') ? entry.link : '';
     const stored = await storeClip(
@@ -526,7 +539,11 @@ export function createFeeds({
         fetch: fetchImpl,
       },
     );
-    if (!stored.ok) throw Error('The item is too long to save');
+    if (!stored.ok) {
+      const error = Error('The item is too long to save');
+      error.code = 'too_long';
+      throw error;
+    }
     // The page was clipped already: the item joins that document.
     await request('vault/feeds/saved', { url });
     opened.delete(url);
@@ -550,7 +567,12 @@ export function createFeeds({
       clipNotify(tabId, { type: 'feedSaved' });
       return saved;
     } catch (error) {
-      clipNotify(tabId, { type: 'feedSaveFailed', message: error?.message || String(error) });
+      clipNotify(tabId, {
+        type: 'feedSaveFailed',
+        message: error?.message || String(error),
+        ...(error?.code ? { code: error.code } : {}),
+        ...(typeof error?.folder === 'string' && error.folder ? { folder: error.folder } : {}),
+      });
       throw error;
     }
   }

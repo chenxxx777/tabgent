@@ -33,8 +33,14 @@ def call(settings, method, params):
 
 def code(settings, method, params):
     reply = vault.handle(settings, method, params)
-    assert set(reply) == {"error"} and set(reply["error"]) == {"code", "message"}, reply
-    return reply["error"]["code"]
+    assert set(reply) == {"error"}, reply
+    body = reply["error"]
+    assert {"code", "message"} <= set(body) <= {"code", "message", "folder"}, body
+    if "folder" in body:
+        assert isinstance(body["folder"], str) and body["folder"]
+        assert "/" not in body["folder"] and "\\" not in body["folder"]
+        assert ".." not in body["folder"]
+    return body["code"]
 
 
 def markdown_ids(text):
@@ -456,7 +462,10 @@ with tempfile.TemporaryDirectory(prefix="tabgent-vault-") as directory:
             (None, {}, "unknown_method"),
             ("vault/status", [], "invalid_params"),
             ("vault/configure", {}, "invalid_params"),
-            ("vault/configure", {"path": "relative/vault"}, "invalid_params"),
+            ("vault/configure", {"path": ""}, "path_empty"),
+            ("vault/configure", {"path": "  "}, "path_empty"),
+            ("vault/configure", {"path": "ok\0no"}, "invalid_params"),
+            ("vault/configure", {"path": "relative/vault"}, "path_not_absolute"),
             ("vault/document/resolve", {**source, "url": ""}, "invalid_params"),
             (
                 "vault/document/resolve",

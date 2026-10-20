@@ -394,6 +394,11 @@ try {
   assert.equal(notes.at(-1).text, 'clipXOpenPost');
   assert.equal(notes.at(-1).tone, 'error');
   page.ask.push('replace');
+  page.run.push({ ok: false, reason: 'x-layout' });
+  assert.deepEqual(await clip(1), { ok: false, reason: 'x-layout' });
+  assert.equal(notes.at(-1).text, 'clipXLayout');
+  assert.equal(notes.at(-1).tone, 'error');
+  page.ask.push('replace');
   page.run.push(result({ html: 'x'.repeat(CLIP_LIMIT.html + 1) }));
   assert.deepEqual(await clip(1), { ok: false, reason: 'invalid' });
   assert.equal(vaultCalls('vault/clip/save').length, count);

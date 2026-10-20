@@ -70,8 +70,8 @@ export async function readingRequest(type,params={}){
  if(type==='readingOpen')return {switched:params.highlightId==='h001',threadId:'thread-a'};
  if(type==='readingJump')return {found:params.highlightId!=='h002'};
  if(type==='readingSave')value.save={explicit:params.enabled,target:params.enabled?'document':'off'};
- if(type==='vaultConfigure'){if(!/^[\/~]/.test(params.path))throw Error('path must be absolute');value.vault={...value.vault,path:params.path};}
- if(type==='readingNote'){if(params.note==='fail')throw Error('Disk is busy');value.highlights.find(h=>h.id===params.highlightId).note=params.note;}
+ if(type==='vaultConfigure'){const entered=String(params.path||'');if(!entered.trim()){const error=Error('path must be a non-empty string');error.code='path_empty';throw error;}if(!/^[\/~]/.test(entered)){const error=Error('path must be absolute');error.code='path_not_absolute';throw error;}value.vault={...value.vault,path:params.path};}
+ if(type==='readingNote'){if(params.note==='fail'){const error=Error('Disk is busy');error.code='io_error';throw error;}value.highlights.find(h=>h.id===params.highlightId).note=params.note;}
  if(type==='clipPage'){value.clip={clippedAt:'2026-10-20T10:00:00+08:00',complete:true};return {ok:true};}
  return structuredClone(value);
 }
@@ -1339,7 +1339,11 @@ export function saveScopePreference(){}
         await page.locator('#readingPathInput').fill('relative/notes');
         await page.locator('#readingFolderSave').click();
         await page.locator('#readingError').waitFor();
-        assert.match(await page.locator('#readingError').textContent(), /absolute/);
+        assert.equal(
+          await page.locator('#readingError').textContent(),
+          messages.errorPathNotAbsolute.message,
+        );
+        assert.notEqual(messages.errorPathNotAbsolute.message, messages.errorInvalidParams.message);
         await page.locator('#readingPathInput').fill('~/Notes');
         await page.locator('#readingFolderSave').click();
         await page.waitForFunction(
@@ -1449,7 +1453,7 @@ export function saveScopePreference(){}
         await entries.nth(0).locator('.highlight-note-error').waitFor();
         assert.equal(
           await entries.nth(0).locator('.highlight-note-error').textContent(),
-          'The note could not be saved: Disk is busy',
+          'The note could not be saved: The reading folder could not be read or written',
         );
         await noteInput.fill('  My view: endorsement.\nSecond line.  ');
         await entries.nth(0).locator('.highlight-note-form button[type="submit"]').click();
@@ -1556,12 +1560,13 @@ export function saveScopePreference(){}
             ok: false,
             queued: true,
             message: 'Disk is busy',
+            code: 'io_error',
           }),
         );
         await page.locator('.message.error').waitFor();
         assert.equal(
           await page.locator('.message.error').textContent(),
-          'Not saved to reading notes yet (Disk is busy). Tabgent will retry.',
+          'Not saved to reading notes yet (The reading folder could not be read or written). Tabgent will retry.',
         );
         assert.deepEqual(errors, []);
         console.log('PASS sidebar follows a highlight thread switch and reports failed saves');

@@ -140,7 +140,10 @@ with tempfile.TemporaryDirectory() as temp:
             "invalid_params",
         ),
         ({"action": "read", "path": str(document / "HIGHLIGHTS.md")}, "invalid_params"),
-        ({"action": "read", "path": "Articles/missing/highlights.md"}, "not_found"),
+        (
+            {"action": "read", "path": "Articles/missing/highlights.md"},
+            "invalid_params",
+        ),
         (
             {"action": "read", "path": str(linked.relative_to(root) / "highlights.md")},
             "not_found",
