@@ -59,6 +59,50 @@ const bomb = `<?xml version="1.0"?><!DOCTYPE rss [
 <!ENTITY c "&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;">
 <!ENTITY d "&c;&c;&c;&c;&c;&c;&c;&c;&c;&c;&c;&c;&c;&c;&c;&c;&c;&c;&c;&c;">
 ]><rss><channel><title>&d;</title></channel></rss>`;
+// A real 32x18 PNG, so the reader can show it.
+function png(width, height) {
+  const chunk = (type, data) => {
+    const body = Buffer.concat([Buffer.from(type, 'latin1'), data]);
+    const out = Buffer.alloc(body.length + 8);
+    out.writeUInt32BE(data.length, 0);
+    body.copy(out, 4);
+    out.writeUInt32BE(zlib.crc32(body), body.length + 4);
+    return out;
+  };
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header[8] = 8;
+  header[9] = 2;
+  const rows = Buffer.alloc((width * 3 + 1) * height, 0x60);
+  for (let y = 0; y < height; y++) rows[y * (width * 3 + 1)] = 0;
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', header),
+    chunk('IDAT', zlib.deflateSync(rows)),
+    chunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+const PICTURE = png(32, 18);
+// Reading items: one with its whole text in the feed (and an image), one with a summary
+// whose page has the full text.
+const fullText = [...Array(20).keys()]
+  .map((n) => `<p>Full item paragraph ${n}: careful readers return to difficult passages.</p>`)
+  .join('');
+const readingFeed = `<?xml version="1.0"?><rss version="2.0"
+  xmlns:content="http://purl.org/rss/1.0/modules/content/"><channel><title>Reading</title>
+<link>{origin}/</link>
+<item><title>Full item</title><guid>read-full</guid><link>{origin}/article/full</link>
+<pubDate>${day(40)}</pubDate><description>The whole item.</description>
+<content:encoded><![CDATA[${fullText}<p><img src="{origin}/img/pic.png" alt="Picture"></p>]]></content:encoded></item>
+<item><title>Summary item</title><guid>read-summary</guid>
+<link>{origin}/article/summary?utm_source=rss</link><pubDate>${day(41)}</pubDate>
+<description>Only a teaser.</description></item>
+</channel></rss>`;
+const articlePage = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Summary item</title></head>
+<body><nav><a href="/">Home</a></nav><main><article><h1>Summary item</h1>${[...Array(10).keys()]
+  .map((n) => `<p>Article paragraph ${n}: the page holds the whole text of the item.</p>`)
+  .join('')}</article></main><footer>Footer</footer></body></html>`;
 // About 4.5 MB: 200 entries with long content, parsed while the vault stays responsive.
 const big = rss('Big', [...Array(200).keys()], { content: '<p>' + 'x'.repeat(22000) + '</p>' });
 
@@ -103,6 +147,10 @@ const big = rss('Big', [...Array(200).keys()], { content: '<p>' + 'x'.repeat(220
     if (request.url === '/bomb.xml') return send(bomb, xml);
     if (request.url === '/big.xml') return send(big, xml);
     if (request.url === '/site/') return send(site, 'text/html; charset=utf-8');
+    if (request.url === '/reading.xml') return send(readingFeed, xml);
+    if (request.url.startsWith('/article/summary'))
+      return send(articlePage, 'text/html; charset=utf-8');
+    if (request.url === '/img/pic.png') return send(PICTURE, 'image/png');
     send('<!doctype html><title>Not a feed</title>', 'text/html', 404);
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -194,6 +242,55 @@ const big = rss('Big', [...Array(200).keys()], { content: '<p>' + 'x'.repeat(220
       return JSON.parse(String(result.stdout));
     };
     const send = (value) => page.evaluate((value) => chrome.runtime.sendMessage(value), value);
+    async function drag(selector, needle) {
+      const box = await page.evaluate(
+        ([selector, needle]) => {
+          const node = document.querySelector(selector).firstChild,
+            at = node.data.indexOf(needle),
+            range = document.createRange();
+          range.setStart(node, at);
+          range.setEnd(node, at + needle.length);
+          const r = range.getBoundingClientRect();
+          return { left: r.left, right: r.right, y: r.top + r.height / 2 };
+        },
+        [selector, needle],
+      );
+      await page.mouse.move(box.left + 1, box.y);
+      await page.mouse.down();
+      await page.mouse.move(box.right - 1, box.y, { steps: 6 });
+      await page.mouse.up();
+      await wait(300);
+    }
+    // CDP sees inside the reading toolbar's closed shadow root.
+    async function clickAction(action) {
+      const client = await page.context().newCDPSession(page);
+      const { root } = await client.send('DOM.getDocument', { depth: -1, pierce: true });
+      let target = null;
+      (function walk(node) {
+        const attributes = node.attributes || [];
+        const at = attributes.indexOf('data-action');
+        if (at >= 0 && attributes[at + 1] === action) target = node;
+        for (const child of [...(node.children || []), ...(node.shadowRoots || [])]) walk(child);
+      })(root);
+      assert(target, `No ${action} button`);
+      const { model } = await client.send('DOM.getBoxModel', {
+        backendNodeId: target.backendNodeId,
+      });
+      await client.detach();
+      await page.mouse.click(
+        (model.border[0] + model.border[4]) / 2,
+        (model.border[1] + model.border[5]) / 2,
+      );
+    }
+    const openItem = async (title) => {
+      await page.locator('#feedItems a.title', { hasText: title }).click();
+      await page.waitForURL('**/clip/reader.html?url=**');
+      await page.waitForSelector('#content p');
+    };
+    const backToFeeds = async () => {
+      await page.click('#back');
+      await page.waitForSelector('#feedsPanel:not([hidden])');
+    };
     const statusIs = async (key, ...args) => {
       const expected = await message(key, ...args);
       return until(async () => (await page.textContent('#feedStatus')) === expected);
@@ -213,9 +310,10 @@ const big = rss('Big', [...Array(200).keys()], { content: '<p>' + 'x'.repeat(220
     await page.click('#feedFound button.primary');
     assert(await statusIs('feedsSubscribedNew', 'Full', 3));
     assert(await until(async () => (await items()).length === 3));
+    // An item opens in Tabgent's reader, by its address without tracking parameters.
     assert.deepEqual((await items())[0], {
       title: 'Full post 3',
-      href: origin + '/posts/3',
+      href: `chrome-extension://${id}/clip/reader.html?url=${origin}/posts/3`,
     });
     const [listedFull] = await sources();
     assert.equal(listedFull.title, 'Full');
@@ -345,6 +443,143 @@ const big = rss('Big', [...Array(200).keys()], { content: '<p>' + 'x'.repeat(220
     console.log(
       `PASS the vault answers within ${elapsed} ms (${latencies.length} requests) while a 4.5 MB feed is stored (${ingestTook} ms)`,
     );
+
+    // Reading items in Tabgent: an item with its whole text, then one with a summary.
+    await openLibrary();
+    hits.length = 0;
+    await send({ type: 'feedsSubscribe', url: origin + '/reading.xml' });
+    await page.reload();
+    await page.waitForSelector('#feedsPanel:not([hidden])');
+    assert(await until(async () => (await items()).some((item) => item.title === 'Full item')));
+    await openItem('Full item');
+    assert.equal(await page.textContent('#pageTitle'), 'Full item');
+    assert.match(await page.textContent('#content'), /Full item paragraph 19/);
+    assert.match(await page.textContent('#byline'), /Reading/);
+    // Its image comes through the worker, without cookies or a referrer.
+    await page.evaluate(() => document.querySelector('#content img')?.scrollIntoView());
+    assert(
+      await until(() =>
+        page.evaluate(() => {
+          const image = document.querySelector('#content img');
+          return image?.src.startsWith('blob:') && image.naturalWidth === 32;
+        }),
+      ),
+      'The item image is shown',
+    );
+    const imageHit = hits.find((hit) => hit.url === '/img/pic.png');
+    assert.equal(imageHit.headers.cookie, undefined);
+    assert.equal(imageHit.headers.referer, undefined);
+    assert.equal(
+      hits.some((hit) => hit.url === '/article/full'),
+      false,
+      'An item with its whole text does not fetch its page',
+    );
+    assert.notEqual(query("SELECT read_at FROM items WHERE key = 'read-full'")[0][0], null);
+    assert.equal(fs.existsSync(path.join(vault, 'Articles')), false, 'Reading saves nothing');
+    console.log(
+      'PASS a feed item opens in the reader, with its images, marked read, saving nothing',
+    );
+
+    // A summary: the full text comes from its page, fetched with the site's cookies.
+    await backToFeeds();
+    await openItem('Summary item');
+    assert(
+      await until(async () => /Article paragraph 3/.test(await page.textContent('#content'))),
+      'The full text is shown',
+    );
+    assert.doesNotMatch(await page.textContent('#content'), /Footer|Home/);
+    // Fetched at its address without tracking parameters, with the cookies of the item's own
+    // site (the subscription's).
+    assert(!hits.some((hit) => hit.url === '/article/summary?utm_source=rss'));
+    const pageHit = hits.find((hit) => hit.url === '/article/summary');
+    assert.match(pageHit.headers.cookie || '', /session=secret/);
+    assert.equal(pageHit.headers.referer, undefined);
+    assert.deepEqual(
+      query(
+        "SELECT item_content.kind FROM item_content JOIN items ON items.id = item_content.item_id WHERE items.key = 'read-summary'",
+      ),
+      [['fulltext']],
+    );
+    assert.equal(await page.getAttribute('#original', 'href'), origin + '/article/summary');
+    console.log('PASS a summary item shows the full text of its page, kept for next time');
+
+    // The first highlight saves the item as a vault document with a feed origin.
+    await page.evaluate(() => {
+      const paragraph = [...document.querySelectorAll('#content p')].find((p) =>
+        p.textContent.includes('Article paragraph 3'),
+      );
+      paragraph.id = 'probe';
+    });
+    await drag('#probe', 'Article paragraph 3');
+    await clickAction('highlight');
+    const articles = path.join(vault, 'Articles');
+    const folder = await until(
+      () =>
+        fs.existsSync(articles) &&
+        fs
+          .readdirSync(articles)
+          .find((name) => fs.existsSync(path.join(articles, name, 'anchors.json'))),
+    );
+    assert(folder, 'The item has a document folder');
+    const anchors = () =>
+      JSON.parse(fs.readFileSync(path.join(articles, folder, 'anchors.json'), 'utf8'));
+    assert(await until(() => anchors().highlights.length === 1), 'The highlight is saved');
+    assert.equal(anchors().highlights[0].text, 'Article paragraph 3');
+    assert.equal(anchors().highlights[0].anchor.view, 'clip');
+    assert.equal(anchors().document.url, origin + '/article/summary');
+    const record = JSON.parse(fs.readFileSync(path.join(articles, folder, 'article.json'), 'utf8'));
+    assert.equal(record.origin.type, 'feed');
+    assert.equal(record.origin.method, 'fulltext');
+    assert.equal(record.origin.sourceTitle, 'Reading');
+    assert.match(
+      fs.readFileSync(path.join(articles, folder, 'article.md'), 'utf8'),
+      /Article paragraph 3/,
+    );
+    assert.notEqual(query("SELECT document_id FROM items WHERE key = 'read-summary'")[0][0], null);
+    assert(await until(() => page.isDisabled('#save')), 'The reader shows it as saved');
+    console.log('PASS the first highlight saves the item as a document with its text');
+
+    // The inbox: views, states and keys.
+    await backToFeeds();
+    await page.click('#feedViews [data-view="all"]');
+    const row = (title) => page.locator('#feedItems .feed-item', { hasText: title });
+    assert(await until(async () => (await row('Summary item').count()) === 1));
+    assert.match(
+      await row('Summary item').locator('.meta').textContent(),
+      new RegExp(await message('feedsSaved')),
+    );
+    await row('Full item').focus();
+    await page.keyboard.press('l');
+    await page.click('#feedViews [data-view="later"]');
+    assert(await until(async () => (await row('Full item').count()) === 1), 'Later lists it');
+    await row('Full item').focus();
+    await page.keyboard.press('e');
+    await page.click('#feedViews [data-view="archive"]');
+    assert(await until(async () => (await row('Full item').count()) === 1), 'Archive lists it');
+    assert.equal(query("SELECT state FROM items WHERE key = 'read-full'")[0][0], 'archive');
+    // m marks it unread again; j and k move between rows.
+    await page.click('#feedViews [data-view="all"]');
+    assert(await until(async () => (await row('Full item').count()) === 1));
+    await row('Full item').focus();
+    await page.keyboard.press('m');
+    assert(
+      await until(() => query("SELECT read_at FROM items WHERE key = 'read-full'")[0][0] === null),
+    );
+    await page.locator('#feedItems .feed-item').first().focus();
+    await page.keyboard.press('j');
+    assert.equal(
+      await page.evaluate(() =>
+        [...document.querySelectorAll('#feedItems .feed-item')].indexOf(document.activeElement),
+      ),
+      1,
+    );
+    // A saved item's later state is its document's.
+    await row('Summary item').focus();
+    await page.keyboard.press('l');
+    assert(await until(() => anchors().document.library?.state === 'later'));
+    await page.click('#feedViews [data-view="later"]');
+    assert(await until(async () => (await row('Summary item').count()) === 1), 'Saved, later');
+    console.log('PASS the inbox: later, archive, read and unread, keys, saved items');
 
     // 6. After a browser restart, overdue subscriptions are checked once, a minute later.
     // (Playwright's relaunch reports the command-line extension as installed, not started;

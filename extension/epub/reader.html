@@ -122,9 +122,14 @@
             <ul id="feedSources" aria-label="$i18n{libraryTabFeeds}"></ul>
             <div>
               <div id="feedViews" role="group" aria-label="$i18n{feedsShow}">
-                <button id="feedViewUnread" aria-pressed="true">$i18n{feedsUnread}</button
-                ><button id="feedViewAll" aria-pressed="false">$i18n{feedsEverything}</button>
+                <button data-view="unread" aria-pressed="true">$i18n{feedsUnread}</button
+                ><button data-view="later" aria-pressed="false">$i18n{feedsLater}</button
+                ><button data-view="archive" aria-pressed="false">$i18n{feedsArchive}</button
+                ><button data-view="all" aria-pressed="false">$i18n{feedsEverything}</button>
+                <span class="spacer"></span>
+                <button id="feedMarkAll">$i18n{feedsMarkAllRead}</button>
               </div>
+              <p id="feedKeys" class="muted">$i18n{feedsKeys}</p>
               <ul id="feedItems"></ul>
               <p id="feedItemsStatus" class="muted"></p>
               <button id="feedMore" hidden>$i18n{feedsMore}</button>

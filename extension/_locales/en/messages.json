@@ -1407,5 +1407,68 @@
   },
   "feedsMore": {
     "message": "Load more"
+  },
+  "feedsLater": {
+    "message": "Later"
+  },
+  "feedsArchive": {
+    "message": "Archive"
+  },
+  "feedsBack": {
+    "message": "Subscriptions"
+  },
+  "feedsFrom": {
+    "message": "From $1"
+  },
+  "feedsFullTextFailed": {
+    "message": "The full text could not be loaded. Open the original page and clip it there."
+  },
+  "feedsFullTextMode": {
+    "message": "Full text"
+  },
+  "feedsFullTextAuto": {
+    "message": "When the feed has only a summary"
+  },
+  "feedsFullTextAlways": {
+    "message": "Always"
+  },
+  "feedsFullTextNever": {
+    "message": "Never (Load full text on request)"
+  },
+  "feedsImages": {
+    "message": "Load images"
+  },
+  "feedsKeys": {
+    "message": "Keys: j and k move, Enter opens, m read, l later, e archive, v original page."
+  },
+  "feedsLoadFullText": {
+    "message": "Load full text"
+  },
+  "feedsLoadingFullText": {
+    "message": "Loading the full text…"
+  },
+  "feedsMarkAllConfirm": {
+    "message": "Mark $1 items as read?"
+  },
+  "feedsMarkAllRead": {
+    "message": "Mark all as read"
+  },
+  "feedsMarkRead": {
+    "message": "Mark as read"
+  },
+  "feedsMarkUnread": {
+    "message": "Mark as unread"
+  },
+  "feedsSaveFailed": {
+    "message": "Could not save this item: $1"
+  },
+  "feedsSaveToLibrary": {
+    "message": "Save to library"
+  },
+  "feedsSaved": {
+    "message": "Saved"
+  },
+  "feedsSavedNotice": {
+    "message": "Saved to your library. Highlights and notes are kept with it."
   }
 }

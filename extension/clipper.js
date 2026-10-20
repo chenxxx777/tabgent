@@ -60,6 +60,65 @@ export function cleanClip(result) {
   };
 }
 
+// Saves a cleaned clip: its images are downloaded (cookies only for imagesFrom's own site;
+// none when it is empty) and uploaded first, then vault/clip/save writes the clip.
+// Returns { ok, saved, kept, failed }; ok is false when the Markdown cannot fit.
+export async function storeClip(
+  vault,
+  { url, title, clip, imagesFrom = '', origin, existing = null, fetch, onProgress },
+) {
+  const images = clip.images.filter((image) => image.url);
+  const downloaded = images.length
+    ? await fetchImages(clip.images, imagesFrom, { fetch, onProgress })
+    : { assets: [], files: new Map(), failed: [] };
+  await uploadImages(vault, downloaded.assets);
+  // Web addresses replace the placeholders of unsaved images, unless that makes the
+  // Markdown too long: then those images keep only their description.
+  let markdown = localizeMarkdown(clip.markdown, clip.imageToken, clip.images, downloaded.files);
+  if (bytes(markdown) > CLIP_LIMIT.markdown)
+    markdown = localizeMarkdown(clip.markdown, clip.imageToken, clip.images, downloaded.files, {
+      remote: false,
+    });
+  if (bytes(markdown) > CLIP_LIMIT.markdown) return { ok: false };
+  // Counted by address: an image the page shows at two addresses is one file.
+  const found = new Set(images.map((image) => image.url)).size;
+  const kept = found - downloaded.failed.length;
+  const saved = await vault.request(
+    'vault/clip/save',
+    {
+      url,
+      title,
+      kind: 'web',
+      meta: clip.meta,
+      markdown,
+      html: clip.html,
+      origin,
+      language: clip.language,
+      direction: clip.direction,
+      excerpt: clip.excerpt,
+      words: clip.words,
+      chars: clip.chars,
+      truncated: clip.truncated,
+      assets: downloaded.assets.map(({ sha256, ext, size, source, sources }) => ({
+        sha256,
+        ext,
+        size,
+        source,
+        sources,
+      })),
+      images: {
+        found,
+        saved: kept,
+        remote: downloaded.failed.length,
+        failed: downloaded.failed.slice(0, 200),
+      },
+      ...(existing ? { replace: true, expected: existing.clippedAt } : {}),
+    },
+    { timeout: 60000 },
+  );
+  return { ok: true, saved, kept, failed: downloaded.failed.length };
+}
+
 export function createClipper({ vault, changed = () => {}, fetch = globalThis.fetch }) {
   const running = new Set();
 
@@ -146,69 +205,28 @@ export function createClipper({ vault, changed = () => {}, fetch = globalThis.fe
       await say(tabId, { text: t('clipFailed', ''), tone: 'error' });
       return { ok: false, reason: 'invalid' };
     }
-    // Images are downloaded by the worker and uploaded before the clip is saved.
-    const images = clip.images.filter((image) => image.url);
     // Progress lines are shown in order, before the result.
     let shown = Promise.resolve();
-    const downloaded = images.length
-      ? await fetchImages(clip.images, frame.url, {
-          fetch,
-          onProgress: (done, total) => {
-            shown = shown.then(() =>
-              say(tabId, { text: t('clipSavingImages', done, total), busy: true }),
-            );
-          },
-        })
-      : { assets: [], files: new Map(), failed: [] };
+    const stored = await storeClip(vault, {
+      url,
+      title: clip.title || text(tab.title, 500),
+      clip,
+      imagesFrom: frame.url,
+      origin: { method: clip.method, extractor: clip.extractor, pageUrl: frame.url },
+      existing,
+      fetch,
+      onProgress: (done, total) => {
+        shown = shown.then(() =>
+          say(tabId, { text: t('clipSavingImages', done, total), busy: true }),
+        );
+      },
+    });
     await shown;
-    await uploadImages(vault, downloaded.assets);
-    // Web addresses replace the placeholders of unsaved images, unless that makes the
-    // Markdown too long: then those images keep only their description.
-    let markdown = localizeMarkdown(clip.markdown, clip.imageToken, clip.images, downloaded.files);
-    if (bytes(markdown) > CLIP_LIMIT.markdown)
-      markdown = localizeMarkdown(clip.markdown, clip.imageToken, clip.images, downloaded.files, {
-        remote: false,
-      });
-    if (bytes(markdown) > CLIP_LIMIT.markdown) {
+    if (!stored.ok) {
       await say(tabId, { text: t('clipFailed', ''), tone: 'error' });
       return { ok: false, reason: 'invalid' };
     }
-    // Counted by address: an image the page shows at two addresses is one file.
-    const found = new Set(images.map((image) => image.url)).size;
-    const kept = found - downloaded.failed.length;
-    const saved = await vault.request(
-      'vault/clip/save',
-      {
-        url,
-        title: clip.title || text(tab.title, 500),
-        kind: 'web',
-        meta: clip.meta,
-        markdown,
-        html: clip.html,
-        origin: { method: clip.method, extractor: clip.extractor, pageUrl: frame.url },
-        language: clip.language,
-        direction: clip.direction,
-        excerpt: clip.excerpt,
-        words: clip.words,
-        chars: clip.chars,
-        truncated: clip.truncated,
-        assets: downloaded.assets.map(({ sha256, ext, size, source, sources }) => ({
-          sha256,
-          ext,
-          size,
-          source,
-          sources,
-        })),
-        images: {
-          found,
-          saved: kept,
-          remote: downloaded.failed.length,
-          failed: downloaded.failed.slice(0, 200),
-        },
-        ...(existing ? { replace: true, expected: existing.clippedAt } : {}),
-      },
-      { timeout: 60000 },
-    );
+    const { saved, kept, failed } = stored;
     if (!saved.saved) {
       // Another tab saved a clip of this page meanwhile.
       await say(tabId, { text: t('clipConflict'), tone: 'error' });
@@ -219,7 +237,7 @@ export function createClipper({ vault, changed = () => {}, fetch = globalThis.fe
       text: [
         t('clipSaved', title, clip.words),
         kept ? t('clipImagesSaved', kept) : '',
-        downloaded.failed.length ? t('clipImagesFailed', downloaded.failed.length) : '',
+        failed ? t('clipImagesFailed', failed) : '',
         clip.posts ? t('clipXPartial', clip.posts) : '',
         clip.truncated ? t('clipTruncated') : '',
       ]

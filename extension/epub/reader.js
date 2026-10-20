@@ -79,7 +79,7 @@ $('#library').onclick = () => {
 };
 
 // The library's two tabs: vault documents, and subscriptions (?view=feeds).
-const feeds = initFeeds({ send: (message) => library.send(message), toast });
+const feeds = initFeeds({ send: (message) => library.send(message), toast, destination });
 $('#documentsTab').onclick = () => showTab('documents');
 $('#feedsTab').onclick = () => showTab('feeds');
 $('#libraryTabs').addEventListener('keydown', (event) => {

@@ -5,9 +5,12 @@
 const reader = () => chrome.runtime.getURL('clip/reader.html') + '?url=';
 const views = new Map();
 
-// The page a reader address names (HTTP(S), without fragment), or null.
+// The page a reader address names (HTTP(S), without fragment), or null. A feed item
+// without a link is named urn:tabgent:feed:<64 hex>.
 export function clipSource(url = '') {
   if (typeof url !== 'string' || !url.startsWith(reader())) return null;
+  const urn = /^urn:tabgent:feed:[0-9a-f]{64}(?=#|$)/.exec(url.slice(reader().length));
+  if (urn) return urn[0];
   try {
     const page = new URL(url.slice(reader().length));
     if (!/^https?:$/.test(page.protocol)) return null;
@@ -50,11 +53,47 @@ export function registerClipPort(port) {
     port.disconnect();
     return false;
   }
-  const view = { port };
+  const view = { port, pending: new Map() };
   views.set(tab.id, view);
+  port.onMessage.addListener((message) => {
+    const entry = message?.type === 'reply' && view.pending.get(message.id);
+    if (!entry) return;
+    view.pending.delete(message.id);
+    clearTimeout(entry.timer);
+    if (message.error) entry.reject(Error(String(message.error)));
+    else entry.resolve(message.result ?? null);
+  });
   port.onDisconnect.addListener(() => {
     if (views.get(tab.id) === view) views.delete(tab.id);
+    for (const entry of view.pending.values()) {
+      clearTimeout(entry.timer);
+      entry.reject(Error('The reader closed'));
+    }
+    view.pending.clear();
   });
   port.postMessage({ type: 'ready' });
   return true;
+}
+
+// Tells a tab's current reader something (a feed item it showed was saved).
+export function clipNotify(tabId, message) {
+  try {
+    views.get(tabId)?.port.postMessage(message);
+  } catch {}
+}
+
+// Asks a tab's current reader for something only it has (a feed item's cleaned text).
+let commands = 0;
+export function clipCommand(tabId, command, timeout = 30000) {
+  const view = views.get(tabId);
+  if (!view) return Promise.reject(Error('The reader is not open'));
+  const id = ++commands;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      view.pending.delete(id);
+      reject(Error('The reader did not answer'));
+    }, timeout);
+    view.pending.set(id, { resolve, reject, timer });
+    view.port.postMessage({ type: 'command', id, command });
+  });
 }

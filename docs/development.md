@@ -143,7 +143,11 @@ feed address, by website address and from OPML; checks the index rows and that n
 folder is added, that feed requests carry no cookie or referrer, that a refresh sends the
 ETag and a `304` adds nothing, that a failing feed recovers and a hostile one is refused
 with its reason shown, that the vault keeps answering library requests while the large
-feed is stored, and that an overdue subscription is checked after a browser restart. The
+feed is stored, and that an overdue subscription is checked after a browser restart. It then
+reads items: one with its whole text and an image (fetched without cookies, nothing saved),
+one with a summary whose full text comes from its page (fetched with the test cookie); the
+first highlight saves it as a document with a feed origin; and the inbox's later, archive,
+read and unread states and keys. The
 unit tests `feeds-parse.py` (run them with `/usr/bin/python3` too: its expat 2.2.8 has no
 entity amplification limits), `feeds-vault.py` and `feeds-routing.mjs` cover parsing,
 storage, scheduling and requests in detail.

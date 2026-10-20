@@ -380,6 +380,24 @@
       return { ok: false, reason: 'error', message: String(error?.message || error).slice(0, 300) };
     }
     if (!found) return { ok: false, reason: 'no-selection' };
+    const selection = getSelection();
+    return finish(found, url, {
+      mode,
+      fallbackTitle: document.title,
+      language: document.documentElement.lang,
+      direction: getComputedStyle(document.documentElement).direction,
+      hasSelection: !!selection && !selection.isCollapsed && !!selection.toString().trim(),
+    });
+  }
+
+  // Cleans extracted content the same way for every source: frames and media become links,
+  // images keep only their address, DOMPurify keeps the allowlist, and Turndown writes the
+  // Markdown, both within the vault's limits.
+  function finish(
+    found,
+    url,
+    { mode, fallbackTitle = '', language = '', direction = 'ltr', hasSelection = false },
+  ) {
     // An inert document: nothing in it loads or runs.
     const doc = new DOMParser().parseFromString(found.content || '', 'text/html');
     const article = doc.createElement('div');
@@ -405,23 +423,28 @@
     markdown = cut.markdown;
     truncated ||= cut.truncated;
     const { words, chars, enough } = count(article.textContent);
-    const selection = getSelection();
     // Images the size limits cut away are not saved; their places keep their index.
     const shown = new Set(
       [...article.querySelectorAll('img[data-remote-src]')].map((img) =>
         img.getAttribute('data-remote-src'),
       ),
     );
+    let posts = 0;
+    try {
+      // An X thread saves the posts loaded on the page, separated by rules.
+      if (found.extractor === 'x' && /\/status\/\d+/.test(new URL(url).pathname))
+        posts = article.querySelectorAll('hr').length + 1;
+    } catch {}
     return {
       ok: true,
       mode,
       extractor: label(found.extractor, 60),
-      title: label(found.title) || label(document.title),
+      title: label(found.title) || label(fallbackTitle),
       byline: label(found.author),
       siteName: label(found.site),
       publishedAt: label(found.published, 100),
-      language: label(found.language || document.documentElement.lang, 35),
-      direction: getComputedStyle(document.documentElement).direction === 'rtl' ? 'rtl' : 'ltr',
+      language: label(found.language || language, 35),
+      direction: direction === 'rtl' ? 'rtl' : 'ltr',
       excerpt: label(found.description, LIMIT.excerpt),
       html: article.innerHTML,
       markdown,
@@ -430,14 +453,56 @@
       words,
       chars,
       truncated,
-      // An X thread saves the posts loaded on the page, separated by rules.
-      posts:
-        found.extractor === 'x' && /\/status\/\d+/.test(new URL(url).pathname)
-          ? article.querySelectorAll('hr').length + 1
-          : 0,
+      posts,
       tooLittle: mode === 'article' && !enough,
-      hasSelection: !!selection && !selection.isCollapsed && !!selection.toString().trim(),
+      hasSelection,
     };
+  }
+
+  // Content from elsewhere, for Tabgent's reader: a feed item's own HTML (kind 'feed'), or
+  // a page fetched without running it (kind 'page'), whose main text Defuddle finds. Both
+  // are untrusted and parsed into inert documents.
+  function clean({
+    kind = 'feed',
+    html = '',
+    url = '',
+    title = '',
+    byline = '',
+    siteName = '',
+    publishedAt = '',
+    language = '',
+  } = {}) {
+    try {
+      if (kind === 'page') {
+        const doc = new DOMParser().parseFromString(String(html), 'text/html');
+        const result = new Defuddle(doc, {
+          url,
+          useAsync: false,
+          includeReplies: false,
+          fetch: refuse,
+        }).parse();
+        return finish({ ...result, extractor: 'defuddle' }, url, {
+          mode: 'article',
+          fallbackTitle: title,
+          language: doc.documentElement.lang,
+        });
+      }
+      return finish(
+        {
+          content: String(html),
+          title,
+          author: byline,
+          site: siteName,
+          published: publishedAt,
+          language,
+          extractor: 'feed',
+        },
+        url,
+        { mode: 'article', fallbackTitle: title, language },
+      );
+    } catch (error) {
+      return { ok: false, reason: 'error', message: String(error?.message || error).slice(0, 300) };
+    }
   }
 
   // A small prompt or status in a closed shadow root on a top-layer popover, like the
@@ -579,5 +644,5 @@
     if (!busy) timer = setTimeout(hide, open ? 12000 : tone === 'error' ? 10000 : 7000);
   }
   // cutMarkdown is exposed for tests; the worker calls run, ask and notify.
-  globalThis.tabgentClip = { run, ask, notify, cutMarkdown };
+  globalThis.tabgentClip = { run, ask, notify, cutMarkdown, clean };
 })();

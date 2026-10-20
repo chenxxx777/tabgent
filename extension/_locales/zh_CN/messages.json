@@ -1407,5 +1407,68 @@
   },
   "feedsMore": {
     "message": "加载更多"
+  },
+  "feedsLater": {
+    "message": "稍后读"
+  },
+  "feedsArchive": {
+    "message": "归档"
+  },
+  "feedsBack": {
+    "message": "订阅"
+  },
+  "feedsFrom": {
+    "message": "来自 $1"
+  },
+  "feedsFullTextFailed": {
+    "message": "无法加载全文。请打开原网页，在那里剪藏。"
+  },
+  "feedsFullTextMode": {
+    "message": "全文"
+  },
+  "feedsFullTextAuto": {
+    "message": "订阅源只给摘要时"
+  },
+  "feedsFullTextAlways": {
+    "message": "总是"
+  },
+  "feedsFullTextNever": {
+    "message": "从不（需要时点“加载全文”）"
+  },
+  "feedsImages": {
+    "message": "加载图片"
+  },
+  "feedsKeys": {
+    "message": "快捷键：j、k 上下移动，Enter 打开，m 已读，l 稍后读，e 归档，v 原网页。"
+  },
+  "feedsLoadFullText": {
+    "message": "加载全文"
+  },
+  "feedsLoadingFullText": {
+    "message": "正在加载全文…"
+  },
+  "feedsMarkAllConfirm": {
+    "message": "将 $1 条标为已读？"
+  },
+  "feedsMarkAllRead": {
+    "message": "全部标为已读"
+  },
+  "feedsMarkRead": {
+    "message": "标为已读"
+  },
+  "feedsMarkUnread": {
+    "message": "标为未读"
+  },
+  "feedsSaveFailed": {
+    "message": "无法保存这一条：$1"
+  },
+  "feedsSaveToLibrary": {
+    "message": "保存到资料库"
+  },
+  "feedsSaved": {
+    "message": "已保存"
+  },
+  "feedsSavedNotice": {
+    "message": "已保存到资料库，高亮和笔记会和它保存在一起。"
   }
 }

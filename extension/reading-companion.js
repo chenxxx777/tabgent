@@ -38,6 +38,8 @@ export function createReadingCompanion({
   vault,
   pdfSource,
   clipSource = () => null,
+  // A feed item shown in the reader and not saved yet becomes a vault document first.
+  commitItem = async () => null,
   filePdfDocument = () => undefined,
   epubDocument = () => undefined,
   isEpubReaderUrl = () => false,
@@ -200,6 +202,9 @@ export function createReadingCompanion({
       return parts;
     }
     const current = Number.isInteger(page?.tabId) ? await pageDocument(page.tabId, page, s) : null;
+    // A question about a feed item saves the item first, so Codex can read its article.md.
+    if (current?.view === 'clip' && !current.closed)
+      await commitItem(page.tabId, current.url).catch(() => null);
     // A quote saved as a highlight binds the conversation, whichever reader it came from.
     const binding = highlightBinding(messageSelection(params), current || {});
     if (binding) {

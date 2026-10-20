@@ -594,3 +594,39 @@ footer {
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+#feedViews .spacer {
+  flex: 1;
+}
+#feedKeys {
+  margin: 0 0 6px;
+  font-size: 12px;
+}
+.feed-item {
+  position: relative;
+}
+.feed-item:focus {
+  outline: none;
+  background: var(--hover);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.feed-item .actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin-top: 4px;
+  font-size: 12px;
+  visibility: hidden;
+}
+.feed-item:hover .actions,
+.feed-item:focus .actions,
+.feed-item:focus-within .actions {
+  visibility: visible;
+}
+.feed-item .actions button {
+  padding: 3px 8px;
+  color: var(--muted);
+}
+.feed-item .actions button[aria-pressed='true'] {
+  color: var(--ink);
+  font-weight: 600;
+}

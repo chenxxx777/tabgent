@@ -38,7 +38,7 @@ import {
   clipViewerUrl,
   isCurrentClipSender,
 } from './clip-routing.js';
-import { createFeeds, feedMessages } from './feeds.js';
+import { createFeeds, feedMessages, feedReaderMessages } from './feeds.js';
 startPdfRouting();
 // The page a tab shows: a PDF viewer's PDF, a clipped-page reader's page, or its own URL.
 const pageAddress = (url) => pdfSource(url) || clipSource(url) || url;
@@ -121,6 +121,7 @@ const reading = createReadingCompanion({
   vault,
   pdfSource,
   clipSource,
+  commitItem: (tabId, url) => feeds.commit(tabId, url),
   filePdfDocument,
   epubDocument,
   isEpubReaderUrl,
@@ -926,6 +927,8 @@ async function highlightMessage(msg, sender) {
     let created = {},
       failure = null;
     try {
+      // A feed item not saved yet becomes a vault document first, with the reader's text.
+      if (clipped) await feeds.commit(tabId, url);
       created = await vaultRequest('vault/highlight/create', {
         url,
         title,
@@ -1299,6 +1302,15 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     (epubMessages.has(msg.type) ? epubMessage : highlightMessage)(msg, sender).then(reply, (e) =>
       reply({ error: e.message, code: e.code || 'error' }),
     );
+    return true;
+  }
+  if (feedReaderMessages.has(msg.type)) {
+    // The reader at a feed item's address: its item is named by the reader's own address.
+    isCurrentClipSender(sender)
+      .then((current) =>
+        current ? feeds.reader(msg, sender) : Promise.reject(Error('Invalid clipped page reader')),
+      )
+      .then(reply, (e) => reply({ error: e.message, code: e.code || 'error' }));
     return true;
   }
   if (feedMessages.has(msg.type)) {

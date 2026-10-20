@@ -67,6 +67,10 @@ CLIP_RECORD = "article.json"
 CLIP_MARKDOWN_LIMIT = 3 * 1024 * 1024  # UTF-8 bytes; reading_vault reads up to 4 MiB.
 CLIP_HTML_LIMIT = 4 * 1024 * 1024  # UTF-8 bytes
 CLIP_METHODS = ("article", "page", "selection")
+# A saved feed item: the feed's own content, or the full text read from its page.
+FEED_METHODS = ("feed", "fulltext")
+FEED_URN = re.compile(r"urn:tabgent:feed:[0-9a-f]{64}")
+LIBRARY_STATES = ("later", "archive")
 # A clip's images, uploaded one by one (keyed by SHA-256) and moved into assets/ on save.
 CLIP_ASSET_LIMIT = 5 * 1024 * 1024
 CLIP_ASSETS_LIMIT = 30 * 1024 * 1024
@@ -730,7 +734,12 @@ def save_clip(settings, params):
     conflict with the existing clip, and nothing is written. An article.md the user
     edited is kept as article-edited-<time>.md before it is replaced."""
     url, title, kind, meta = _source(params)
-    if kind != "web" or not re.match(r"https?://", url, re.IGNORECASE):
+    origin = params.get("origin")
+    feed = isinstance(origin, dict) and origin.get("type") == "feed"
+    # A feed item without a link is named urn:tabgent:feed:<hash>; it has no web page.
+    if kind != "web" or not (
+        re.match(r"https?://", url, re.IGNORECASE) or (feed and FEED_URN.fullmatch(url))
+    ):
         raise VaultError("invalid_params", "Only webpages can be clipped")
     markdown = _string(params, "markdown", CLIP_MARKDOWN_LIMIT, required=True)
     content = _string(params, "html", CLIP_HTML_LIMIT, required=True)
@@ -738,18 +747,22 @@ def save_clip(settings, params):
         raise VaultError("invalid_params", "markdown is too long")
     if len(content.encode("utf-8")) > CLIP_HTML_LIMIT:
         raise VaultError("invalid_params", "html is too long")
-    origin = params.get("origin")
-    if not isinstance(origin, dict) or origin.get("method") not in CLIP_METHODS:
+    if not isinstance(origin, dict) or origin.get("method") not in (
+        FEED_METHODS if feed else CLIP_METHODS
+    ):
         raise VaultError(
-            "invalid_params", "origin.method must be article, page or selection"
+            "invalid_params",
+            "origin.method must be "
+            + ("feed or fulltext" if feed else "article, page or selection"),
         )
-    page_url = origin.get("pageUrl", url)
+    page_url = origin.get("pageUrl", url if not feed else "")
     if not (
         isinstance(page_url, str)
         and len(page_url) <= 16384
-        and re.match(r"https?://", page_url, re.IGNORECASE)
+        and (re.match(r"https?://", page_url, re.IGNORECASE) or (feed and not page_url))
     ):
         raise VaultError("invalid_params", "origin.pageUrl must be a web address")
+    source_origin = _feed_origin(origin) if feed else {}
     details = {
         "language": _label(params.get("language"), "language")[:35],
         "direction": "rtl" if params.get("direction") == "rtl" else "ltr",
@@ -826,11 +839,12 @@ def save_clip(settings, params):
         record = {
             "version": FORMAT,
             "origin": {
-                "type": "clip",
+                "type": "feed" if feed else "clip",
                 "method": origin["method"],
                 "extractor": extractor,
                 "pageUrl": page_url,
                 "clippedAt": now,
+                **source_origin,
             },
             "title": name,
             **{key: meta.get(key, "") for key in META},
@@ -1501,6 +1515,12 @@ def _public_document(root, document, created_at):
         "folder": str(folder),
         "highlightsPath": str(folder / "highlights.md"),
         "createdAt": created_at,
+        # Marked to read later or archived in the library.
+        **(
+            {"library": document["library"]}
+            if isinstance(document.get("library"), dict)
+            else {}
+        ),
     }
 
 
@@ -1926,6 +1946,91 @@ def _clip_web(data):
     in Chrome's own viewer has a paper-* document at the same URL)."""
     if data is not None and data["document"]["kind"] != "web":
         raise VaultError("invalid_params", "This address belongs to a PDF or book")
+
+
+def _feed_origin(origin):
+    """Where a saved feed item came from, bounded: the subscription and the entry."""
+    values = {}
+    for key, limit in (
+        ("sourceId", 100),
+        ("sourceUrl", 4096),
+        ("sourceTitle", 500),
+        ("guid", 1024),
+        ("publishedAt", 100),
+    ):
+        value = origin.get(key)
+        if value is not None and not isinstance(value, str):
+            raise VaultError("invalid_params", f"origin.{key} must be a string")
+        if value:
+            values[key] = " ".join(value.split())[:limit]
+    return values
+
+
+def _set_library(data, state):
+    """Later or archive for a saved document (document.library), or no state. The caller
+    holds the vault lock and saves the document."""
+    if state is not None and state not in LIBRARY_STATES:
+        raise VaultError("invalid_params", "state must be later, archive or null")
+    document = data["document"]
+    if state is None:
+        document.pop("library", None)
+    else:
+        document["library"] = {"state": state, "updatedAt": _now()}
+
+
+def document_state(settings, params):
+    """Marks a saved document to read later or archived (state null clears it)."""
+    url, title, kind, _ = _source(params)
+    state = params.get("state")
+    root = _root(settings)
+    with _locked(root):
+        data = _find(root, None, (url, title, kind, {}))
+        if data is None:
+            raise VaultError("not_found", "The document is not saved")
+        _set_library(data, state)
+        _save(root, data)
+    document = data["document"]
+    return {"document": _public_document(root, document, document["createdAt"])}
+
+
+METHODS["vault/document/state"] = document_state
+
+
+def library_documents(root, states=LIBRARY_STATES):
+    """Saved documents marked later or archived: [{document, clip}], newest mark first.
+    Reads without the vault lock, as the library list does."""
+    found = []
+    for folder in ("Articles", "Books"):
+        try:
+            names = sorted(path.name for path in (root / folder).iterdir())
+        except OSError:
+            continue
+        for name in names:
+            if not DOCUMENT_ID.fullmatch(name):
+                continue
+            try:
+                data = _load(root, name)
+            except (VaultError, OSError):
+                continue
+            library = data and data["document"].get("library")
+            if not isinstance(library, dict) or library.get("state") not in states:
+                continue
+            document = data["document"]
+            found.append(
+                {
+                    "document": {
+                        **_public_document(root, document, document["createdAt"]),
+                        "author": document.get("meta", {}).get("author", ""),
+                        "updatedAt": document.get("updatedAt"),
+                    },
+                    "clip": _clip_summary(root, data),
+                }
+            )
+    found.sort(
+        key=lambda entry: _instant(entry["document"]["library"]["updatedAt"]),
+        reverse=True,
+    )
+    return found
 
 
 def _clip_record(root, data):
