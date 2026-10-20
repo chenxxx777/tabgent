@@ -115,41 +115,49 @@
     }
   }
   // Images keep their remote address as data (data-remote-src); nothing is loaded here.
+  // Returns the distinct images in page order and the index of each address.
   function images(root, base) {
     const doc = root.ownerDocument;
-    const found = [];
+    const found = [],
+      index = new Map();
     for (const img of [...root.querySelectorAll('img')]) {
       const width = Number(img.getAttribute('width')),
         height = Number(img.getAttribute('height'));
       let url = absolute(
-        bestSource(img.getAttribute('srcset')) ||
+        img.getAttribute('data-remote-src') ||
+          bestSource(img.getAttribute('srcset')) ||
           img.getAttribute('data-src') ||
           img.getAttribute('src') ||
           '',
         base,
       );
       const alt = label(img.getAttribute('alt'), 1000);
+      if (remote(url)) {
+        const parsed = new URL(url);
+        if (parsed.hostname === 'pbs.twimg.com' && parsed.searchParams.has('name')) {
+          parsed.searchParams.set('name', 'large');
+          url = parsed.href;
+        }
+      }
       // Tracking pixels, inline data and unknown schemes are dropped; alt text stays.
       if (
         (width > 0 && width <= 2) ||
         (height > 0 && height <= 2) ||
         !remote(url) ||
-        found.length >= LIMIT.images
+        (!index.has(url) && found.length >= LIMIT.images)
       ) {
         img.replaceWith(alt ? doc.createTextNode(alt) : '');
         continue;
       }
-      const parsed = new URL(url);
-      if (parsed.hostname === 'pbs.twimg.com' && parsed.searchParams.has('name')) {
-        parsed.searchParams.set('name', 'large');
-        url = parsed.href;
-      }
       for (const name of [...img.getAttributeNames()])
         if (!['alt', 'title', 'width', 'height'].includes(name)) img.removeAttribute(name);
       img.setAttribute('data-remote-src', url);
-      found.push({ url, alt });
+      if (!index.has(url)) {
+        index.set(url, found.length);
+        found.push({ url, alt });
+      }
     }
-    return found;
+    return { found, index };
   }
   // Embedded media and frames become a link to their source; a video keeps its poster.
   function embeds(root, base) {
@@ -203,7 +211,9 @@
     }
   }
 
-  function converter() {
+  // Images are written as placeholders named by a token the page cannot know; the worker
+  // replaces each with its saved file or its web address.
+  function converter(token, index) {
     const service = new TurndownService({
       headingStyle: 'atx',
       hr: '---',
@@ -217,8 +227,9 @@
     service.addRule('tabgentImage', {
       filter: 'img',
       replacement(content, node) {
-        const src = node.getAttribute('data-tabgent-asset') || node.getAttribute('data-remote-src');
+        const src = node.getAttribute('data-remote-src');
         const alt = (node.getAttribute('alt') || '').replace(/[[\]\\]/g, '\\$&');
+        if (index.has(src)) return `![${alt}](tabgent-image-${token}-${index.get(src)})`;
         return src ? `![${alt}](${destination(src)})` : alt;
       },
     });
@@ -325,7 +336,8 @@
     article.append(...doc.body.childNodes);
     doc.body.append(article);
     embeds(article, url);
-    const list = images(article, url);
+    const { found: list, index } = images(article, url);
+    const token = crypto.randomUUID().replace(/-/g, '');
     links(article, url);
     code(article);
     // In place on the wrapper: DOMPurify refuses a root it would remove, such as body.
@@ -333,10 +345,12 @@
     for (const img of article.querySelectorAll('img[data-remote-src]'))
       if (!remote(img.getAttribute('data-remote-src'))) img.remove();
     let truncated = fit(article);
-    let markdown = converter().turndown(article).trim();
-    // Long text is cut at a paragraph break until it fits.
-    while (bytes(markdown) > LIMIT.markdown - 1024) {
-      const size = Math.floor((markdown.length * (LIMIT.markdown - 4096)) / bytes(markdown));
+    let markdown = converter(token, index).turndown(article).trim();
+    // Long text is cut at a paragraph break until it fits, leaving room for the image
+    // addresses the worker may put in place of the placeholders.
+    const cap = LIMIT.markdown - 1024 - list.reduce((sum, image) => sum + image.url.length + 4, 0);
+    while (bytes(markdown) > cap) {
+      const size = Math.floor((markdown.length * (cap - 3072)) / bytes(markdown));
       const cut = markdown.lastIndexOf('\n\n', size);
       markdown = markdown.slice(0, cut > size / 2 ? cut : size);
       truncated = true;
@@ -359,6 +373,7 @@
       html: article.innerHTML,
       markdown,
       images: list,
+      imageToken: token,
       words,
       chars,
       truncated,

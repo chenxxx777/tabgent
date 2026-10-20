@@ -1179,5 +1179,14 @@
   },
   "readingClipped": {
     "message": "Clipped $1"
+  },
+  "clipSavingImages": {
+    "message": "Clipping… images $1 of $2"
+  },
+  "clipImagesSaved": {
+    "message": "$1 images saved."
+  },
+  "clipImagesFailed": {
+    "message": "$1 images could not be saved and stay linked online."
   }
 }

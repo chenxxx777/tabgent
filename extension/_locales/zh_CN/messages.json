@@ -400,5 +400,14 @@
   },
   "readingClipped": {
     "message": "剪藏于 $1"
+  },
+  "clipSavingImages": {
+    "message": "正在剪藏… 图片 $1/$2"
+  },
+  "clipImagesSaved": {
+    "message": "已保存 $1 张图片。"
+  },
+  "clipImagesFailed": {
+    "message": "$1 张图片未能保存，仍链接到网上。"
   }
 }

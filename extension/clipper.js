@@ -3,6 +3,7 @@
 // earlier clip, bounds what the page returns (it is untrusted) and saves it with
 // vault/clip/save. The page and its clipped copy are one vault document, named by its URL.
 import { cleanPageMeta, documentUrl } from './vault-client.js';
+import { fetchImages, localizeMarkdown, uploadImages } from './clip-images.js';
 
 const FILES = [
   'vendor/defuddle/defuddle.js',
@@ -31,9 +32,11 @@ export function cleanClip(result) {
     bytes(html) > CLIP_LIMIT.html
   )
     return null;
+  // Image addresses keep their page order: the placeholders in the Markdown use it.
   const images = (Array.isArray(result.images) ? result.images : [])
     .slice(0, CLIP_LIMIT.images)
-    .filter((image) => /^https?:\/\//i.test(text(image?.url, 4096)));
+    .map((image) => ({ url: text(image?.url, 4096) }))
+    .map((image) => (/^https?:\/\//i.test(image.url) ? image : { url: '' }));
   return {
     title: text(result.title, 500),
     meta: cleanPageMeta({
@@ -51,12 +54,13 @@ export function cleanClip(result) {
     words: count(result.words),
     chars: count(result.chars),
     truncated: result.truncated === true,
-    images: images.length,
+    images,
+    imageToken: /^[0-9a-f]{32}$/.test(result.imageToken || '') ? result.imageToken : '',
     posts: count(result.posts),
   };
 }
 
-export function createClipper({ vault, changed = () => {} }) {
+export function createClipper({ vault, changed = () => {}, fetch = globalThis.fetch }) {
   const running = new Set();
 
   async function inject(tabId, func, args) {
@@ -128,6 +132,35 @@ export function createClipper({ vault, changed = () => {} }) {
       await say(tabId, { text: t('clipFailed', ''), tone: 'error' });
       return { ok: false, reason: 'invalid' };
     }
+    // Images are downloaded by the worker and uploaded before the clip is saved.
+    const images = clip.images.filter((image) => image.url);
+    // Progress lines are shown in order, before the result.
+    let shown = Promise.resolve();
+    const downloaded = images.length
+      ? await fetchImages(clip.images, frame.url, {
+          fetch,
+          onProgress: (done, total) => {
+            shown = shown.then(() =>
+              say(tabId, { text: t('clipSavingImages', done, total), busy: true }),
+            );
+          },
+        })
+      : { assets: [], files: new Map(), failed: [] };
+    await shown;
+    await uploadImages(vault, downloaded.assets);
+    const markdown = localizeMarkdown(
+      clip.markdown,
+      clip.imageToken,
+      clip.images,
+      downloaded.files,
+    );
+    if (bytes(markdown) > CLIP_LIMIT.markdown) {
+      await say(tabId, { text: t('clipFailed', ''), tone: 'error' });
+      return { ok: false, reason: 'invalid' };
+    }
+    // Counted by address: an image the page shows at two addresses is one file.
+    const found = new Set(images.map((image) => image.url)).size;
+    const kept = found - downloaded.failed.length;
     const saved = await vault.request(
       'vault/clip/save',
       {
@@ -135,7 +168,7 @@ export function createClipper({ vault, changed = () => {} }) {
         title: clip.title || text(tab.title, 500),
         kind: 'web',
         meta: clip.meta,
-        markdown: clip.markdown,
+        markdown,
         html: clip.html,
         origin: { method: clip.method, extractor: clip.extractor, pageUrl: frame.url },
         language: clip.language,
@@ -144,8 +177,18 @@ export function createClipper({ vault, changed = () => {} }) {
         words: clip.words,
         chars: clip.chars,
         truncated: clip.truncated,
-        // Images stay at their addresses: article.md links them and the vault has no copy.
-        images: { found: clip.images, saved: 0, remote: clip.images },
+        assets: downloaded.assets.map(({ sha256, ext, size, source }) => ({
+          sha256,
+          ext,
+          size,
+          source,
+        })),
+        images: {
+          found,
+          saved: kept,
+          remote: downloaded.failed.length,
+          failed: downloaded.failed.slice(0, 200),
+        },
         ...(existing ? { replace: true, expected: existing.clippedAt } : {}),
       },
       { timeout: 60000 },
@@ -159,6 +202,8 @@ export function createClipper({ vault, changed = () => {} }) {
     await say(tabId, {
       text: [
         t('clipSaved', title, clip.words),
+        kept ? t('clipImagesSaved', kept) : '',
+        downloaded.failed.length ? t('clipImagesFailed', downloaded.failed.length) : '',
         clip.posts ? t('clipXPartial', clip.posts) : '',
         clip.truncated ? t('clipTruncated') : '',
       ]
