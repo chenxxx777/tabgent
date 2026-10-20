@@ -1127,7 +1127,7 @@
     "message": "让 Tabgent 读取你在 Chrome 中打开的文件"
   },
   "fileAccessIntro": {
-    "message": "你在 Chrome 中打开了电脑上的文件。要在上面高亮、询问 AI 和写笔记，需要你在 Chrome 中授权一次。"
+    "message": "你在 Chrome 中打开了这台电脑上的文件。要在上面高亮、询问 AI 和写笔记，需要你在 Chrome 中授权一次。"
   },
   "fileAccessStepOne": {
     "message": "点击下方的“打开 Tabgent 设置”。"
@@ -1136,7 +1136,7 @@
     "message": "打开“允许访问文件网址”。"
   },
   "fileAccessStepThree": {
-    "message": "回到你的文件。PDF 会在 Tabgent 查看器中打开；在 Markdown、文本和 HTML 文件里选中文字即可开始。"
+    "message": "回到你的文件。PDF 会在 Tabgent 的 PDF 阅读器中打开；在 Markdown、文本和 HTML 文件里选中文字即可开始。"
   },
   "fileAccessOpen": {
     "message": "打开 Tabgent 设置"
@@ -1148,12 +1148,12 @@
     "message": "Tabgent 只读取你自己在 Chrome 中打开的文件，不会浏览你的文件夹，Agent 也不能自行打开文件。"
   },
   "fileAccessNotice": {
-    "message": "Tabgent 还不能读取电脑上的文件。开启一次“允许访问文件网址”，就能在这个文件上高亮和提问。"
+    "message": "Tabgent 还不能读取这台电脑上的文件。开启一次“允许访问文件网址”，就能在这个文件上高亮和提问。"
   },
   "fileAccessNoticeButton": {
     "message": "打开设置"
   },
   "libraryKindFile": {
-    "message": "本机文件"
+    "message": "这台电脑上的文件"
   }
 }
