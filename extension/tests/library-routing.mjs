@@ -483,6 +483,8 @@ try {
     [
       ['quote-selection', 'selectionMenu', ['selection']],
       ['open-epub-reader', 'libraryOpen', ['action']],
+      ['clip-page', 'clipPage', ['action']],
+      ['clip-page-context', 'clipPage', ['page']],
     ],
   );
   console.log('PASS the side panel and the toolbar menu open the library');

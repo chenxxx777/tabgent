@@ -483,6 +483,8 @@ assert.deepEqual(
   [
     ['quote-selection', ['selection']],
     ['open-epub-reader', ['action']],
+    ['clip-page', ['action']],
+    ['clip-page-context', ['page']],
   ],
 );
 chrome.contextMenus.onClicked.listeners[0](
