@@ -209,6 +209,12 @@
   "highlightUnanchoredHint": {
     "message": "当前页面中找不到这段高亮文字，笔记仍然保留。"
   },
+  "highlightPageClosed": {
+    "message": "此页面已关闭，高亮和笔记仍然保留。"
+  },
+  "pageClosedContext": {
+    "message": "$1（已关闭）"
+  },
   "highlightTurns": {
     "message": "已保存 $1 条"
   },
@@ -334,5 +340,793 @@
   },
   "pdfLocalFailed": {
     "message": "无法从阅读库打开这个 PDF：$1"
+  },
+  "newChat": {
+    "message": "新会话"
+  },
+  "titleLabel": {
+    "message": "会话标题"
+  },
+  "connecting": {
+    "message": "正在连接…"
+  },
+  "reconnect": {
+    "message": "重新连接"
+  },
+  "messagesLabel": {
+    "message": "对话"
+  },
+  "jumpLatest": {
+    "message": "跳到最新消息"
+  },
+  "pageContext": {
+    "message": "页面上下文"
+  },
+  "promptLabel": {
+    "message": "给 Codex 发消息"
+  },
+  "promptPlaceholder": {
+    "message": "问 Codex…"
+  },
+  "modelLabel": {
+    "message": "模型"
+  },
+  "defaultModel": {
+    "message": "默认模型"
+  },
+  "effortLabel": {
+    "message": "思考强度"
+  },
+  "scopeLabel": {
+    "message": "浏览器控制范围"
+  },
+  "scopeHint": {
+    "message": "选择 Codex 可以控制哪些页面"
+  },
+  "scopeWindow": {
+    "message": "当前窗口"
+  },
+  "scopeBrowser": {
+    "message": "所有窗口"
+  },
+  "sendLabel": {
+    "message": "发送消息"
+  },
+  "sendHint": {
+    "message": "发送 · Enter"
+  },
+  "stopLabel": {
+    "message": "停止生成"
+  },
+  "keyboardHint": {
+    "message": "Enter 发送 · Shift + Enter 换行"
+  },
+  "copied": {
+    "message": "已复制"
+  },
+  "copy": {
+    "message": "复制"
+  },
+  "copyFailed": {
+    "message": "复制失败。请选中文本后手动复制。"
+  },
+  "requestTimeout": {
+    "message": "Codex 超时。请重试或重新加载页面。"
+  },
+  "completed": {
+    "message": "已完成"
+  },
+  "working": {
+    "message": "进行中…"
+  },
+  "failed": {
+    "message": "失败"
+  },
+  "disconnected": {
+    "message": "已断开"
+  },
+  "code": {
+    "message": "代码"
+  },
+  "actionContext": {
+    "message": "查看页面上下文"
+  },
+  "actionTabs": {
+    "message": "查看标签页"
+  },
+  "actionRead": {
+    "message": "阅读页面"
+  },
+  "actionNavigate": {
+    "message": "打开网页"
+  },
+  "actionOpen": {
+    "message": "打开新页面"
+  },
+  "actionClick": {
+    "message": "点击页面"
+  },
+  "actionType": {
+    "message": "填写输入框"
+  },
+  "actionScroll": {
+    "message": "滚动页面"
+  },
+  "actionBack": {
+    "message": "返回"
+  },
+  "actionScreenshot": {
+    "message": "截取屏幕截图"
+  },
+  "command": {
+    "message": "运行命令"
+  },
+  "webSearch": {
+    "message": "搜索网页"
+  },
+  "running": {
+    "message": "正在运行"
+  },
+  "input": {
+    "message": "输入"
+  },
+  "result": {
+    "message": "结果"
+  },
+  "screenshotAlt": {
+    "message": "工具返回的截图"
+  },
+  "error": {
+    "message": "错误"
+  },
+  "toolFailed": {
+    "message": "工具执行失败"
+  },
+  "status": {
+    "message": "状态"
+  },
+  "waitingTool": {
+    "message": "正在等待工具结果…"
+  },
+  "copyReply": {
+    "message": "复制回答"
+  },
+  "thinking": {
+    "message": "思考中…"
+  },
+  "replying": {
+    "message": "正在回答…"
+  },
+  "usingTool": {
+    "message": "正在使用工具…"
+  },
+  "reasoning": {
+    "message": "思考"
+  },
+  "thinkingLabel": {
+    "message": "思考"
+  },
+  "inProgress": {
+    "message": "进行中"
+  },
+  "analyzing": {
+    "message": "正在分析你的问题…"
+  },
+  "effortLow": {
+    "message": "低"
+  },
+  "effortMedium": {
+    "message": "中"
+  },
+  "effortHigh": {
+    "message": "高"
+  },
+  "effortXhigh": {
+    "message": "很高"
+  },
+  "effortMax": {
+    "message": "最高"
+  },
+  "effortUltra": {
+    "message": "超高"
+  },
+  "effortNone": {
+    "message": "无"
+  },
+  "effortMinimal": {
+    "message": "最低"
+  },
+  "connected": {
+    "message": "Codex 已连接"
+  },
+  "connectionFailed": {
+    "message": "连接失败"
+  },
+  "waitingAnswer": {
+    "message": "正在等待你的回答…"
+  },
+  "waitingApproval": {
+    "message": "正在等待批准…"
+  },
+  "answerPlaceholder": {
+    "message": "输入你的回答"
+  },
+  "submitAnswer": {
+    "message": "提交回答"
+  },
+  "permissionRequest": {
+    "message": "Codex 请求了额外的权限。此会话只能控制所选范围内的页面。"
+  },
+  "decline": {
+    "message": "拒绝"
+  },
+  "disconnectedDraft": {
+    "message": "已断开连接。草稿已保存。"
+  },
+  "output": {
+    "message": "输出"
+  },
+  "stopped": {
+    "message": "已停止"
+  },
+  "requestFailed": {
+    "message": "请求失败"
+  },
+  "retrying": {
+    "message": "正在重试…"
+  },
+  "bridgeInstall": {
+    "message": "请先安装 Codex 桌面版或 Codex CLI。"
+  },
+  "bridgeLaunch": {
+    "message": "无法启动 Codex。"
+  },
+  "statusDuration": {
+    "message": "$status$ · $duration$ 秒",
+    "placeholders": {
+      "status": {
+        "content": "$1"
+      },
+      "duration": {
+        "content": "$2"
+      }
+    }
+  },
+  "setupInstallTitle": {
+    "message": "安装 Codex 后继续"
+  },
+  "setupInstallHint": {
+    "message": "从官网获取桌面版应用并移到「应用程序」。返回后我们会自动检测。"
+  },
+  "setupInstallAction": {
+    "message": "获取 Codex"
+  },
+  "setupCheck": {
+    "message": "重新检测"
+  },
+  "setupChecking": {
+    "message": "正在检测 Codex…"
+  },
+  "setupSignInTitle": {
+    "message": "登录 Codex"
+  },
+  "setupSignInHint": {
+    "message": "使用你的 ChatGPT 账号继续。登录期间草稿会保留在这里。"
+  },
+  "setupSignInAction": {
+    "message": "使用 ChatGPT 登录"
+  },
+  "setupOpening": {
+    "message": "正在打开登录页面…"
+  },
+  "setupWaiting": {
+    "message": "请在打开的页面中完成登录。此会话会自动连接。"
+  },
+  "setupReopen": {
+    "message": "打开登录页面"
+  },
+  "setupCancel": {
+    "message": "取消登录"
+  },
+  "setupLoginFailed": {
+    "message": "登录未完成。请重试。"
+  },
+  "setupConnecting": {
+    "message": "正在连接你的账号…"
+  },
+  "setupInstalled": {
+    "message": "已检测到 Codex"
+  },
+  "setupPageTitle": {
+    "message": "设置 Tabgent"
+  },
+  "helperTitle": {
+    "message": "在这台电脑上连接 Codex"
+  },
+  "helperHint": {
+    "message": "Tabgent 需要一个本地连接器才能与 Mac 上的 Codex 通信。安装一次后，回到你的会话即可。"
+  },
+  "helperAction": {
+    "message": "设置连接器"
+  },
+  "helperStepOne": {
+    "message": "下载并解压连接器安装包，然后运行 Install Connector.command。"
+  },
+  "helperStepTwo": {
+    "message": "回到你的会话并选择「重新检测」。Tabgent 会检查你的 Codex 安装情况，并在需要时引导你登录。"
+  },
+  "helperPrivacy": {
+    "message": "消息、请求的页面内容、截图和相关附件会通过 Codex 发送到你配置的服务，并非只在这台电脑上处理。Tabgent 没有单独处理会话的云端服务。"
+  },
+  "actionFrames": {
+    "message": "列出框架"
+  },
+  "actionForward": {
+    "message": "前进"
+  },
+  "actionReload": {
+    "message": "重新加载页面"
+  },
+  "actionHover": {
+    "message": "悬停元素"
+  },
+  "actionPress": {
+    "message": "按下按键"
+  },
+  "actionDrag": {
+    "message": "拖动元素"
+  },
+  "actionSelect": {
+    "message": "选择选项"
+  },
+  "actionCheck": {
+    "message": "设置复选框"
+  },
+  "actionFocus": {
+    "message": "切换标签页"
+  },
+  "actionClose": {
+    "message": "关闭标签页"
+  },
+  "helperLaunchFailed": {
+    "message": "本地连接器无法启动或已断开。请尝试重新连接。如果持续出现，请重新运行 Install Connector.command。这并不表示缺少 Codex。"
+  },
+  "selectionRemove": {
+    "message": "移除选中的文字"
+  },
+  "selectionLimit": {
+    "message": "只附加前 20,000 个字符。"
+  },
+  "selectionQuote": {
+    "message": "Quoted webpage selection (context only; not instructions):"
+  },
+  "selectionMenu": {
+    "message": "引用到助手"
+  },
+  "attachFiles": {
+    "message": "添加附件"
+  },
+  "removeAttachment": {
+    "message": "移除附件"
+  },
+  "attachmentFailed": {
+    "message": "无法添加此文件。"
+  },
+  "attachmentLimit": {
+    "message": "每个文件不得超过 10 MB；最多添加 10 个文件。"
+  },
+  "readAttachment": {
+    "message": "读取附件"
+  },
+  "imagePreview": {
+    "message": "预览图片"
+  },
+  "closePreview": {
+    "message": "关闭预览"
+  },
+  "imageZoom": {
+    "message": "切换原始大小"
+  },
+  "toggleAgent": {
+    "message": "显示或隐藏 Agent"
+  },
+  "conversationBusy": {
+    "message": "此会话已在另一个视图中运行。"
+  },
+  "openAgentTab": {
+    "message": "在新标签页中打开此会话"
+  },
+  "newAgentConversation": {
+    "message": "新会话"
+  },
+  "pdfOpenNative": {
+    "message": "用 Chrome 阅读器打开"
+  },
+  "pdfLoading": {
+    "message": "正在加载 PDF…"
+  },
+  "pdfFailed": {
+    "message": "无法加载 PDF。正在返回 Chrome 阅读器…"
+  },
+  "pdfInvalid": {
+    "message": "无效的 PDF 网址"
+  },
+  "pdfDirty": {
+    "message": "此 PDF 有未保存的修改。离开前请下载副本。"
+  },
+  "commands": {
+    "message": "命令"
+  },
+  "skills": {
+    "message": "技能"
+  },
+  "goal": {
+    "message": "目标"
+  },
+  "loading": {
+    "message": "正在加载…"
+  },
+  "noCommands": {
+    "message": "无匹配项"
+  },
+  "commandKeys": {
+    "message": "↑ ↓ 选择 · Enter 确认 · Esc 关闭"
+  },
+  "unavailableRunning": {
+    "message": "当前回合结束后可用"
+  },
+  "manageSkills": {
+    "message": "启用/禁用技能"
+  },
+  "manageSkillsHint": {
+    "message": "管理 Codex 可以使用的技能"
+  },
+  "selected": {
+    "message": "已选择"
+  },
+  "save": {
+    "message": "保存"
+  },
+  "refresh": {
+    "message": "刷新"
+  },
+  "pause": {
+    "message": "暂停"
+  },
+  "resume": {
+    "message": "恢复"
+  },
+  "edit": {
+    "message": "编辑"
+  },
+  "clear": {
+    "message": "清空"
+  },
+  "objective": {
+    "message": "目标"
+  },
+  "tokenBudgetOptional": {
+    "message": "Token 预算（可选）"
+  },
+  "tokensUsed": {
+    "message": "已用 Token"
+  },
+  "timeUsed": {
+    "message": "已用时间"
+  },
+  "thread": {
+    "message": "会话"
+  },
+  "contextWindow": {
+    "message": "上下文窗口"
+  },
+  "unavailable": {
+    "message": "不可用"
+  },
+  "contextLeft": {
+    "message": "剩余上下文"
+  },
+  "tokens": {
+    "message": "个 token"
+  },
+  "unknownCommand": {
+    "message": "未知命令。输入 / 可选择命令或技能。"
+  },
+  "browserPermissions": {
+    "message": "浏览器操作使用所选范围。Codex 工具遵循你的本地配置。命令和文件操作使用只读沙盒并请求批准；此菜单不会更改这些权限。"
+  },
+  "planMode": {
+    "message": "计划模式"
+  },
+  "goalActive": {
+    "message": "进行中"
+  },
+  "goalPaused": {
+    "message": "已暂停"
+  },
+  "goalBlocked": {
+    "message": "已受阻"
+  },
+  "goalUsageLimited": {
+    "message": "已达用量上限"
+  },
+  "goalBudgetLimited": {
+    "message": "已达 Token 预算"
+  },
+  "goalComplete": {
+    "message": "已完成"
+  },
+  "cmdSkills": {
+    "message": "浏览并使用已安装的技能"
+  },
+  "cmdGoal": {
+    "message": "设置或查看长期任务目标"
+  },
+  "cmdModel": {
+    "message": "选择模型和思考强度"
+  },
+  "cmdPlan": {
+    "message": "在计划模式和普通对话之间切换"
+  },
+  "cmdNew": {
+    "message": "以相同页面上下文开始新会话"
+  },
+  "cmdRename": {
+    "message": "重命名此会话"
+  },
+  "cmdCompact": {
+    "message": "压缩会话上下文"
+  },
+  "cmdStatus": {
+    "message": "会话配置和 Token 用量"
+  },
+  "cmdPermissions": {
+    "message": "查看当前权限"
+  },
+  "cmdCopy": {
+    "message": "复制上一条回答"
+  },
+  "cmdExport": {
+    "message": "将此会话导出为 Markdown"
+  },
+  "workedFor": {
+    "message": "用时 $1 秒"
+  },
+  "activity": {
+    "message": "执行记录"
+  },
+  "exitCode": {
+    "message": "退出码"
+  },
+  "duration": {
+    "message": "用时"
+  },
+  "agents": {
+    "message": "代理"
+  },
+  "details": {
+    "message": "详情"
+  },
+  "fileChanges": {
+    "message": "文件改动"
+  },
+  "compacting": {
+    "message": "正在压缩上下文"
+  },
+  "imageGeneration": {
+    "message": "正在生成图片"
+  },
+  "waiting": {
+    "message": "等待中"
+  },
+  "actionSelectText": {
+    "message": "选择 PDF 文字"
+  },
+  "actionHighlight": {
+    "message": "高亮 PDF 文字"
+  },
+  "actionSavePdf": {
+    "message": "保存标注后的 PDF"
+  },
+  "updatedPlan": {
+    "message": "更新的计划"
+  },
+  "allowOnce": {
+    "message": "本次允许"
+  },
+  "allowSession": {
+    "message": "本次会话内允许"
+  },
+  "cancel": {
+    "message": "取消"
+  },
+  "approvalReason": {
+    "message": "原因"
+  },
+  "approvalDetails": {
+    "message": "请求的操作"
+  },
+  "requestInputRequired": {
+    "message": "请先回答每个问题，再继续。"
+  },
+  "steerHint": {
+    "message": "Steer · Enter"
+  },
+  "steerLabel": {
+    "message": "Steer"
+  },
+  "queueHint": {
+    "message": "排队消息 · Enter"
+  },
+  "queueLabel": {
+    "message": "排队消息"
+  },
+  "queuedMessages": {
+    "message": "排队消息"
+  },
+  "editFollowup": {
+    "message": "编辑消息"
+  },
+  "removeFollowup": {
+    "message": "删除排队消息"
+  },
+  "followupPlaceholder": {
+    "message": "任意要求"
+  },
+  "stopHint": {
+    "message": "停止 · Esc"
+  },
+  "stopping": {
+    "message": "正在停止…"
+  },
+  "sendingMessage": {
+    "message": "正在发送…"
+  },
+  "pendingMessage": {
+    "message": "待发送"
+  },
+  "messageNotDelivered": {
+    "message": "未送达"
+  },
+  "resendMessage": {
+    "message": "重试"
+  },
+  "steerQueued": {
+    "message": "Steer"
+  },
+  "steerQueuedHint": {
+    "message": "提交而不打断模型"
+  },
+  "followupActions": {
+    "message": "排队消息操作"
+  },
+  "disableQueueing": {
+    "message": "关闭排队"
+  },
+  "enableQueueing": {
+    "message": "开启排队"
+  },
+  "queuePaused": {
+    "message": "因中断已暂停排队"
+  },
+  "resumeQueue": {
+    "message": "恢复"
+  },
+  "confirmStop": {
+    "message": "再按一次 Esc 停止"
+  },
+  "relatedOpen": {
+    "message": "打开会话"
+  },
+  "lineageFrom": {
+    "message": "此会话创建自"
+  },
+  "lineageTo": {
+    "message": "创建了新会话："
+  },
+  "lineageUntitled": {
+    "message": "新会话"
+  },
+  "lineageGroup": {
+    "message": "创建了 $1 个新会话"
+  },
+  "lineageDetails": {
+    "message": "会话详情"
+  },
+  "lineageCopy": {
+    "message": "复制会话 ID"
+  },
+  "lineageCopied": {
+    "message": "已复制"
+  },
+  "pageHistory": {
+    "message": "网页会话"
+  },
+  "closeHistory": {
+    "message": "关闭会话历史"
+  },
+  "historyEmpty": {
+    "message": "此页面还没有会话。"
+  },
+  "historyThisPage": {
+    "message": "当前页面"
+  },
+  "historyToday": {
+    "message": "今天"
+  },
+  "historyYesterday": {
+    "message": "昨天"
+  },
+  "historyEarlier": {
+    "message": "更早"
+  },
+  "historyJustNow": {
+    "message": "刚刚"
+  },
+  "permissions": {
+    "message": "权限"
+  },
+  "permissionQuestion": {
+    "message": "操作应如何获得批准？"
+  },
+  "permissionAsk": {
+    "message": "请求批准"
+  },
+  "permissionAskHint": {
+    "message": "只读访问之外的操作先请求批准。"
+  },
+  "permissionAuto": {
+    "message": "代为审批"
+  },
+  "permissionAutoHint": {
+    "message": "由 Codex 根据风险审批请求。"
+  },
+  "permissionFull": {
+    "message": "完全访问"
+  },
+  "permissionFullHint": {
+    "message": "不受限制的文件和网络访问。"
+  },
+  "selectModel": {
+    "message": "选择模型"
+  },
+  "scopeQuestion": {
+    "message": "Agent 可以控制哪些浏览器标签页？"
+  },
+  "scopeWindowExplanation": {
+    "message": "访问此消息所在窗口中的标签页。"
+  },
+  "scopeBrowserExplanation": {
+    "message": "访问此浏览器配置文件中所有窗口的标签页。"
+  },
+  "linkOpenCurrent": {
+    "message": "在关联的网页标签页中打开"
+  },
+  "linkOpenNew": {
+    "message": "在新标签页中打开"
+  },
+  "historyUnavailable": {
+    "message": "无法加载会话。请关闭此列表后重试。"
+  },
+  "helperRequirements": {
+    "message": "需要 macOS、Python 3.9 或更高版本，以及兼容的 Codex 安装。此连接器目前不支持 Windows 或 Linux。"
+  },
+  "helperDownload": {
+    "message": "下载 macOS 连接器"
+  },
+  "helperDownloadUnavailable": {
+    "message": "连接器下载暂不可用。如果你有源文件，请按照下面的步骤安装。"
+  },
+  "helperStorage": {
+    "message": "连接器安装在 ~/Library/Application Support/Tabgent。你的 Codex 登录信息、配置和会话历史仍保存在 Codex 的数据目录中。"
+  },
+  "helperSourceInstall": {
+    "message": "在 Tabgent 源码文件夹中打开终端，然后运行："
+  },
+  "pdfFrameTitle": {
+    "message": "PDF 文档"
+  },
+  "epubPageTitle": {
+    "message": "EPUB"
   }
 }
