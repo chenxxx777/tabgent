@@ -32,6 +32,19 @@ const dates = new Intl.DateTimeFormat(chrome.i18n.getUILanguage(), {
   dateStyle: 'medium',
   timeStyle: 'short',
 });
+// A published date as the page states it: a date, or the date of a time in the offset the
+// site wrote, never moved to this computer's time zone (2026-08-07 is not shown as Aug 6).
+const days = new Intl.DateTimeFormat(chrome.i18n.getUILanguage(), {
+  dateStyle: 'medium',
+  timeZone: 'UTC',
+});
+function publishedDate(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})(?:$|T)/.exec(value || '');
+  if (!match) return '';
+  const [year, month, day] = match.slice(1).map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return Number.isNaN(date.getTime()) ? '' : days.format(date);
+}
 localize();
 
 // A feed item: { item, source, saved, current: { result, method } } once shown.
@@ -321,6 +334,7 @@ async function showClip() {
     return fail(t('clipIncomplete'));
   const when = Date.parse(clip.origin?.clippedAt);
   const title = clip.title || reply.document?.title || page;
+  const published = publishedDate(clip.publishedAt);
   if (!feed) $('delete').hidden = false;
   await present({
     html: new TextDecoder().decode(bytes),
@@ -328,6 +342,7 @@ async function showClip() {
     byline: [
       clip.author,
       clip.siteName || (web(page) ? new URL(page).hostname : ''),
+      published ? loadTimeData.getStringF('readingPublished', published) : '',
       Number.isNaN(when) ? '' : loadTimeData.getStringF('readingClipped', dates.format(when)),
     ],
     language: clip.language,
@@ -339,6 +354,25 @@ async function showClip() {
     },
     images: (root) => prepareImages(root, clip.assets),
   });
+  // Only links were saved: said here too, so the copy is not taken for the page's text.
+  if (clip.contentStatus === 'linksOnly') notice(t('clipLinksOnlyNotice'));
+  void showCover(clip);
+}
+// The page's cover image above the text, unless the text already shows that image.
+async function showCover(clip) {
+  const file = clip.cover?.file;
+  if (
+    !/^assets\/[0-9a-f]{16}\.(?:jpg|png|gif|webp|avif)$/.test(file || '') ||
+    $('content').querySelector(`img[data-tabgent-asset="${file}"]`)
+  )
+    return;
+  try {
+    const { reply, bytes } = await readAll('clipAsset', { file });
+    const url = URL.createObjectURL(new Blob([bytes], { type: reply.mime }));
+    images.set(file, Promise.resolve(url));
+    $('cover').src = url;
+    $('cover').hidden = false;
+  } catch {}
 }
 
 // A feed item's full text: its page, fetched by the worker with the site's cookies, read

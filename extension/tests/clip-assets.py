@@ -207,6 +207,103 @@ with tempfile.TemporaryDirectory(prefix="tabgent-clip-assets-") as directory:
         )
         print("PASS a clip moves its uploaded images into assets/ and records them")
 
+        # The page's cover is one of the clip's images: recorded with its address, written
+        # in the front matter, reported to the library and readable like the other images.
+        # Where the author, date and cover came from, and what the clip holds, are recorded.
+        cover = {
+            "source": "https://cdn.example.test/chart.png",
+            "file": f"assets/{name}",
+        }
+        sources = {"author": "site:example.test", "publishedAt": "title-line"}
+        covered = clip(
+            settings,
+            [chart],
+            replace=True,
+            cover=cover,
+            metaSources={**sources, "unknown": "ignored"},
+            contentStatus="text",
+        )
+        record = json.loads((folder / "article.json").read_text())
+        assert record["cover"] == cover
+        assert record["metaSources"] == sources and record["contentStatus"] == "text"
+        assert covered["clip"]["cover"] == cover["file"]
+        assert covered["clip"]["contentStatus"] == "text"
+        front = (folder / "article.md").read_text().split("\n---\n", 1)[0]
+        assert f'\ncover: "{cover["file"]}"' in front, front
+        read = call(
+            settings,
+            "vault/clip/read",
+            {"documentId": covered["document"]["id"]},
+        )["clip"]
+        assert read["cover"] == cover and read["metaSources"] == sources
+        assert read["contentStatus"] == "text"
+        image = call(
+            settings,
+            "vault/clip/asset/read",
+            {"documentId": covered["document"]["id"], "file": cover["file"]},
+        )
+        assert base64.b64decode(image["data"]) == PNG
+        # A cover that could not be saved keeps its address; a clip of only links says so.
+        remote = {"source": "https://cdn.example.test/cover.jpg", "file": ""}
+        links = clip(
+            settings, [chart], replace=True, cover=remote, contentStatus="linksOnly"
+        )
+        record = json.loads((folder / "article.json").read_text())
+        assert record["cover"] == remote and record["metaSources"] == {}
+        assert (
+            links["clip"]["cover"] == ""
+            and links["clip"]["contentStatus"] == "linksOnly"
+        )
+        assert (
+            '\ncover: "https://cdn.example.test/cover.jpg"'
+            in (folder / "article.md").read_text()
+        )
+        listed = call(settings, "vault/documents/list", {})["documents"]
+        entry = next(d for d in listed if d["id"] == links["document"]["id"])
+        assert entry["clip"]["contentStatus"] == "linksOnly"
+        # Records written before these fields read as a clip of the page's text.
+        old = dict(record)
+        for key in ("cover", "metaSources", "contentStatus"):
+            old.pop(key)
+        (folder / "article.json").write_text(json.dumps(old))
+        listed = call(settings, "vault/documents/list", {})["documents"]
+        entry = next(d for d in listed if d["id"] == links["document"]["id"])
+        assert entry["clip"]["contentStatus"] == "text" and entry["clip"]["cover"] == ""
+        # A cover that is not one of the clip's images, or not a web address, an unknown
+        # status and a source that is not a short name are refused, and nothing is written.
+        before = (folder / "article.json").read_bytes()
+        for bad in (
+            {
+                "cover": {
+                    "source": cover["source"],
+                    "file": "assets/0000000000000000.png",
+                }
+            },
+            {"cover": {"source": "file:///etc/hosts", "file": ""}},
+            {"cover": "https://cdn.example.test/chart.png"},
+            {"contentStatus": "complete"},
+            {"metaSources": {"author": "Site Rule!"}},
+            {"metaSources": ["metadata"]},
+        ):
+            reply = vault.handle(
+                settings,
+                "vault/clip/save",
+                {
+                    "url": URL,
+                    "title": "Images",
+                    "kind": "web",
+                    "markdown": "text",
+                    "html": "<p>text</p>",
+                    "origin": {"method": "article"},
+                    "assets": [chart],
+                    "replace": True,
+                    **bad,
+                },
+            )
+            assert reply["error"]["code"] == "invalid_params", (bad, reply)
+        assert (folder / "article.json").read_bytes() == before
+        print("PASS a clip records its cover, metadata sources and links-only status")
+
         # A new clip reuses a saved image without uploading it again, adds a new one, and
         # removes the image the old clip used; files the user put in assets/ stay.
         (folder / "assets" / "my-sketch.png").write_bytes(b"user file")

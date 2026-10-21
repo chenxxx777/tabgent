@@ -464,6 +464,30 @@ Markdown at a paragraph break (else a line break, never inside a surrogate pair)
 is found, the page offers **Save whole page** (Defuddle on `body` without low-score
 removal) or, with a selection, the selected text only.
 
+A figure of images keeps its caption beside them in the Markdown: the `<figcaption>` on the
+line right after the image (or before it, where the HTML puts it first), in italics unless it
+already has emphasis, with no blank line between; a figure of other content (a quote, a list)
+keeps its caption as a paragraph. Defuddle itself moves a figure's caption after its image.
+A paragraph after an image that is not a `<figcaption>` stays a paragraph (Meituan's posts
+put their explanation there; it is not a caption).
+
+The author, date and cover come from Defuddle (meta tags, JSON-LD, `<time>` and English
+bylines, recorded as `metadata`), then from the line next to the page's first heading
+(`作者：…`, or a date such as `2026-08-07` or `2026年3月5日` in an element whose class or id
+names a date, time or publish; recorded as `title-line`), then from a few sites' own layouts
+(`site:<host>`: Meituan's tech blog header; WeChat's publish time from the article's
+`create_time`, its author line or account, and `msg_cdn_url`). Dates keep the site's time
+zone: a date alone stays a date (a date Defuddle read as midnight UTC is written as the date),
+and WeChat's Unix time is written in China time with its offset, as WeChat shows it. The
+cover is `og:image`, `twitter:image`, JSON-LD `image.url` or `link[rel=image_src]`, else the
+site's own cover; X posts and selections have none. `metaSources` in `article.json` names the
+source of each value.
+
+A clip whose text is only links and at most 12 words besides, with no image (an embedded
+video turned into a link, a page whose text did not load), is `contentStatus: "linksOnly"`
+(not for selections or X posts). It is saved, but the page says that only links were saved
+instead of the usual message, the reader shows a notice and the library marks it.
+
 The worker treats the result as untrusted: `cleanClip` refuses oversized or empty text and
 bounds every field before `vault/clip/save`. The vault writes `article.html` (the cleaned
 HTML in a page whose policy, `default-src 'none'`, blocks scripts and remote loads if the
@@ -478,7 +502,10 @@ under the vault lock the connector only writes and renames files. `vault/documen
 and `vault/documents/list` report the clip, the side panel offers **Clip this page again**,
 and the reading context of any message about the page names its `article.md`.
 
-Images are saved by the worker (`clip-images.js`), not the page. The clipping script writes
+Images are saved by the worker (`clip-images.js`), not the page. The page's cover goes first
+in the same download (so the count limit never leaves it out), with the same limits, Referer
+and cookies; it is recorded as `cover: { source, file }` (`file` empty when it was not saved)
+and in the front matter, and is not counted among the page's images. The clipping script writes
 each image in the Markdown as a placeholder named by a random per-clip token, which the page
 cannot read from the isolated world. The worker fetches each distinct address once with its
 host access (no CORS), the Referer Chrome sends from the page (`referer.js`: Chrome's
@@ -534,7 +561,12 @@ and `require-trusted-types-for 'script'` with only DOMPurify's policy, on top of
 extension policy that forbids inline scripts. Nothing is loaded from the web: images
 recorded in `article.json` are read from the vault in chunks when they come into view and
 shown as `blob:` URLs; others show their description and a link to them online. Links open
-in a new tab with `noopener noreferrer`; other schemes lose their `href`.
+in a new tab with `noopener noreferrer`; other schemes lose their `href`. The byline shows the
+published date as the page states it (formatted in UTC from its date part, so `2026-08-07` is
+never shown as the day before), and the cover shows above the text unless the text already
+has that image. The library shows each clip's cover from the vault when its entry comes into
+view (`libraryCover`, relayed to `vault/clip/asset/read`, which reads only images the record
+lists).
 
 The reader loads the webpage reading layer (`selection-content.js`, `web-anchor.js`,
 `highlight-note.js` and `highlight-content.js`) after setting `globalThis.tabgentReadingView`

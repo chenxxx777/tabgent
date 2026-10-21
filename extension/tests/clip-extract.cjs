@@ -1,7 +1,9 @@
 // Clipping extraction on generated pages: Defuddle, the shared sanitizer settings and
 // Turndown run in the page as the service worker injects them. Covers lazy images, tables,
 // code, links, embeds, unsafe markup, a synthetic X thread, X timelines, selections, the
-// whole-page fallback and short pages. Nothing is fetched by the clipping script.
+// whole-page fallback, short pages, figure captions, pages of only links, and the author,
+// date and cover with their sources (Meituan and WeChat layouts from de-identified
+// fixtures). Nothing is fetched by the clipping script.
 const assert = require('node:assert/strict'),
   fs = require('node:fs'),
   path = require('node:path'),
@@ -59,12 +61,48 @@ ${Array.from({ length: 900 }, (_, i) => `<p>Figure ${i}</p><img src="${longImage
     <footer><p>Copyright Fixture Blog. All rights reserved.</p></footer></body></html>`,
   '/short': `<!doctype html><html><head><title>Short page</title></head><body>
     <main><p>Only a few words here.</p></main></body></html>`,
+  // Figures: a caption after its image, a caption before it, and a quote with a caption.
+  '/figures': `<!doctype html><html lang="en"><head><title>Figures</title></head><body><main><article>
+    <h1>Figures</h1>${paragraphs(4, 'Opening')}
+    <figure><img src="/img/chart.png" alt="Chart" width="800" height="500">
+      <figcaption><div>Components of an evaluation.</div></figcaption></figure>
+    ${paragraphs(2, 'Middle')}
+    <figure><figcaption>Results <em>by group</em>, before the image.</figcaption>
+      <a href="/img/second-large.png"><img src="/img/second.png" alt="" width="800" height="500"></a></figure>
+    <figure><blockquote><p>A quoted line about readers.</p></blockquote><figcaption>A source of the quote</figcaption></figure>
+    ${paragraphs(2, 'Closing')}</article></main></body></html>`,
+  // A page that is only an embedded video: its cover is the page's og:image.
+  '/video': `<!doctype html><html lang="en"><head><title>A recorded talk</title>
+    <meta property="og:image" content="/img/poster.jpg"></head><body><main>
+    <h1>A recorded talk</h1><iframe src="https://video.example.test/embed/talk" title="Talk"></iframe>
+    </main></body></html>`,
+  // A Chinese post whose author and date are only in the line under its title.
+  '/zh-post': `<!doctype html><html lang="zh-CN"><head><title>示例文章</title></head><body><main><article>
+    <h1>示例文章</h1><div class="post-meta"><span class="post-author">作者：王小明</span>
+    <span class="publish-date">发布于 2026年3月5日 21:00</span><span class="reading-time">阅读 5 分钟</span></div>
+    ${Array.from({ length: 6 }, (_, i) => `<p>第 ${i + 1} 段：读者会反复回到困难的段落，记下自己的理解，并把问题和想法写成笔记，留待以后再读。</p>`).join('')}
+    </article></main></body></html>`,
+  // An English date as text: Defuddle reads it as midnight UTC; it is kept as a date.
+  '/dated': `<!doctype html><html lang="en"><head><title>Dated</title></head><body><main><article>
+    <h1>Dated</h1><p>March 5, 2026</p>${paragraphs(5, 'Dated')}</article></main></body></html>`,
   // About 5 MB of UTF-8 (Chinese text is three bytes a character): over both limits.
   '/huge': `<!doctype html><html lang="zh"><head><title>长文</title></head><body><main><article><h1>长文</h1>${Array.from(
     { length: 28000 },
     (_, i) =>
       `<p>第 ${i} 段：自主是对自己行动的认同，而不是独立于他人。读者会反复回到困难的段落，记下自己的理解。认同的目标能坚持得更久。</p>`,
   ).join('')}</article></main></body></html>`,
+};
+// Pages of sites with their own layout rules, served at their addresses: the structure of
+// real pages (captured 2026-10-21), with generated names, text, ids and images.
+const sitePages = {
+  'https://tech.meituan.com/2026/08/07/fixture.html': fs.readFileSync(
+    path.join(__dirname, 'fixtures/meituan-tech.html'),
+    'utf8',
+  ),
+  'https://mp.weixin.qq.com/s/FIXTUREfixture0001': fs.readFileSync(
+    path.join(__dirname, 'fixtures/wechat-article.html'),
+    'utf8',
+  ),
 };
 // X fixtures are served at their x.com addresses (nothing reaches the network).
 const xPages = {
@@ -128,7 +166,15 @@ function xThread() {
       if (body) return route.fulfill({ contentType: 'text/html; charset=utf-8', body });
       return route.abort();
     });
-    await page.route(/^(?!https:\/\/(?:clip\.test|x\.com)\/)/, (route) => route.abort());
+    await page.route(/^https:\/\/(?:tech\.meituan\.com|mp\.weixin\.qq\.com)\//, (route) => {
+      const body = sitePages[route.request().url()];
+      if (body) return route.fulfill({ contentType: 'text/html; charset=utf-8', body });
+      return route.abort();
+    });
+    await page.route(
+      /^(?!https:\/\/(?:clip\.test|x\.com|tech\.meituan\.com|mp\.weixin\.qq\.com)\/)/,
+      (route) => route.abort(),
+    );
     async function open(pathname) {
       await page.goto(pathname.startsWith('https://') ? pathname : 'https://clip.test' + pathname);
       await page.evaluate(() => {
@@ -205,6 +251,21 @@ function xThread() {
     );
     assert.match(html, /<img[^>]+data-remote-src="https:\/\/clip\.test\/img\/lazy\.jpg"/);
     assert.ok(article.words > 150, article.words);
+    // Its metadata came from the page's meta tags; it has no cover image, and it is text.
+    assert.deepEqual(article.metaSources, {
+      author: 'metadata',
+      publishedAt: 'metadata',
+      siteName: 'metadata',
+    });
+    assert.equal(article.cover, '');
+    assert.equal(article.contentStatus, 'text');
+    // A figure's caption stays in the HTML as a figcaption, and right under its image in
+    // the Markdown.
+    assert.match(
+      html,
+      /<figure>[\s\S]*<img[^>]+lazy\.jpg[\s\S]*<figcaption>A lazily loaded figure<\/figcaption><\/figure>/,
+    );
+    assert.match(md, new RegExp(`!\\[Lazy figure\\]${image(0)}\n\\*A lazily loaded figure\\*\n\n`));
 
     // The whole page: the body without navigation, headers, footers and asides.
     const whole = await run({ mode: 'page', url: 'https://clip.test/blog/autonomy' });
@@ -235,12 +296,132 @@ function xThread() {
       reason: 'no-selection',
     });
 
-    // A short page asks for a fallback.
+    // A short page asks for a fallback; a few words without links are still its text.
     await open('/short');
     const short = await run({ mode: 'article', url: 'https://clip.test/short' });
     assert.equal(short.ok, true);
     assert.equal(short.tooLittle, true);
     assert.equal(short.hasSelection, false);
+    assert.equal(short.contentStatus, 'text');
+
+    // Figures keep each caption right under its image (Defuddle puts a caption the page
+    // shows first after the image, as text); a quote's caption stays its own paragraph (a
+    // line right after a quote would join it).
+    await open('/figures');
+    const figures = await run({ mode: 'article', url: 'https://clip.test/figures' });
+    assert.equal(figures.ok, true);
+    const figure = (n) => `\\(tabgent-image-${figures.imageToken}-${n}\\)`;
+    assert.match(
+      figures.markdown,
+      new RegExp(`\n\n!\\[Chart\\]${figure(0)}\n\\*Components of an evaluation\\.\\*\n\n`),
+    );
+    assert.match(
+      figures.markdown,
+      new RegExp(`\n\n!\\[\\]${figure(1)}\n\\*Results by group, before the image\\.\\*\n\n`),
+    );
+    assert.match(figures.markdown, /> A quoted line about readers\.\n\nA source of the quote/);
+    // HTML that is not run through Defuddle (a feed item) keeps a caption the page puts
+    // first before its image, and a linked image's link; a caption with emphasis is not
+    // wrapped in more.
+    const feedFigures = await page.evaluate(() =>
+      globalThis.tabgentClip.clean({
+        kind: 'feed',
+        url: 'https://clip.test/feed-item',
+        html: `<p>Intro.</p><figure><figcaption>Results <em>by group</em>.</figcaption>
+          <a href="/img/second-large.png"><img src="/img/second.png" alt=""></a></figure><p>After.</p>`,
+      }),
+    );
+    assert.match(
+      feedFigures.markdown,
+      new RegExp(
+        `Intro\\.\n\nResults \\*by group\\*\\.\n\\[!\\[\\]\\(tabgent-image-${feedFigures.imageToken}-0\\)\\]\\(https://clip\\.test/img/second-large\\.png\\)\n\nAfter\\.`,
+      ),
+    );
+    assert.equal((figures.html.match(/<figcaption>/g) || []).length, 3);
+
+    // Only an embedded video: the clip says it holds only links, in article and whole-page
+    // mode, and the page's og:image is its cover.
+    await open('/video');
+    for (const mode of ['article', 'page']) {
+      const video = await run({ mode, url: 'https://clip.test/video' });
+      assert.equal(video.ok, true);
+      assert.equal(video.contentStatus, 'linksOnly', mode);
+      assert.equal(video.cover, 'https://clip.test/img/poster.jpg');
+      assert.equal(video.metaSources.cover, 'metadata');
+      assert.equal(video.tooLittle, mode === 'article');
+    }
+    assert.deepEqual(requests, []);
+
+    // A Chinese post: the author and date from the line under its title, the date as the
+    // date the page shows (no time zone is invented for it).
+    await open('/zh-post');
+    const zh = await run({ mode: 'article', url: 'https://clip.test/zh-post' });
+    assert.equal(zh.byline, '王小明');
+    assert.equal(zh.publishedAt, '2026-03-05');
+    assert.equal(zh.metaSources.author, 'title-line');
+    assert.equal(zh.metaSources.publishedAt, 'title-line');
+    // A date Defuddle reads from text (midnight UTC) is kept as that date.
+    await open('/dated');
+    const dated = await run({ mode: 'article', url: 'https://clip.test/dated' });
+    assert.equal(dated.publishedAt, '2026-03-05');
+    assert.equal(dated.metaSources.publishedAt, 'metadata');
+
+    // Meituan's tech blog: the team, the date and the cover from its post header. An image
+    // followed by a paragraph keeps that paragraph as text in its place: it is not a caption.
+    const meituanUrl = 'https://tech.meituan.com/2026/08/07/fixture.html';
+    await open(meituanUrl);
+    const meituan = await run({ mode: 'article', url: meituanUrl });
+    assert.equal(meituan.ok, true, JSON.stringify(meituan).slice(0, 300));
+    assert.equal(meituan.byline, '示例技术团队');
+    assert.equal(meituan.publishedAt, '2026-08-07');
+    assert.equal(meituan.cover, 'https://p1.meituan.net/fixture/cover-0001.jpg');
+    assert.deepEqual(meituan.metaSources, {
+      author: 'site:tech.meituan.com',
+      publishedAt: 'site:tech.meituan.com',
+      siteName: 'metadata',
+      cover: 'site:tech.meituan.com',
+    });
+    const placeholder = (n) => `\\(tabgent-image-${meituan.imageToken}-${n}\\)`;
+    assert.match(
+      meituan.markdown,
+      new RegExp(
+        `!\\[\\]${placeholder(0)}\n\n图后的第一段正文：它解释上图，但不是图注，在原网页里就是一段普通正文。\n\n> 引用的一句话`,
+      ),
+    );
+    assert.doesNotMatch(meituan.markdown, /\n\*图后的第一段/);
+    assert.doesNotMatch(meituan.html, /<figcaption>/);
+    assert.match(meituan.markdown, /第 1 段：引言[\s\S]*第 12 段：小结/);
+    assert.equal(meituan.contentStatus, 'text');
+    assert.deepEqual(requests, []);
+
+    // A WeChat article: the publish time from the article's own data, in China time as
+    // WeChat shows it (its element is empty until WeChat's script fills it); the author
+    // from the author line, the cover from og:image.
+    const wechatUrl = 'https://mp.weixin.qq.com/s/FIXTUREfixture0001';
+    await open(wechatUrl);
+    const wechat = await run({ mode: 'article', url: wechatUrl });
+    assert.equal(wechat.ok, true, JSON.stringify(wechat).slice(0, 300));
+    assert.equal(wechat.publishedAt, '2026-10-18T21:00:00+08:00');
+    assert.equal(wechat.byline, '示例作者');
+    assert.equal(wechat.cover, 'https://mmbiz.qpic.cn/sz_mmbiz_jpg/FIXTURECOVER/0?wx_fmt=jpeg');
+    assert.deepEqual(wechat.metaSources, {
+      author: 'site:mp.weixin.qq.com',
+      publishedAt: 'site:mp.weixin.qq.com',
+      siteName: 'metadata',
+      cover: 'metadata',
+    });
+    // A selection has the page's author and date, but no cover.
+    await page.evaluate(() =>
+      getSelection().selectAllChildren(document.querySelector('#js_content p')),
+    );
+    const quote = await run({ mode: 'selection', url: wechatUrl });
+    assert.equal(quote.ok, true);
+    assert.equal(quote.cover, '');
+    assert.equal(quote.publishedAt, '2026-10-18T21:00:00+08:00');
+    assert.equal(quote.metaSources.cover, undefined);
+    assert.equal(quote.contentStatus, 'text');
+    await page.evaluate(() => getSelection().removeAllRanges());
+    assert.deepEqual(requests, []);
 
     // A very long page is cut at a paragraph break to the vault's limits, and says so.
     await open('/huge');
@@ -273,6 +454,9 @@ function xThread() {
     );
     assert.notEqual(thread.imageToken, article.imageToken);
     assert.equal(thread.posts, 3);
+    // X posts are their author's words: no page cover, never "only links".
+    assert.equal(thread.cover, '');
+    assert.equal(thread.contentStatus, 'text');
     // A short title: the author and how the post starts, not the page title.
     assert.equal(
       thread.title,
@@ -419,7 +603,9 @@ function xThread() {
     await page.waitForTimeout(50);
     await page.keyboard.press('Escape');
     assert.equal(await choice, 'cancel');
-    console.log('PASS clip extraction: article, page, selection, short page and X thread');
+    console.log(
+      'PASS clip extraction: article, page, selection, short page, X thread, captions, links only, metadata and cover',
+    );
   } finally {
     await browser.close();
   }
