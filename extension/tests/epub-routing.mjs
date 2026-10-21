@@ -223,8 +223,8 @@ assert.deepEqual(vaultCalls().at(-1).params, {
 console.log('PASS import and reopen requests are relayed for the hashed book identity');
 
 // Highlight and Ask AI: the quote carries the vault record, nearby text and a locator.
-const folder = '/vault/Books/book-small-1a2b3c4d';
-const document = { id: 'book-small-1a2b3c4d', kind: 'epub', folder, createdAt: 'now' };
+const fullTextPath = '/vault/Full Document Contents/Books/A Small Book.md';
+const document = { id: 'book-small-1a2b3c4d', kind: 'epub', fullTextPath, createdAt: 'now' };
 const saved = {
   id: 'h001',
   text: 'more persistent',
@@ -241,7 +241,7 @@ const reply = await call({
   text: 'more persistent',
   anchor,
   context: { before: 'People are ', after: ' when they endorse.', extra: 'x' },
-  chapterFile: 'chapters/01-chapter-one.md',
+  section: 1,
 });
 assert.deepEqual(reply, { document, highlight: saved });
 assert.deepEqual(vaultCalls().findLast((m) => m.method === 'vault/highlight/create').params, {
@@ -286,19 +286,27 @@ assert.deepEqual(asked.context, { before: 'People are ', after: ' when they endo
 assert.equal(asked.locator.kind, 'epub');
 assert.deepEqual(asked.locator.anchor, cleanEpubAnchor(anchor));
 assert.equal(asked.locator.documentId, document.id);
-assert.equal(asked.locator.chapterFile, folder + '/chapters/01-chapter-one.md');
+// Codex reads the chapter (section 1) from the book's full text in the vault.
+assert.equal(asked.locator.section, 1);
+assert.equal(asked.locator.fullText, fullTextPath);
 assert.ok(asked.locator.capturedAt);
 assert.equal(asked.documentId, 'reader-doc');
-// Chapter files outside the book's chapters folder are never named.
-await call({
-  type: 'epubHighlightCreate',
-  ask: true,
-  sha256,
-  text: 'more persistent',
-  anchor,
-  chapterFile: '../../../etc/passwd.md',
-});
-assert.equal(selections().at(-1).locator.chapterFile, undefined);
+// A section that is not a chapter number, or a path from the page, is never passed on.
+for (const section of [0, 1.5, '1', '../../../etc/passwd.md']) {
+  await call({
+    type: 'epubHighlightCreate',
+    ask: true,
+    sha256,
+    text: 'more persistent',
+    anchor,
+    section,
+    chapterFile: '../../../etc/passwd.md',
+  });
+  const { locator } = selections().at(-1);
+  assert.equal(locator.section, undefined);
+  assert.equal(locator.fullText, undefined);
+  assert.equal(locator.chapterFile, undefined);
+}
 // A failed save still hands off the quote, without a highlight.
 host['vault/highlight/create'] = () => {
   throw { code: 'vault_unwritable', message: 'Read-only' };
@@ -315,7 +323,7 @@ assert.equal(
     .code,
   'invalid_params',
 );
-console.log('PASS Ask AI hands off highlight, context and an EPUB locator with the chapter file');
+console.log('PASS Ask AI hands off highlight, context and an EPUB locator with the chapter');
 
 // Saved highlights are checked against this book before Ask AI or Delete.
 host['vault/document/resolve'] = (params) =>
@@ -468,14 +476,15 @@ assert.deepEqual(posted.findLast((m) => m.type === 'command').command, {
 readerCommands.context = () => ({
   before: 'People are ',
   after: ' when',
-  chapterFile: 'chapters/01-chapter-one.md',
+  section: 1,
 });
 await side({ type: 'readingOpen', documentId: document.id, highlightId: 'h001' });
 const opened = selections().at(-1);
 assert.equal(opened.url, 'urn:sha256:' + sha256);
 assert.deepEqual(opened.context, { before: 'People are ', after: ' when' });
 assert.equal(opened.locator.kind, 'epub');
-assert.equal(opened.locator.chapterFile, folder + '/chapters/01-chapter-one.md');
+assert.equal(opened.locator.section, 1);
+assert.equal(opened.locator.fullText, fullTextPath);
 // A note from the panel list is saved and the reader refreshes its highlight records.
 readerCommands.refresh = () => null;
 await side({ type: 'readingNote', documentId: document.id, highlightId: 'h001', note: 'Mine' });
@@ -489,7 +498,7 @@ assert.deepEqual(posted.findLast((m) => m.type === 'command').command, {
   action: 'refresh',
 });
 saved.note = 'Mine';
-// Messages from the reader tab carry a reading context that names the book's chapters.
+// Messages from the reader tab carry a reading context that names the book's full text.
 await chat.onMessage.listeners[0]({
   type: 'ui',
   name: 'codexRpc',
@@ -502,7 +511,7 @@ const part = turn.message.params.input.find((p) => p.text?.startsWith(readingCon
 const reading = JSON.parse(part.text.slice(readingContextPrefix.length));
 assert.equal(reading.document.kind, 'epub');
 assert.equal(reading.document.url, 'urn:sha256:' + sha256);
-assert.equal(reading.document.chapters, folder + '/chapters');
+assert.equal(reading.document.fullText, fullTextPath);
 assert.equal(reading.highlight.userNote, 'Mine', "The user's note goes with the message");
 // A closed book leaves the reader tab without a document.
 for (const listener of port.onMessage.listeners) listener({ type: 'book', sha256: '' });
@@ -575,7 +584,7 @@ const afterReloadReading = JSON.parse(
 assert.equal(afterReloadReading.saving, 'highlight');
 assert.equal(afterReloadReading.highlight.id, 'h001');
 assert.deepEqual(
-  (({ url, kind, chapters }) => ({ url, kind, chapters }))(afterReloadReading.document),
-  { url: 'urn:sha256:' + sha256, kind: 'epub', chapters: folder + '/chapters' },
+  (({ url, kind, fullText }) => ({ url, kind, fullText }))(afterReloadReading.document),
+  { url: 'urn:sha256:' + sha256, kind: 'epub', fullText: fullTextPath },
 );
 console.log('PASS a reloaded, then closed EPUB reader keeps its book for the Agent tab');

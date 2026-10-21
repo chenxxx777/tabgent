@@ -14,19 +14,18 @@ The truncated state is exposed in its tooltip and model context.
 When a conversation is about a document, each message also carries a reading
 context: the document's title, URL and kind, the bound highlight's text and
 location, your note on that highlight (up to 2,000 characters, marked as yours), up
-to five earlier saved turns about that highlight, and the path of the ReadingVault
-folder. When a question refers to earlier reading, Codex can list, search and read
-the notes in that folder with the read-only `reading_vault` tool,
-without an approval prompt. It reads only the notes Tabgent writes (`AGENTS.md`,
-each document's `highlights.md`, `source.md` and `anchors.json`, a clipped page's
-`article.md`, an imported book's `chapters/NN-<title>.md` and an imported PDF's
-`pages/NNN.md`), never other files
-in or outside the folder, and it cannot write. Notes it
+to five earlier saved turns about that highlight, the path of the document's note and
+full text, and the path of the reading vault folder. When a question refers to earlier
+reading, Codex can list, search and read the notes in that folder with the read-only
+`reading_vault` tool, without an approval prompt. It reads only the files Tabgent writes
+and records for each document (`AGENTS.md`, each document's note, its discussions with
+Codex, its full text and its `anchors.json`), and only when the file's front matter
+names that document, never other files in or outside the folder, and it cannot write. Notes it
 reads are sent to the model like any other tool result.
 
 Clipping a page (**Clip this page**) reads its main text from the page as it is shown in
 your browser, including text you see only when signed in and personal information on the
-page (for example names and replies on X), and saves it in the ReadingVault. The text is
+page (for example names and replies on X), and saves it in the reading vault. The text is
 extracted in the page by scripts bundled with Tabgent; no other service is involved. Then
 the extension downloads the page's images directly from their servers, with the Referer
 Chrome sends when the page shows them (the page's address for images on the page's own
@@ -50,7 +49,7 @@ another account, and never passes YouTube's sign-in or bot check: when YouTube a
 or returns no caption text, the clip keeps the description or show notes and says that no
 transcript was saved. Audio is never transcribed or uploaded.
 Clipping does not send anything to Codex. A message about the page names the clipped text
-(its `article.md` path) in the reading context, and Codex reads it only on request.
+(its full text file's path) in the reading context, and Codex reads it only on request.
 
 Browser content and selection metadata are marked as untrusted context. Do not
 assume prompt-injection defenses can make an arbitrary page safe. Scope checks
@@ -98,36 +97,39 @@ symlink so existing attachment paths remain valid.
 | ------------------------------------------- | ----------------------------------------------------------------------- |
 | `~/Library/Application Support/Tabgent/`    | Installed connector and, for normal installations, extension files.     |
 | `$CODEX_HOME/projects/tabgent/attachments/` | User-uploaded file copies, each in a generated subdirectory.            |
-| `~/ReadingVault/` or the configured folder  | Saved highlights, your notes on them, page URLs, anchors, discussions.  |
-| `Books/book-*/` in the vault                | Imported EPUB files, their SHA-256 record, and chapter text.            |
-| `Books/paper-*/` in the vault               | PDF highlights; imported or highlighted local PDFs, SHA-256, page text. |
-| `Articles/article-*/` in the vault          | Webpage highlights; a clipped page's text, HTML, images and record.     |
+| `~/Tabgent/` or the configured folder       | One note per document by category: highlights, your comments, URLs.     |
+| `Discussions/` in the vault                 | Saved discussions with Codex, one file per document.                    |
+| `Full Document Contents/` in the vault      | Clipped pages' text; imported EPUB books' chapters and PDFs' pages.     |
+| `Attachments/` in the vault                 | Clipped images and covers; copies of imported EPUB books and PDFs.      |
+| `.tabgent/documents/` in the vault          | Anchors, notes and turns; clip HTML and records; originals, SHA-256.    |
 | `.tabgent/feeds.db` in the vault            | Subscriptions; items' text, full text read, later and archive state.    |
 | Chrome extension local storage              | Note saves awaiting retry (at most 100), EPUB positions, file prompt.   |
-| `$CODEX_HOME/projects/tabgent/vault.json`   | The configured ReadingVault folder.                                     |
+| `$CODEX_HOME/projects/tabgent/vault.json`   | The configured vault folder.                                            |
 | Shared Codex session storage and index      | Conversation history and project association.                           |
 | Chrome extension session storage            | Tab bindings, selection drafts, text drafts, and attachment references. |
 
-The ReadingVault holds one folder per document. `highlights.md` contains the
-document title, URL and metadata (author, site, publication date when the page
-declares them), each highlighted passage with its location and time, the note you
-wrote on it, and the saved discussion: your question as typed (with any other
-quoted passage) and the final answer, without tool output or reasoning.
-`anchors.json` holds the same notes and turns plus anchors, thread IDs and
-timestamps; `.tabgent/index.json` maps URLs to folders. Highlight conversations are saved automatically. Questions about a page without a
+The vault holds one Markdown note per document, in a folder for its category
+(`Articles/`, `Tweets/`, `Videos/`, `Podcasts/`, `PDFs/`, `Books/`, `Local Files/`). The
+note contains the document title, URL and metadata (author, site, publication date when
+the page declares them) and each highlighted passage with its location, time and the
+comment you wrote on it. Its file in `Discussions/` holds the saved discussion: your
+question as typed (with any other quoted passage) and the final answer, without tool
+output or reasoning. `.tabgent/documents/<id>/anchors.json` holds the same comments and
+turns plus anchors, thread IDs and timestamps; `.tabgent/catalog.json` maps documents to
+their files and URLs to documents. Highlight conversations are saved automatically. Questions about a page without a
 highlight are saved only while **Reading notes** is on, which is the default only
 when the page already has notes. Turning it off stops saving for that conversation;
 it does not delete notes. Delete a highlight in the page (its note goes with it),
-save an empty note to remove only the note, or edit or delete the files yourself, to
-remove saved notes. Nothing in the vault is uploaded by Tabgent.
+save an empty comment to remove only the comment, or edit or delete the files yourself,
+to remove saved notes. Nothing in the vault is uploaded by Tabgent.
 
-A clipped page is saved in its page's folder as `article.md` (the text as Markdown, with
-the page address and clip time), `article.html` (the cleaned page, without scripts, styles,
-forms or frames), its images and cover in `assets/`, and `article.json` (when and how it was
-clipped, the address each image came from, where the author, date and cover were found, and
-whether only links were saved). Clipping the page again
-replaces them after asking; an `article.md` you edited is kept as
-`article-edited-<time>.md`. Tabgent's reader shows a clipped page from these files, in an extension page that runs no
+A clipped page is saved as its full text in `Full Document Contents/` (the text as
+Markdown, with the page address and clip time), its images and cover in
+`Attachments/Images/`, and in its record folder `article.html` (the cleaned page, without
+scripts, styles, forms or frames) and `article.json` (when and how it was clipped, the
+address each image came from, where the author, date and cover were found, and whether
+only links were saved). Clipping the page again replaces them after asking; a full text
+you edited is kept as `<name>（编辑版 <time>）.md`. Tabgent's reader shows a clipped page from these files, in an extension page that runs no
 script from the page and loads nothing from the web; links open in a new tab. Choose
 **Delete clipped copy** there, or delete the files, to remove a clip; the page's highlights
 stay. Reading positions in the reader stay in Chrome extension storage.
@@ -147,14 +149,14 @@ restriction and uses no approval prompts.
 Browser tab/window scope applies to the plugin's browser tool; it is not a scope
 restriction on native Codex tools. The attachment reader only accepts files
 under the upload directory, and the reading-vault tool only reads the notes Tabgent
-writes in the configured ReadingVault folder.
+writes in the configured vault folder.
 
 PDF.js renders documents locally in an extension page. PDF scripts and automatic
 alt-text model downloads are disabled. Opening a PDF alone does not send it to
 Codex; submitting a quote or asking Agent to read it supplies that context.
 Passages marked with Tabgent's selection toolbar (**Highlight**, **Comment**, or **Ask AI**) are
-saved to the local ReadingVault like webpage highlights, in `Books/paper-*/`
-(`highlights.md` and `anchors.json`): the PDF URL, its title and author from the PDF
+saved to the local vault like webpage highlights, in `PDFs/` (the note and its
+discussions, and `anchors.json`): the PDF URL, its title and author from the PDF
 metadata, the host name, each highlighted passage with its page, a comment when one was
 written, and the saved discussion. A PDF opened from the web is not copied into the vault. Highlights, comments and
 edits made with the PDF.js annotation tools are not saved to the vault; they are saved
@@ -163,20 +165,22 @@ only when you download the edited PDF.
 A PDF you open from your computer in Chrome opens in the same viewer, which reads the file
 in Chrome and computes its SHA-256. Opening it writes nothing. Its notes are named
 `urn:sha256:<hash>`, and its first highlight or saved discussion copies the PDF into the
-vault as `Books/paper-*/original.pdf` with `source.json` (file name, size, SHA-256) and the
-page text in `pages/NNN.md`, as for an import from the library. The copy keeps the notes
+vault as `original.pdf` in its record folder with `source.json` (file name, size,
+SHA-256), a copy in `Attachments/PDFs/` and the page text in its full text, as for an
+import from the library. The copy keeps the notes
 usable after the file is moved or deleted, lets the library reopen it, and lets Codex read
 its pages on request; a PDF over 100 MB keeps its notes without a copy. Highlights on a
-Markdown, text or HTML file from your computer are saved under `Articles/` like webpage
+Markdown, text or HTML file from your computer are saved under `Local Files/` like webpage
 highlights, with the file's `file://` path as its address; the file itself is not copied.
 
-A PDF you choose or drop in the library is copied into the vault as
-`Books/paper-*/original.pdf`, with `source.json` recording its file name, size, SHA-256
-and import time, so it can be reopened later without the original file. The text of
-each page is saved beside it in `pages/NNN.md` (read locally with macOS PDFKit; on other
-systems no page text is saved), so Codex can search and read the paper on request. Its
-notes name it `urn:sha256:<hash>` instead of a URL. Opening it does not send it to
-Codex. Delete the folder to remove it. The library lists the vault's documents locally;
+A PDF you choose or drop in the library is copied into the vault as `original.pdf` in
+its record folder, with `source.json` recording its file name, size, SHA-256 and import
+time, so it can be reopened later without the original file, and a copy in
+`Attachments/PDFs/` for other apps. The text of each page is saved in its full text in
+`Full Document Contents/PDFs/` (read locally with macOS PDFKit; on other systems no page
+text is saved), so Codex can search and read the paper on request. Its notes name it
+`urn:sha256:<hash>` instead of a URL. Opening it does not send it to Codex. Delete its
+files to remove it. The library lists the vault's documents locally;
 nothing is uploaded.
 
 **Subscriptions.** Feeds you subscribe to in the library's **Subscriptions** tab are
@@ -207,7 +211,7 @@ page redirects to another site, it is fetched again without cookies. Items an ag
 links to on other sites (Hacker News, Reddit, news digests) are fetched without cookies.
 No referrer is sent. The page is read without running it, and the cleaned text is kept in `feeds.db`. Opening, marking read, later
 or archive writes only to `feeds.db`. Your first highlight, note or question about an item,
-or **Save to library**, saves it as a vault document like a clipped page (`article.md`,
+or **Save to library**, saves it as a vault document like a clipped page (its full text,
 `article.html`, its images, fetched without cookies, and `article.json` naming the feed);
 Codex can then read it like other notes. Later and archive of a saved item are kept in its
 `anchors.json`.

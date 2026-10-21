@@ -10,7 +10,7 @@ const status = document.querySelector('#status');
 const named = pdfSource(location.href);
 const file = isFilePdf(named) && window.top === window;
 const source = isFilePdf(named) && !file ? null : named;
-// An imported PDF (urn:sha256:...) opens from its copy in the ReadingVault.
+// An imported PDF (urn:sha256:...) opens from its copy in the reading vault.
 const local = isLocalPdf(source);
 if (source && !local && !file) {
   const icon = new Image();

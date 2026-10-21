@@ -1,6 +1,6 @@
 // PDF highlights in real Chromium with the source extension and source connector.
 // A temporary profile, HOME, and CODEX_HOME isolate the browser, vault, and Codex state;
-// no account, model, or personal ReadingVault is used. The PDF is generated fixture text.
+// no account, model, or personal vault is used. The PDF is generated fixture text.
 // Codex is replaced by a fixture app-server that replays a completed turn per message.
 const assert = require('node:assert/strict'),
   crypto = require('node:crypto'),
@@ -8,6 +8,7 @@ const assert = require('node:assert/strict'),
   http = require('node:http'),
   os = require('node:os'),
   path = require('node:path'),
+  { vaultDocuments } = require('./vault-files.cjs'),
   { execSync } = require('node:child_process');
 const root = path.resolve(__dirname, '..'),
   { chromium } = require(root + '/node_modules/playwright');
@@ -81,15 +82,13 @@ const fixture = textPdf(
         allowed_origins: [`chrome-extension://${id}/`],
       }),
     );
-    const books = path.join(home, 'ReadingVault/Books');
+    // The PDF's note, and its discussions with Codex in their own file.
     const docs = () =>
-      fs.existsSync(books)
-        ? fs.readdirSync(books).map((name) => ({
-            name,
-            anchors: JSON.parse(fs.readFileSync(path.join(books, name, 'anchors.json'), 'utf8')),
-            markdown: fs.readFileSync(path.join(books, name, 'highlights.md'), 'utf8'),
-          }))
-        : [];
+      vaultDocuments(path.join(home, 'Tabgent')).map((doc) => ({
+        ...doc,
+        markdown: doc.notes,
+        talk: doc.discussions,
+      }));
     const saved = () => docs().reduce((n, d) => n + d.anchors.highlights.length, 0);
     const turns = (count) =>
       until(() => {
@@ -284,16 +283,18 @@ const fixture = textPdf(
     assert.equal(highlight.anchor.page, 2);
     assert.equal(highlight.anchor.quote.exact, first);
     assert.equal(highlight.anchor.rects[0].page, 2);
-    assert.match(doc.markdown, /^type: paper$/m);
-    assert.match(doc.markdown, /^author: "Fixture Author"$/m);
-    assert(doc.markdown.includes(`> ${first}`), doc.markdown);
+    assert.equal(doc.category, 'pdfs');
+    assert.equal(doc.notesPath, path.join(home, 'Tabgent/PDFs/Reading Companion Fixture.md'));
+    assert.match(doc.markdown, /^kind: pdf$/m);
+    assert.match(doc.markdown, /^author: "\[\[Fixture Author\]\]"$/m);
+    assert(doc.markdown.includes(`- ${first} ^h001`), doc.markdown);
     assert(doc.markdown.includes(highlight.location), doc.markdown);
     assert.deepEqual(await until(async () => (await painted()).length && painted()), [first]);
     assert.equal(
       await pdf.evaluate(() => PDFViewerApplication.pdfDocument.annotationStorage.size),
       0,
     );
-    console.log('PASS Highlight in PDF.js writes Books/paper-*/ files through the real connector');
+    console.log('PASS Highlight in PDF.js writes the PDF note through the real connector');
 
     assert.equal(await panels(worker), 0);
     const second = 'independence from other people';
@@ -340,14 +341,14 @@ const fixture = textPdf(
     assert.equal(turn.user, question);
     assert.equal(turn.assistant, 'Fixture answer 1.');
     assert.match(
-      answered.markdown,
-      /## Highlight 002[\s\S]*Why is autonomy not independence\?[\s\S]*Fixture answer 1\./,
+      answered.talk,
+      /## 高亮 002[\s\S]*Why is autonomy not independence\?[\s\S]*Fixture answer 1\./,
     );
     const bound = (await conversation(turn.threadId))?.reading;
     assert.equal(bound?.highlightId, 'h002');
     assert.equal(bound?.kind, 'pdf');
     assert.equal(bound?.url, url);
-    console.log('PASS a turn in the PDF highlight conversation is saved under Books/paper-*');
+    console.log('PASS a turn in the PDF highlight conversation is saved to its discussions');
     const request = (type, params = {}) =>
       panel(
         `import('/bridge.js').then((m) => m.readingRequest(${JSON.stringify(type)}, ${JSON.stringify(params)})).catch((e) => ({ error: e.message }))`,
@@ -409,7 +410,7 @@ const fixture = textPdf(
     assert(await until(() => docs()[0].anchors.highlights[1].note === note));
     assert.match(
       docs()[0].markdown,
-      /## Highlight 002[\s\S]*<!-- tabgent:note h002 start -->\n\n### 笔记\n\n我的看法: autonomy is endorsement, not isolation\.\n\n<!-- tabgent:note h002 end -->\n\n### 对话/,
+      /\^h002\n    - 评论：我的看法: autonomy is endorsement, not isolation\.\n    - [\s\S]*讨论 1 条/,
     );
     await page.close();
     await open('');
@@ -447,8 +448,8 @@ const fixture = textPdf(
       ],
     );
     assert.match(
-      continued.markdown,
-      /## Highlight 002[\s\S]*Why is autonomy[\s\S]*Give an example\.[\s\S]*Fixture answer 2\./,
+      continued.talk,
+      /## 高亮 002[\s\S]*Why is autonomy[\s\S]*Give an example\.[\s\S]*Fixture answer 2\./,
     );
     console.log('PASS Open discussion after a restart reopens the same thread and keeps saving');
     // Through the real connector, the message about h002 carried the note as the user's.
@@ -478,8 +479,8 @@ const fixture = textPdf(
     assert.equal(pageTurn.highlightId, null);
     assert.notEqual(pageTurn.threadId, turn.threadId);
     assert.match(
-      noted.markdown,
-      /## 文档对话[\s\S]*What is the main claim of this paper\?[\s\S]*Fixture answer 1\./,
+      noted.talk,
+      /## 关于整篇[\s\S]*What is the main claim of this paper\?[\s\S]*Fixture answer 1\./,
     );
     panel.close();
     console.log('PASS a page question in the PDF viewer saves to the PDF document');
@@ -488,7 +489,7 @@ const fixture = textPdf(
     await page.mouse.click(hit.left + 4, hit.y);
     await wait(300);
     await press('delete');
-    assert(await until(() => !docs()[0].markdown.includes(`> ${first}`)));
+    assert(await until(() => !docs()[0].markdown.includes(`- ${first} ^h001`)));
     assert.deepEqual(
       docs()[0].anchors.highlights.map((h) => h.id),
       ['h002'],
@@ -531,7 +532,7 @@ const fixture = textPdf(
     assert(await until(() => docs()[0].anchors.highlights.some((h) => h.note === comment)));
     const made = docs()[0].anchors.highlights.find((h) => h.text === 'a goal');
     assert.equal(made.note, comment);
-    assert.match(docs()[0].markdown, /### 笔记\n\nGoals that last\./);
+    assert.match(docs()[0].markdown, /    - 评论：Goals that last\.\n/);
     await page.close();
     await open('');
     assert(

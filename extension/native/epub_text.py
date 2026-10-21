@@ -1,4 +1,4 @@
-"""Plain-text chapters of an EPUB for the ReadingVault, so Codex can read one chapter
+"""Plain-text chapters of an EPUB for the reading vault, so Codex can read one chapter
 or search a whole book without receiving the book itself.
 
 Standard library only. Entries are read into memory with size limits and are never

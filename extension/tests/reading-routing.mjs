@@ -225,10 +225,16 @@ async function completeTurn(session, threadId, input, answer, { turnId, status }
 }
 const appends = () =>
   sent.filter((m) => m.op === 'vault' && m.method === 'vault/discussion/append');
+// The document's note, and its discussions with Codex in their own file.
 const highlightsFile = async (url) =>
   fs.readFileSync(
+    (await direct('vault/document/resolve', { url, title: '', kind: 'web' })).document.notesPath,
+    'utf8',
+  );
+const discussionsFile = async (url) =>
+  fs.readFileSync(
     (await direct('vault/document/resolve', { url, title: '', kind: 'web' })).document
-      .highlightsPath,
+      .discussionsPath,
     'utf8',
   );
 
@@ -265,7 +271,7 @@ try {
     url: 'https://example.test/article?id=7',
     kind: 'web',
     id: documentId,
-    notes: path.join(vaultPath, 'Articles', documentId, 'highlights.md'),
+    notes: path.join(vaultPath, 'Articles', 'Article.md'),
   });
   assert.deepEqual(context.vault, {
     path: vaultPath,
@@ -326,9 +332,13 @@ try {
     discussion.turns.map((t) => t.user),
     ['Why is autonomy not independence?', 'Give an example.'],
   );
-  const markdown = await highlightsFile('https://example.test/article?id=7');
-  assert.match(markdown, /## Highlight 001[\s\S]*Autonomy is endorsement[\s\S]*\*\*User\*\*/);
+  const markdown = await discussionsFile('https://example.test/article?id=7');
+  assert.match(markdown, /## 高亮 001[\s\S]*Autonomy is endorsement[\s\S]*\*\*我\*\*/);
   assert.match(markdown, /Give an example\.[\s\S]*A student who chooses to study\./);
+  assert.match(
+    await highlightsFile('https://example.test/article?id=7'),
+    /\^h001\n[\s\S]*讨论 2 条\]\]/,
+  );
   console.log('PASS follow-ups save to the bound highlight with the side panel closed');
 
   // Interrupted turns and commentary-only replies are not saved.
@@ -437,8 +447,8 @@ try {
   );
   await wait(50);
   assert.match(
-    await highlightsFile('https://example.test/other'),
-    /## 文档对话[\s\S]*What is the main argument\?[\s\S]*The page argues X\./,
+    await discussionsFile('https://example.test/other'),
+    /## 关于整篇[\s\S]*What is the main argument\?[\s\S]*The page argues X\./,
   );
   console.log('PASS document-level questions save only after opting in, with url/title/kind');
 
@@ -564,7 +574,7 @@ try {
   assert(listed.events('codex-reading-changed').length > changedBefore, 'Panels refresh');
   assert.match(
     await highlightsFile('https://example.test/article?id=7'),
-    /> Autonomy is endorsement\n\n<!-- tabgent:note h001 start -->\n\n### 笔记\n\nMy view: autonomy is endorsement\.\n/,
+    /- Autonomy is endorsement \^h001\n    - 评论：My view: autonomy is endorsement\.\n/,
   );
   const withNote = await sendMessage(listed, 'thread-a', 'What did I think?', {
     ...listed.state.selection,
@@ -633,7 +643,7 @@ try {
   const cleared = await sendMessage(listed, 'thread-a', 'Without a note?');
   assert.equal(readingPart(cleared).highlight.userNote, undefined);
   await completeTurn(listed.session, 'thread-a', cleared, 'Stopped', { status: 'interrupted' });
-  assert.doesNotMatch(await highlightsFile('https://example.test/article?id=7'), /### 笔记/);
+  assert.doesNotMatch(await highlightsFile('https://example.test/article?id=7'), /- 评论：/);
   console.log('PASS highlight notes from the page and the panel reach the vault and the context');
 
   // After a browser restart, a thread resumed from page history recovers its binding

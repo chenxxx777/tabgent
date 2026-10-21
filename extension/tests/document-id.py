@@ -31,7 +31,7 @@ def web_anchor(exact):
 
 
 JS = r"""
-import { isChapterFile, isDocumentId } from './extension/document-id.js';
+import { isDocumentId, isSection } from './extension/document-id.js';
 const payload = JSON.parse(await new Promise((resolve) => {
   let data = '';
   process.stdin.setEncoding('utf8');
@@ -41,8 +41,8 @@ const payload = JSON.parse(await new Promise((resolve) => {
 const bad = [];
 for (const id of payload.accept) if (!isDocumentId(id)) bad.push(['accept', id]);
 for (const id of payload.reject) if (isDocumentId(id)) bad.push(['reject', id]);
-for (const file of payload.chapters) if (!isChapterFile(file)) bad.push(['chapter', file]);
-for (const file of payload.badChapters) if (isChapterFile(file)) bad.push(['badChapter', file]);
+for (const n of payload.sections) if (!isSection(n)) bad.push(['section', n]);
+for (const n of payload.badSections) if (isSection(n)) bad.push(['badSection', n]);
 if (bad.length) {
   console.error(JSON.stringify(bad));
   process.exit(1);
@@ -76,7 +76,7 @@ with patch.object(errno, "EDQUOT", None, create=True):
 with tempfile.TemporaryDirectory(prefix="tabgent-document-id-") as directory:
     base = Path(directory)
     settings = base / "codex/vault.json"
-    default = base / "ReadingVault"
+    default = base / "Tabgent"
     with patch.object(vault, "default_path", lambda: default):
         made = []
         cases = [
@@ -208,32 +208,12 @@ with tempfile.TemporaryDirectory(prefix="tabgent-document-id-") as directory:
             assert vault.DOCUMENT_ID.fullmatch(ident), ident
         for bad in rejected:
             assert vault.DOCUMENT_ID.fullmatch(bad) is None, bad
-        chapters = [
-            "chapters/01-chapter-one.md",
-            "chapters/01-第一章.md",
-            "chapters/02-こんにちは.md",
-            "chapters/99-linked.md",
-        ]
-        bad_chapters = [
-            "chapters/1-a.md",
-            "chapters/01-chapter one.md",
-            "chapters/01-a/b.md",
-            "chapters/01-..md",
-            "chapters/notes.md",
-            "01-chapter-one.md",
-        ]
-        for file in chapters:
-            assert vault.CHAPTER_FILE.fullmatch(file.split("/", 1)[1]), file
-        for file in bad_chapters:
-            if not file.startswith("chapters/"):
-                continue
-            assert vault.CHAPTER_FILE.fullmatch(file.split("/", 1)[1]) is None, file
         payload = json.dumps(
             {
                 "accept": accepted,
                 "reject": rejected,
-                "chapters": chapters,
-                "badChapters": bad_chapters,
+                "sections": [1, 2, 100000],
+                "badSections": [0, -1, 1.5, "1", 100001, None, True],
             }
         )
         compared = subprocess.run(
@@ -263,7 +243,6 @@ with tempfile.TemporaryDirectory(prefix="tabgent-document-id-") as directory:
             assert ".." not in reply["error"].get("folder", "")
         named = base / "named-folder"
         call(settings, "vault/configure", {"path": str(named)})
-        (named / "Articles").rmdir()
         original_mkdir = Path.mkdir
 
         def fail_articles(self, *args, **kwargs):
@@ -275,7 +254,17 @@ with tempfile.TemporaryDirectory(prefix="tabgent-document-id-") as directory:
             return original_mkdir(self, *args, **kwargs)
 
         with patch.object(Path, "mkdir", fail_articles):
-            reply = vault.handle(settings, "vault/configure", {"path": str(named)})
+            reply = vault.handle(
+                settings,
+                "vault/highlight/create",
+                {
+                    "url": "https://example.test/disk-full",
+                    "title": "满",
+                    "kind": "web",
+                    "text": "满",
+                    "anchor": web_anchor("满"),
+                },
+            )
         assert reply["error"]["code"] == "disk_full", reply
         assert reply["error"]["folder"] == "Articles", reply
         assert ".tmp" not in reply["error"]["folder"]
@@ -286,7 +275,13 @@ with tempfile.TemporaryDirectory(prefix="tabgent-document-id-") as directory:
         real_open = open
 
         def fail_temp(file, mode="r", *args, **kwargs):
-            if isinstance(mode, str) and "x" in mode and str(file).endswith(".tmp"):
+            # The note's folder: Tabgent's own records are not a folder the user named.
+            if (
+                isinstance(mode, str)
+                and "x" in mode
+                and str(file).endswith(".tmp")
+                and Path(file).parent.name == "Articles"
+            ):
                 denied = PermissionError(errno.EACCES, "Permission denied")
                 denied.filename = str(file)
                 raise denied
@@ -305,10 +300,7 @@ with tempfile.TemporaryDirectory(prefix="tabgent-document-id-") as directory:
                 },
             )
         assert reply["error"]["code"] == "vault_unwritable", reply
-        label = reply["error"].get("folder", "")
-        assert vault.DOCUMENT_ID.fullmatch(label), reply
-        assert label.startswith("article-耳夹式无线耳机体验-"), reply
-        assert ".tmp" not in label and not label.startswith("."), reply
+        assert reply["error"].get("folder") == "Articles", reply
         assert "Permission denied" not in reply["error"]["message"]
         assert "/" not in reply["error"]["message"]
 

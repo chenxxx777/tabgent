@@ -183,7 +183,7 @@
     "message": "更改"
   },
   "readingFolderPlaceholder": {
-    "message": "绝对路径，例如 ~/ReadingVault"
+    "message": "绝对路径，例如 ~/Tabgent"
   },
   "readingFolderHint": {
     "message": "已有笔记不会被移动。"
@@ -337,6 +337,27 @@
   },
   "libraryKindEpub": {
     "message": "EPUB"
+  },
+  "libraryCategoryArticles": {
+    "message": "文章"
+  },
+  "libraryCategoryTweets": {
+    "message": "推文"
+  },
+  "libraryCategoryVideos": {
+    "message": "视频"
+  },
+  "libraryCategoryPodcasts": {
+    "message": "播客"
+  },
+  "libraryCategoryPdfs": {
+    "message": "PDF"
+  },
+  "libraryCategoryBooks": {
+    "message": "书"
+  },
+  "libraryCategoryLocalFiles": {
+    "message": "本地文件"
   },
   "libraryUpdated": {
     "message": "更新于 $1"

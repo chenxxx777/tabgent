@@ -1,8 +1,8 @@
 """Images saved with a clipped webpage: vault/clip/asset stages each image from base64
-chunks (resumable, checked against its SHA-256), and vault/clip/save moves staged images
-into the page folder's assets/, refuses a clip whose images are missing before writing
-anything, and removes images an earlier clip saved that the new one does not use. Uses
-generated, non-sensitive bytes.
+chunks (resumable, checked against its SHA-256), and vault/clip/save copies staged images
+into Attachments/Images/, which every document shares, refuses a clip whose images are
+missing before writing anything, and removes images an earlier clip saved that no clip
+or kept edited copy uses any more. Uses generated, non-sensitive bytes.
 """
 
 import base64
@@ -88,8 +88,10 @@ def clip(settings, assets, **extra):
 with tempfile.TemporaryDirectory(prefix="tabgent-clip-assets-") as directory:
     base = Path(directory)
     settings = base / "codex/projects/tabgent/vault.json"
-    root = base / "ReadingVault"
+    root = base / "Tabgent"
     uploads = root / ".tabgent/uploads"
+    images = root / "Attachments/Images"
+    full = root / "Full Document Contents/Articles/Images.md"
     with patch.object(vault, "default_path", lambda: root):
         # A progress check for an unknown image writes nothing.
         assert call(
@@ -175,16 +177,15 @@ with tempfile.TemporaryDirectory(prefix="tabgent-clip-assets-") as directory:
             )
             == "missing_asset"
         )
-        assert not (root / "Articles").exists() or not any(
-            (root / "Articles").iterdir()
-        )
+        assert not (root / ".tabgent/documents").exists()
+        assert not images.exists() and not (root / "Articles").exists()
 
-        # Saving moves the staged image into assets/ and records it.
+        # Saving copies the staged image into Attachments/Images and records it.
         chart = asset(PNG, "png", "https://cdn.example.test/chart.png")
         saved = clip(settings, [chart])
         folder = Path(saved["document"]["folder"])
         name = f"{digest(PNG)[:16]}.png"
-        assert (folder / "assets" / name).read_bytes() == PNG
+        assert (images / name).read_bytes() == PNG
         # The staged copy stays for other clips that use the same image; it is pruned later.
         assert (uploads / f"asset-{digest(PNG)}.ready").read_bytes() == PNG
         record = json.loads((folder / "article.json").read_text())
@@ -205,7 +206,13 @@ with tempfile.TemporaryDirectory(prefix="tabgent-clip-assets-") as directory:
             + record["files"]["html"]["bytes"]
             + len(PNG)
         )
-        print("PASS a clip moves its uploaded images into assets/ and records them")
+        # The full text links a recorded image in Attachments/Images.
+        linked = clip(
+            settings, [chart], replace=True, markdown=f"![Chart](assets/{name})"
+        )
+        assert f"![Chart](../../Attachments/Images/{name})" in full.read_text()
+        assert linked["clip"]["imagesSaved"] == 1
+        print("PASS a clip copies its uploaded images into Attachments/Images")
 
         # The page's cover is one of the clip's images: recorded with its address, written
         # in the front matter, reported to the library and readable like the other images.
@@ -228,8 +235,11 @@ with tempfile.TemporaryDirectory(prefix="tabgent-clip-assets-") as directory:
         assert record["metaSources"] == sources and record["contentStatus"] == "text"
         assert covered["clip"]["cover"] == cover["file"]
         assert covered["clip"]["contentStatus"] == "text"
-        front = (folder / "article.md").read_text().split("\n---\n", 1)[0]
-        assert f'\ncover: "{cover["file"]}"' in front, front
+        front = full.read_text().split("\n---\n", 1)[0]
+        assert f'\ncover: "../../Attachments/Images/{name}"' in front, front
+        # The note shows the saved cover.
+        notes = Path(covered["document"]["notesPath"]).read_text()
+        assert f"![封面](../Attachments/Images/{name})" in notes, notes
         read = call(
             settings,
             "vault/clip/read",
@@ -254,10 +264,7 @@ with tempfile.TemporaryDirectory(prefix="tabgent-clip-assets-") as directory:
             links["clip"]["cover"] == ""
             and links["clip"]["contentStatus"] == "linksOnly"
         )
-        assert (
-            '\ncover: "https://cdn.example.test/cover.jpg"'
-            in (folder / "article.md").read_text()
-        )
+        assert '\ncover: "https://cdn.example.test/cover.jpg"' in full.read_text()
         listed = call(settings, "vault/documents/list", {})["documents"]
         entry = next(d for d in listed if d["id"] == links["document"]["id"])
         assert entry["clip"]["contentStatus"] == "linksOnly"
@@ -364,8 +371,8 @@ with tempfile.TemporaryDirectory(prefix="tabgent-clip-assets-") as directory:
         )
 
         # A new clip reuses a saved image without uploading it again, adds a new one, and
-        # removes the image the old clip used; files the user put in assets/ stay.
-        (folder / "assets" / "my-sketch.png").write_bytes(b"user file")
+        # removes the image the old clip used; files the user put there stay.
+        (images / "my-sketch.png").write_bytes(b"user file")
         upload(settings, GIF)
         upload(settings, JPEG)
         replaced = clip(
@@ -374,7 +381,7 @@ with tempfile.TemporaryDirectory(prefix="tabgent-clip-assets-") as directory:
             replace=True,
         )
         assert replaced["saved"] is True
-        names = sorted(path.name for path in (folder / "assets").iterdir())
+        names = sorted(path.name for path in images.iterdir())
         assert names == sorted(
             [name, f"{digest(GIF)[:16]}.gif", "my-sketch.png"]
         ), names
@@ -384,7 +391,7 @@ with tempfile.TemporaryDirectory(prefix="tabgent-clip-assets-") as directory:
             replace=True,
         )
         assert again["saved"] is True
-        names = sorted(path.name for path in (folder / "assets").iterdir())
+        names = sorted(path.name for path in images.iterdir())
         assert names == sorted([f"{digest(JPEG)[:16]}.jpg", "my-sketch.png"]), names
         print("PASS a new clip reuses, adds and removes its images; other files stay")
 
@@ -415,22 +422,22 @@ with tempfile.TemporaryDirectory(prefix="tabgent-clip-assets-") as directory:
                     },
                 )
             )
-        for saved_page in pages:
-            files = Path(saved_page["document"]["folder"]) / "assets"
-            assert (files / f"{digest(shared)[:16]}.gif").read_bytes() == shared
-        print("PASS clips that share an image both save it")
+        logo_name = f"{digest(shared)[:16]}.gif"
+        assert (images / logo_name).read_bytes() == shared
+        # Deleting one of them keeps the image the other one uses.
+        call(settings, "vault/clip/delete", {"documentId": pages[0]["document"]["id"]})
+        assert (images / logo_name).read_bytes() == shared
+        print("PASS clips that share an image save it once and keep it while used")
 
-        # When the user edited article.md, its kept copy still links the earlier images:
-        # they stay in assets/.
+        # When the user edited the full text, its kept copy still links the earlier images:
+        # they stay.
         photo = f"{digest(JPEG)[:16]}.jpg"
-        (folder / "article.md").write_text(f"Edited, with ![photo](assets/{photo}).\n")
+        full.write_text(f"Edited, with ![photo](../../Attachments/Images/{photo}).\n")
         upload(settings, PNG)
         edited = clip(settings, [chart], replace=True)
-        assert edited["backup"].startswith("article-edited-")
-        names = sorted(path.name for path in (folder / "assets").iterdir())
-        assert names == sorted(
-            [name, f"{digest(JPEG)[:16]}.jpg", "my-sketch.png"]
-        ), names
+        assert edited["backup"].startswith("Images（编辑版 ")
+        names = sorted(path.name for path in images.iterdir())
+        assert names == sorted([name, photo, "my-sketch.png", logo_name]), names
         # The next clip without an edited copy removes what neither clip uses.
         again = clip(
             settings,
@@ -438,26 +445,26 @@ with tempfile.TemporaryDirectory(prefix="tabgent-clip-assets-") as directory:
             replace=True,
         )
         assert again["backup"] is None
-        names = sorted(path.name for path in (folder / "assets").iterdir())
-        assert names == sorted([photo, "my-sketch.png"]), names
+        names = sorted(path.name for path in images.iterdir())
+        assert names == sorted([photo, "my-sketch.png", logo_name]), names
         # A later clip that drops the photo keeps it too: the edited copy still links it.
         upload(settings, PNG)
         later = clip(settings, [chart], replace=True)
         assert later["backup"] is None
-        names = sorted(path.name for path in (folder / "assets").iterdir())
-        assert names == sorted([name, photo, "my-sketch.png"]), names
+        names = sorted(path.name for path in images.iterdir())
+        assert names == sorted([name, photo, "my-sketch.png", logo_name]), names
         # Back to the photo, which later checks read.
         clip(
             settings,
             [asset(JPEG, "jpg", "https://cdn.example.test/photo.jpg")],
             replace=True,
         )
-        print("PASS the images of an edited article.md are kept with it")
+        print("PASS the images of an edited full text are kept with it")
 
-        # An assets/ that is a symbolic link is refused before anything is written.
-        os.rename(folder / "assets", base / "elsewhere")
-        os.symlink(base / "elsewhere", folder / "assets")
-        before = (folder / "article.md").read_bytes()
+        # An image folder that is a symbolic link is refused before anything is written.
+        os.rename(images, base / "elsewhere")
+        os.symlink(base / "elsewhere", images)
+        before = full.read_bytes()
         upload(settings, PNG)
         assert (
             code(
@@ -476,9 +483,9 @@ with tempfile.TemporaryDirectory(prefix="tabgent-clip-assets-") as directory:
             )
             == "io_error"
         )
-        assert (folder / "article.md").read_bytes() == before
-        os.unlink(folder / "assets")
-        os.rename(base / "elsewhere", folder / "assets")
+        assert full.read_bytes() == before
+        os.unlink(images)
+        os.rename(base / "elsewhere", images)
 
         # Invalid image lists are refused.
         good = asset(PNG, "png", "https://cdn.example.test/chart.png")
@@ -528,7 +535,7 @@ with tempfile.TemporaryDirectory(prefix="tabgent-clip-assets-") as directory:
             )
             == "invalid_params"
         )
-        print("PASS invalid image lists and a linked assets folder are refused")
+        print("PASS invalid image lists and a linked image folder are refused")
 
         # The reader reads article.html and the recorded images in chunks.
         ident = again["document"]["id"]
@@ -578,7 +585,7 @@ with tempfile.TemporaryDirectory(prefix="tabgent-clip-assets-") as directory:
                 )
                 == "invalid_params"
             ), file
-        target = folder / jpg
+        target = images / photo
         os.rename(target, base / "outside.jpg")
         os.symlink(base / "outside.jpg", target)
         assert (
@@ -589,7 +596,7 @@ with tempfile.TemporaryDirectory(prefix="tabgent-clip-assets-") as directory:
         os.rename(base / "outside.jpg", target)
         print("PASS the reader reads the clip and its recorded images in chunks")
 
-        # Deleting the clip keeps the page's notes, an edited article.md and the user's files.
+        # Deleting the clip keeps the page's notes, an edited full text and the user's files.
         call(
             settings,
             "vault/highlight/create",
@@ -601,20 +608,16 @@ with tempfile.TemporaryDirectory(prefix="tabgent-clip-assets-") as directory:
                 "anchor": {"kind": "web", "quote": {"exact": "Text"}},
             },
         )
-        (folder / "article.md").write_text("Edited by me.\n")
+        full.write_text("Edited by me.\n")
         deleted = call(settings, "vault/clip/delete", {"documentId": ident})
-        assert deleted["ok"] is True and deleted["backup"].startswith("article-edited-")
-        remaining = sorted(
-            path.name
-            for path in folder.iterdir()
-            if not path.name.startswith("article-edited-")
-        )
-        assert remaining == ["anchors.json", "assets", "highlights.md"], remaining
-        assert (folder / deleted["backup"]).read_text() == "Edited by me.\n"
-        assert not (folder / "article.json").exists()
-        # The kept edited copy may link the clip's images, so they stay with it.
-        assert sorted(path.name for path in (folder / "assets").iterdir()) == sorted(
-            [f"{digest(JPEG)[:16]}.jpg", "my-sketch.png"]
+        assert deleted["ok"] is True and deleted["backup"].startswith("Images（编辑版 ")
+        assert sorted(path.name for path in folder.iterdir()) == ["anchors.json"]
+        assert (full.parent / deleted["backup"]).read_text() == "Edited by me.\n"
+        notes = Path(again["document"]["notesPath"]).read_text()
+        assert not full.exists() and "^h001" in notes
+        # A kept edited copy links the photo, so it stays; the user's file stays too.
+        assert sorted(path.name for path in images.iterdir()) == sorted(
+            [photo, "my-sketch.png", logo_name]
         )
         assert (
             call(

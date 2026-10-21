@@ -427,7 +427,7 @@ try {
     ),
     { url: urn, sha256, kind: 'pdf' },
   );
-  const folder = path.join(vaultPath, 'Books', highlighted.document.id);
+  const folder = highlighted.document.folder;
   assert.deepEqual(fs.readFileSync(path.join(folder, 'original.pdf')), pdf);
   // A local PDF's viewer does not read the vault copy: it reads the file.
   assert.match(

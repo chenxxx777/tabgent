@@ -1,4 +1,4 @@
-// Clipping a webpage into the ReadingVault. The service worker injects the clipping script
+// Clipping a webpage into the reading vault. The service worker injects the clipping script
 // into the page's top frame only when the user clips it, asks there before replacing an
 // earlier clip, bounds what the page returns (it is untrusted) and saves it with
 // vault/clip/save. The page and its clipped copy are one vault document, named by its URL.

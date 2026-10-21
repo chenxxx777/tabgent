@@ -54,7 +54,7 @@ export const bridge={threadId:mode.startsWith('setup-')&&mode!=='setup-new'?'tes
  },window.setupTest.delayMethod===m.method?100:0);
  }
 }};
-window.setupTest={emit,requests:[],actions:[],reading:[],event(name,value){listeners.get(name)?.(value);},readingValue:{vault:{path:'/vault/ReadingVault',configured:false,writable:true},page:{url:'https://example.test/article',title:'Article',kind:'web'},document:{id:'article-x',highlightsPath:'/vault/ReadingVault/Articles/article-x/highlights.md'},highlights:[{id:'h001',text:'Autonomy is endorsement',location:'Chapter 3',turnCount:2,anchored:true},{id:'h002',text:'People persist',location:'',turnCount:0,anchored:false}],binding:null,save:{explicit:null,target:'off'},error:null},context(value){listeners.get('codex-context')?.(value);},select(value){listeners.get('codex-selection')?.(value);},install(){sessionStorage.installed='true';sessionStorage.helper='true';},externalLogin(){sessionStorage.auth='true';},complete(){authenticated=true;sessionStorage.auth='true';emit('account/login/completed',{success:true,loginId:'test-login'});},fail(){emit('account/login/completed',{success:false,loginId:'test-login'});}};
+window.setupTest={emit,requests:[],actions:[],reading:[],event(name,value){listeners.get(name)?.(value);},readingValue:{vault:{path:'/vault/ReadingVault',configured:false,writable:true},page:{url:'https://example.test/article',title:'Article',kind:'web'},document:{id:'article-x',notesPath:'/vault/Tabgent/Articles/Article.md'},highlights:[{id:'h001',text:'Autonomy is endorsement',location:'Chapter 3',turnCount:2,anchored:true},{id:'h002',text:'People persist',location:'',turnCount:0,anchored:false}],binding:null,save:{explicit:null,target:'off'},error:null},context(value){listeners.get('codex-context')?.(value);},select(value){listeners.get('codex-selection')?.(value);},install(){sessionStorage.installed='true';sessionStorage.helper='true';},externalLogin(){sessionStorage.auth='true';},complete(){authenticated=true;sessionStorage.auth='true';emit('account/login/completed',{success:true,loginId:'test-login'});},fail(){emit('account/login/completed',{success:false,loginId:'test-login'});}};
 export async function openConversationLink(url,active,newTab){window.setupTest.actions.push({name:'openConversationLink',url,active,newTab})}
 export async function openRelatedThread(threadId){window.setupTest.actions.push({name:'openRelatedThread',threadId})}
 export async function pageHistory(threadId){
@@ -1497,7 +1497,7 @@ export function saveScopePreference(){}
           value.page = { url: 'https://example.test/other', title: 'Other', kind: 'web' };
           value.document = {
             id: 'article-y',
-            highlightsPath: '/vault/ReadingVault/Articles/article-y/highlights.md',
+            notesPath: '/vault/Tabgent/Articles/Article Y.md',
           };
           value.highlights = [
             {

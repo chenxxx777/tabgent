@@ -229,7 +229,11 @@ try {
   };
   const probe = await call({ ...upload, offset: 0, data: '' }, library);
   assert.equal(probe.received, 0);
-  assert.deepEqual(fs.readdirSync(vaultPath + '/Books'), [], 'A progress check writes nothing');
+  assert.deepEqual(
+    fs.readdirSync(vaultPath).filter((name) => name !== '.tabgent'),
+    ['AGENTS.md'],
+    'A progress check writes nothing',
+  );
   const half = 3000;
   await call({ ...upload, offset: 0, data: pdf.subarray(0, half).toString('base64') }, library);
   const imported = await call(
@@ -239,8 +243,11 @@ try {
   assert.equal(imported.complete, true, JSON.stringify(imported));
   const documentId = imported.document.id;
   assert.match(documentId, /^paper-a-paper-on-autonomy-[0-9a-f]{8}$/);
-  const folder = path.join(vaultPath, 'Books', documentId);
+  const folder = path.join(vaultPath, '.tabgent', 'documents', documentId);
   assert.deepEqual(fs.readFileSync(path.join(folder, 'original.pdf')), pdf);
+  const notesFile = path.join(vaultPath, 'PDFs', 'A Paper on Autonomy.md');
+  const discussionsFile = path.join(vaultPath, 'Discussions', 'PDFs', 'A Paper on Autonomy.md');
+  const fullText = path.join(vaultPath, 'Full Document Contents', 'PDFs', 'A Paper on Autonomy.md');
   assert.deepEqual(
     (({ url, kind, title, meta }) => ({ url, kind, title, meta }))(
       vaultCalls('vault/source/save').at(-1).params,
@@ -405,13 +412,13 @@ try {
       .text.slice(readingContextPrefix.length),
   );
   assert.equal(reading.saving, 'highlight');
-  // The reading context names the imported PDF and its page files.
-  assert.deepEqual((({ url, kind, id, pages }) => ({ url, kind, id, pages }))(reading.document), {
-    url: urn,
-    kind: 'pdf',
-    id: documentId,
-    pages: path.join(folder, 'pages'),
-  });
+  // The reading context names the imported PDF, and its full text when it has one (this
+  // fixture has no text layer).
+  assert.deepEqual(
+    (({ url, kind, id, fullText }) => ({ url, kind, id, fullText }))(reading.document),
+    { url: urn, kind: 'pdf', id: documentId, fullText: undefined },
+  );
+  assert(!fs.existsSync(fullText));
   const emit = (method, params) =>
     native.onMessage.listeners[0]({ session: view.session, message: { method, params } });
   const item = (id, value) => ({
@@ -433,12 +440,14 @@ try {
     threadId: 'thread-local',
     turn: { id: 'turn-1', status: 'completed', items: [], completedAt: 1760000000 },
   });
-  const notes = await until(() => {
-    const text = fs.readFileSync(path.join(folder, 'highlights.md'), 'utf8');
-    return text.includes('Agreeing with your own actions.') && text;
+  const talk = await until(() => {
+    const text = fs.existsSync(discussionsFile) && fs.readFileSync(discussionsFile, 'utf8');
+    return text && text.includes('Agreeing with your own actions.') && text;
   });
+  assert.match(talk, /## 高亮 001[\s\S]*What does this mean\?/);
+  const notes = fs.readFileSync(notesFile, 'utf8');
   assert.match(notes, /^source: "urn:sha256:[0-9a-f]{64}"$/m);
-  assert.match(notes, /## Highlight 001[\s\S]*p\. 2[\s\S]*What does this mean\?/);
+  assert.match(notes, /\^h001\n    - p\. 2 · /);
   // A note from the viewer's popover belongs to the imported document's highlight.
   const userNote = 'My view: agreeing, not isolation.';
   const noted = await call(
@@ -451,8 +460,8 @@ try {
     userNote,
   );
   assert.match(
-    fs.readFileSync(path.join(folder, 'highlights.md'), 'utf8'),
-    /## Highlight 001[\s\S]*### 笔记\n\nMy view: agreeing, not isolation\.\n[\s\S]*### 对话/,
+    fs.readFileSync(notesFile, 'utf8'),
+    /\^h001\n    - 评论：My view: agreeing, not isolation\.\n    - p\. 2 · [\s\S]*讨论 1 条/,
   );
   assert.equal(
     (await call({ type: 'highlightNote', documentId, highlightId: 'h009', note: 'x' }, viewer))
@@ -614,8 +623,8 @@ try {
   assert.equal(closedReading.saving, 'highlight');
   assert.equal(closedReading.highlight.id, 'h001');
   assert.deepEqual(
-    (({ url, kind, id, pages }) => ({ url, kind, id, pages }))(closedReading.document),
-    { url: urn, kind: 'pdf', id: documentId, pages: path.join(folder, 'pages') },
+    (({ url, kind, id, fullText }) => ({ url, kind, id, fullText }))(closedReading.document),
+    { url: urn, kind: 'pdf', id: documentId, fullText: undefined },
   );
   const closedItem = (id, value) => ({
     threadId: 'thread-local',

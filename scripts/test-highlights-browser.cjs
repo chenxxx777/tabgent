@@ -1,12 +1,13 @@
 // Webpage highlights in real Chromium with the source extension and source connector.
 // A temporary profile, HOME, and CODEX_HOME isolate the browser, vault, and Codex state;
-// no account, model, or personal ReadingVault is used.
+// no account, model, or personal vault (~/Tabgent, ~/ReadingVault) is used.
 const assert = require('node:assert/strict'),
   crypto = require('node:crypto'),
   fs = require('node:fs'),
   http = require('node:http'),
   os = require('node:os'),
   path = require('node:path'),
+  { vaultDocuments } = require('./vault-files.cjs'),
   { execSync } = require('node:child_process');
 const root = path.resolve(__dirname, '..'),
   { chromium } = require(root + '/node_modules/playwright');
@@ -63,15 +64,8 @@ const article = () => `<!doctype html><title>Highlight fixture</title>
         allowed_origins: [`chrome-extension://${id}/`],
       }),
     );
-    const docs = () => {
-      const dir = path.join(temp, 'home/ReadingVault/Articles');
-      if (!fs.existsSync(dir)) return [];
-      return fs.readdirSync(dir).map((name) => ({
-        name,
-        anchors: JSON.parse(fs.readFileSync(path.join(dir, name, 'anchors.json'), 'utf8')),
-        markdown: fs.readFileSync(path.join(dir, name, 'highlights.md'), 'utf8'),
-      }));
-    };
+    const vault = path.join(temp, 'home/Tabgent');
+    const docs = () => vaultDocuments(vault).map((doc) => ({ ...doc, markdown: doc.notes }));
     const saved = () => docs().reduce((n, d) => n + d.anchors.highlights.length, 0);
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
     const base = `http://127.0.0.1:${server.address().port}`;
@@ -194,13 +188,15 @@ const article = () => `<!doctype html><title>Highlight fixture</title>
     assert.equal(first.anchor.kind, 'web');
     assert.equal(first.anchor.position.end - first.anchor.position.start, 24);
     assert.match(first.anchor.dom.start.path, /p:nth-child\(\d+\) > text\(\)\[0\]$/);
-    assert.match(doc.markdown, /^---\ntitle: "Highlight fixture"\n/);
+    assert.equal(doc.notesPath, path.join(vault, 'Articles/Highlight fixture.md'));
+    assert.match(doc.markdown, /^---\ntabgent_id: article-highlight-fixture-[0-9a-f]{8}\n/);
+    assert.match(doc.markdown, /\ntitle: "Highlight fixture"\n/);
     assert.match(doc.markdown, /<!-- tabgent:highlight h001 start -->/);
-    assert.match(doc.markdown, /## Highlight 001\n/);
-    assert.match(doc.markdown, /- 位置：Intrinsic motivation\n/);
-    assert.match(doc.markdown, /- Anchor ID: h001\n/);
-    assert.match(doc.markdown, /\n> independence from others\n/);
-    assert.equal(fs.existsSync(path.join(temp, 'home/ReadingVault/AGENTS.md')), true);
+    assert.match(
+      doc.markdown,
+      /\n- independence from others \^h001\n    - Intrinsic motivation · /,
+    );
+    assert.equal(fs.existsSync(path.join(vault, 'AGENTS.md')), true);
     assert.equal(await until(async () => (await painted(page)) === 1), true);
     console.log('PASS isolated content script saves to the vault files and paints a highlight');
 
@@ -220,7 +216,7 @@ const article = () => `<!doctype html><title>Highlight fixture</title>
     assert(await until(() => saved() === 2));
     const asked = docs()[0];
     assert.equal(asked.anchors.highlights[1].anchor.quote.exact, 'more persistent');
-    assert.match(asked.markdown, /## Highlight 002\n[\s\S]*\n> more persistent\n/);
+    assert.match(asked.markdown, /\n- more persistent \^h002\n/);
     assert.equal(await until(async () => (await panels(worker)) === 1, 5000), true);
     const port = fs.readFileSync(path.join(profile, 'DevToolsActivePort'), 'utf8').split('\n')[0];
     const target = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find((t) =>
@@ -294,7 +290,7 @@ const article = () => `<!doctype html><title>Highlight fixture</title>
     });
     console.log('PASS sidePanel.open keeps the gesture only before the first await');
 
-    // The user's own note: Add note in the popover saves it to anchors.json and highlights.md.
+    // The user's own note: Add note in the popover saves it to anchors.json and the note.
     await clickText(page, '#a', 'independence');
     await press(page, 'note');
     await page.keyboard.type(note);
@@ -303,12 +299,10 @@ const article = () => `<!doctype html><title>Highlight fixture</title>
     assert(await until(() => article().anchors.highlights[0].note === note));
     assert.match(
       article().markdown,
-      /\n> independence from others\n\n<!-- tabgent:note h001 start -->\n\n### 笔记\n\n我的看法: endorsement, not independence\.\n\n<!-- tabgent:note h001 end -->\n/,
+      /\n- independence from others \^h001\n    - 评论：我的看法: endorsement, not independence\.\n/,
     );
     assert.equal(article().anchors.highlights[1].note, undefined);
-    console.log(
-      'PASS a note from the highlight popover is saved to anchors.json and highlights.md',
-    );
+    console.log('PASS a note from the highlight popover is saved to anchors.json and the note');
 
     // Comment on a selection saves the highlight and the comment together. Cancel stores nothing.
     const beforeComment = article().anchors.highlights.length;
@@ -350,7 +344,7 @@ const article = () => `<!doctype html><title>Highlight fixture</title>
     const savedComment = article().anchors.highlights.at(-1);
     assert.equal(savedComment.text, 'deeply');
     assert.equal(savedComment.note, comment);
-    assert.match(article().markdown, /### 笔记\n\nDeep reading\./);
+    assert.match(article().markdown, /    - 评论：Deep reading\.\n/);
     await page.reload();
     assert.equal(await until(async () => (await painted(page)) === beforeComment + 1), true);
     await clickText(page, '#b', 'deeply');

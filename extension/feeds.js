@@ -495,8 +495,8 @@ export function createFeeds({
     await storage.set({ [CHANGED]: now() });
   }
 
-  // Saves what the reader shows of an item as a vault document (article.md, article.html
-  // and images, fetched without cookies), and links the item to it. result is the reader's
+  // Saves what the reader shows of an item as a vault document (its full text, HTML and
+  // images, fetched without cookies), and links the item to it. result is the reader's
   // cleaned text, as the clipping script returns it for a page.
   function oversized(result) {
     if (result?.ok !== true) return false;

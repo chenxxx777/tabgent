@@ -1,5 +1,5 @@
 // PDF reading conversations in the service worker: a PDF.js viewer's Ask AI binds the
-// conversation and its turns are saved to Books/paper-* by the real vault module in a
+// conversation and its turns are saved to its discussions by the real vault module in a
 // temporary folder. No Codex process, account, or model is involved.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -218,10 +218,16 @@ async function completeTurn(session, threadId, input, answer, { turnId, status }
 }
 const appends = () =>
   sent.filter((m) => m.op === 'vault' && m.method === 'vault/discussion/append');
+// The document's note, and its discussions with Codex in their own file.
 const highlightsFile = async (url) =>
   fs.readFileSync(
+    (await direct('vault/document/resolve', { url, title: '', kind: 'pdf' })).document.notesPath,
+    'utf8',
+  );
+const discussionsFile = async (url) =>
+  fs.readFileSync(
     (await direct('vault/document/resolve', { url, title: '', kind: 'pdf' })).document
-      .highlightsPath,
+      .discussionsPath,
     'utf8',
   );
 
@@ -280,7 +286,7 @@ try {
     url: 'https://papers.example.test/study.pdf?v=2',
     kind: 'pdf',
     id: documentId,
-    notes: path.join(vaultPath, 'Books', documentId, 'highlights.md'),
+    notes: path.join(vaultPath, 'PDFs', 'A study of motivation.md'),
   });
   await completeTurn(view.session, 'thread-pdf', input, 'Agreeing with your own actions.');
   await until(() => appends().length === 1);
@@ -295,12 +301,14 @@ try {
       url: 'https://papers.example.test/study.pdf?v=2',
     },
   );
-  const notes = await until(async () => {
-    const text = await highlightsFile('https://papers.example.test/study.pdf?v=2');
+  const talk = await until(async () => {
+    const text = await discussionsFile('https://papers.example.test/study.pdf?v=2');
     return text.includes('Agreeing with your own actions.') && text;
   });
-  assert.match(notes, /^type: paper$/m);
-  assert.match(notes, /## Highlight 001[\s\S]*p\. 3[\s\S]*What does endorsement mean here\?/);
+  assert.match(talk, /## 高亮 001[\s\S]*What does endorsement mean here\?/);
+  const notes = await highlightsFile('https://papers.example.test/study.pdf?v=2');
+  assert.match(notes, /^kind: pdf$/m);
+  assert.match(notes, /\^h001\n    - p\. 3 · [\s\S]*讨论 1 条/);
   assert(
     await until(() =>
       contentMessages.some(
@@ -309,7 +317,7 @@ try {
     ),
     'The PDF viewer is asked to refresh after the saved turn',
   );
-  console.log('PASS a turn in the PDF highlight conversation is saved under Books/paper-*');
+  console.log('PASS a turn in the PDF highlight conversation is saved to its discussions');
 
   // Open discussion in the viewer, after a new chat, resumes the highlight's thread.
   const panel = { id: 'test', url: 'chrome-extension://test/ui/chat.html' };
@@ -354,10 +362,10 @@ try {
   );
   assert.match(
     await until(async () => {
-      const text = await highlightsFile('https://papers.example.test/study.pdf?v=2');
+      const text = await discussionsFile('https://papers.example.test/study.pdf?v=2');
       return text.includes('Endorsed goals persist.') && text;
     }),
-    /## 文档对话[\s\S]*What is the main claim\?[\s\S]*Endorsed goals persist\./,
+    /## 关于整篇[\s\S]*What is the main claim\?[\s\S]*Endorsed goals persist\./,
   );
   console.log('PASS a PDF page question saves to the PDF document with kind pdf');
 } finally {

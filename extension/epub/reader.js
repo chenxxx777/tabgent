@@ -163,6 +163,18 @@ function destination(item) {
   };
 }
 const dates = new Intl.DateTimeFormat(chrome.i18n.getUILanguage(), { dateStyle: 'medium' });
+// A document's category: the vault folder its note is filed in.
+const CATEGORIES = {
+  articles: 'libraryCategoryArticles',
+  tweets: 'libraryCategoryTweets',
+  videos: 'libraryCategoryVideos',
+  podcasts: 'libraryCategoryPodcasts',
+  pdfs: 'libraryCategoryPdfs',
+  books: 'libraryCategoryBooks',
+  'local-files': 'libraryCategoryLocalFiles',
+};
+// Kinds the category already names.
+const PLAIN_KINDS = new Set(['libraryKindWeb', 'libraryKindPdf']);
 
 // A clipped page's cover, read from the vault when its entry comes into view.
 const COVER = /^assets\/[0-9a-f]{16}\.(?:jpg|png|gif|webp|avif)$/;
@@ -211,6 +223,7 @@ function libraryItem(item, seen) {
     meta = document.createElement('span');
   entry.className = 'item';
   entry.dataset.kind = item.kind;
+  if (CATEGORIES[item.category]) entry.dataset.category = item.category;
   entry.dataset.document = item.id;
   if (href) entry.href = href;
   else entry.title = t('libraryNoCopy');
@@ -248,8 +261,10 @@ function libraryItem(item, seen) {
   const partial = item.clip?.complete && item.clip.contentStatus;
   const flag = { linksOnly: 'libraryLinksOnly', notesOnly: 'libraryNotesOnly' }[partial];
   if (flag) entry.dataset.content = partial;
+  const category = CATEGORIES[item.category];
   meta.textContent = [
-    t(label),
+    category ? t(category) : '',
+    category && PLAIN_KINDS.has(label) ? '' : t(label),
     flag ? t(flag) : '',
     item.author,
     host(item.url),
@@ -626,7 +641,7 @@ function buildToc(items, parent = $('#toc')) {
 }
 
 // The chapter is the spine document: its title comes from the vault's chapter list, the
-// table of contents, or its first heading, so labels match chapters/NN-<title>.md.
+// table of contents, or its first heading, so labels match the chapters of its full text.
 function chapterOf(index, doc) {
   const href = state.book.sections[index]?.id || '';
   const stored = state.source?.chapters?.find((chapter) => chapter.href === href);
@@ -640,15 +655,10 @@ function chapterOf(index, doc) {
     loadTimeData.getStringF('epubSection', index + 1);
   return { href, title: title.slice(0, 300), index };
 }
-const chapterFile = (href) =>
-  state.source?.chapters?.find((chapter) => chapter.href === href)?.file || '';
-// The absolute path of a chapter's Markdown file, as the service worker builds for Ask AI.
-const chapterPath = (href) => {
-  const file = chapterFile(href);
-  return file && state.source?.chaptersPath
-    ? state.source.chaptersPath + file.slice('chapters'.length)
-    : '';
-};
+// A chapter's section in the book's full text in the vault (its number in reading
+// order), which Codex reads instead of the reader tab.
+const chapterSection = (href) =>
+  state.source?.chapters?.find((chapter) => chapter.href === href)?.number || null;
 
 function renderHighlightList() {
   const list = $('#highlightList');
@@ -864,8 +874,11 @@ function captureSelection(doc, index) {
         kind: 'epub',
         anchor: described.anchor,
         documentId: state.documentId,
-        ...(chapterPath(described.anchor.chapter.href)
-          ? { chapterFile: chapterPath(described.anchor.chapter.href) }
+        ...(chapterSection(described.anchor.chapter.href) && state.source?.fullTextPath
+          ? {
+              section: chapterSection(described.anchor.chapter.href),
+              fullText: state.source.fullTextPath,
+            }
           : {}),
         capturedAt: new Date().toISOString(),
       },
@@ -921,7 +934,7 @@ async function createHighlight(ask) {
       text: selected.text,
       anchor: selected.anchor,
       context: selected.context,
-      chapterFile: chapterFile(selected.anchor.chapter.href),
+      section: chapterSection(selected.anchor.chapter.href),
     });
     if (reply.vaultError)
       toast(
@@ -1064,7 +1077,7 @@ async function saveNote() {
         text: selected.text,
         anchor: selected.anchor,
         context: selected.context,
-        chapterFile: chapterFile(selected.anchor.chapter.href),
+        section: chapterSection(selected.anchor.chapter.href),
         note,
       });
       if (!reply.highlight)
@@ -1147,7 +1160,7 @@ $('#menuAsk').onclick = async () => {
       documentId: state.documentId,
       highlightId: target.id,
       context: target.context,
-      chapterFile: chapterFile(entry.record.anchor?.chapter?.href),
+      section: chapterSection(entry.record.anchor?.chapter?.href),
     });
   } catch (error) {
     failure('highlightAskFailed', error);
@@ -1193,11 +1206,11 @@ library.handleCommands(async (command) => {
   }
   if (command.action !== 'context') throw Error('Unknown command');
   const index = state.book.sections.findIndex((section) => section.id === href);
-  if (index < 0) return { before: '', after: '', chapterFile: chapterFile(href) };
+  if (index < 0) return { before: '', after: '', section: chapterSection(href) };
   const shown = state.view.renderer.getContents().find((item) => item.index === index)?.doc;
   const doc = shown || (await state.book.sections[index].createDocument());
   const found = locate(doc, index, entry.record);
-  return { ...(found?.context || { before: '', after: '' }), chapterFile: chapterFile(href) };
+  return { ...(found?.context || { before: '', after: '' }), section: chapterSection(href) };
 });
 
 // Saved notes and turns change what a highlight shows; anchors and painting stay as they are.

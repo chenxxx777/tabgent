@@ -97,11 +97,11 @@ from the fixture app-server), opens the library from the side panel, opens every
 document from it, restarts the browser and checks drag and drop.
 
 `npm run test:clip` highlights a generated article and clips it from the side panel. It checks
-`article.md`, `article.html`, `article.json` and the saved image in the page's folder, that a
-forbidden and an SVG image stay linked, that the page is not changed and only its images are
-fetched, that `reading_vault` finds the text and that a question about
-the page names `article.md`. It then clips again (the page asks first and an edited
-`article.md` is kept), opens the clipped copy in the reader (the page's highlight painted, the saved image shown,
+the page's full text in `Full Document Contents/`, `article.html` and `article.json` in its
+record and the saved image in `Attachments/Images/`, that a forbidden and an SVG image stay
+linked, that the page is not changed and only its images are fetched, that `reading_vault`
+finds the text and that a question about the page names its full text. It then clips again
+(the page asks first and an edited full text is kept), opens the clipped copy in the reader (the page's highlight painted, the saved image shown,
 the others linked), highlights and asks Codex there and sees the highlight on the live page,
 checks that the reader refuses a changed `article.html` and cleans forged markup without
 running scripts or loading anything, clips a page that enforces Trusted Types, saves a short
@@ -117,11 +117,11 @@ Every request outside `127.0.0.1` is refused.
 Clipping real sites cannot be tested offline. After updating Defuddle, clip by hand, in a
 signed-in browser: a single X post, a thread, a long post and an X article; a post with images
 and a video; a WeChat article; a Substack post; and a technical blog post with code. Check the
-text, the image addresses and the thread's posts in `article.md`. YouTube captions also need a
+text, the image addresses and the thread's posts in the full text. YouTube captions also need a
 signed-in browser: YouTube answers caption requests from a fresh, signed-out test browser with a
 sign-in or bot check, or with empty text. Clip a video with captions (once with captions turned
 off, once with CC on) and a podcast page with a transcript, and check the transcript and its
-language in `article.md` and `article.json`.
+language in the full text and `article.json`.
 
 To compare clips of real pages in a script, launch Chrome through Playwright, or add
 `--disable-field-trial-config` when starting Chrome for Testing directly. Without it, Chrome

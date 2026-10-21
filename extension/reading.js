@@ -1,4 +1,4 @@
-// Reading companion: conversations bound to ReadingVault documents and highlights.
+// Reading companion: conversations bound to reading vault documents and highlights.
 // Pure helpers shared by the service worker and tests. They are generic over the
 // document kind, so web, PDF and EPUB readers bind conversations the same way.
 import { isDocumentId } from './document-id.js';
@@ -80,10 +80,10 @@ export function readingContext({ document, highlight, notes, vault, saving }) {
       url: document.url,
       kind: document.kind,
       ...(document.id ? { id: document.id } : {}),
+      // The document's note in the vault, and its full text when the vault has it (a
+      // clipped page, an imported EPUB or PDF), read by section with reading_vault.
       ...(document.notes ? { notes: document.notes } : {}),
-      ...(document.chapters ? { chapters: document.chapters } : {}),
-      ...(document.pages ? { pages: document.pages } : {}),
-      ...(document.article ? { article: document.article } : {}),
+      ...(document.fullText ? { fullText: document.fullText } : {}),
     };
   if (highlight)
     value.highlight = {

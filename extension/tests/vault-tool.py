@@ -90,7 +90,8 @@ with tempfile.TemporaryDirectory() as temp:
     found = vault.tool(settings, {"action": "search", "query": "autonomy relatedness"})
     best = found["matches"][0]
     assert best["title"] == "Self-Determination Theory", found
-    assert "relatedness" in best["text"] and best["path"].endswith("highlights.md")
+    assert "relatedness" in best["text"]
+    assert best["path"] == "Articles/Self-Determination Theory.md", best
     assert found["total"] >= 3, "Any keyword matches; both answers mention autonomy"
     assert all(
         "tabgent:" not in m["text"] for m in found["matches"]
@@ -104,6 +105,12 @@ with tempfile.TemporaryDirectory() as temp:
         settings, {"action": "read", "path": str(root / best["path"])}
     )
     assert absolute["path"] == best["path"]
+    paths = [m["path"] for m in found["matches"]]
+    first_discussion = next(
+        i for i, p in enumerate(paths) if p.startswith("Discussions/")
+    )
+    assert all(p.startswith("Articles/") for p in paths[:first_discussion])
+    assert all(p.startswith("Discussions/") for p in paths[first_discussion:])
     print("PASS reading_vault lists documents, ranks keyword matches and reads notes")
 
     # read is limited to Tabgent's own files: the folder may be shared with other tools.
@@ -115,17 +122,16 @@ with tempfile.TemporaryDirectory() as temp:
     plugin.mkdir(parents=True)
     (plugin / "data.json").write_text('{"apiKey": "plugin secret"}')
     (root / "Personal.md").write_text("A private note")
-    document = Path(best["path"]).parent
-    linked = root / "Articles/article-linked-00000000"
-    linked.mkdir()
-    (linked / "highlights.md").symlink_to(root / "settings.json")
-    (root / "Articles/article-folder-link").symlink_to(root / document)
+    note = root / best["path"]
+    ident = vault.tool(settings, {"action": "list"})["documents"][1]["id"]
+    # A private note that copies a document's tabgent_id is not that document's note.
+    (root / "Copied.md").write_text(f"---\ntabgent_id: {ident}\n---\nA secret copy\n")
     for args, code in [
         ({"action": "read", "path": "../secret.md"}, "invalid_params"),
         ({"action": "read", "path": str(outside)}, "invalid_params"),
         ({"action": "read", "path": "Articles/escape.md"}, "invalid_params"),
-        ({"action": "read", "path": ".tabgent/index.json"}, "invalid_params"),
-        ({"action": "read", "path": ".TABGENT/index.json"}, "invalid_params"),
+        ({"action": "read", "path": ".tabgent/catalog.json"}, "invalid_params"),
+        ({"action": "read", "path": ".TABGENT/catalog.json"}, "invalid_params"),
         ({"action": "read", "path": "settings.json"}, "invalid_params"),
         ({"action": "read", "path": str(root / "settings.json")}, "invalid_params"),
         (
@@ -133,39 +139,55 @@ with tempfile.TemporaryDirectory() as temp:
             "invalid_params",
         ),
         ({"action": "read", "path": "Personal.md"}, "invalid_params"),
+        ({"action": "read", "path": "Copied.md"}, "invalid_params"),
         ({"action": "read", "path": "AGENTS.txt"}, "invalid_params"),
         ({"action": "read", "path": "Articles/../settings.json"}, "invalid_params"),
+        ({"action": "read", "path": best["path"].lower()}, "invalid_params"),
+        ({"action": "read", "path": "Articles/missing.md"}, "invalid_params"),
+        ({"action": "read", "part": "notes"}, "invalid_params"),
         (
-            {"action": "read", "path": "articles/" + document.name + "/highlights.md"},
-            "invalid_params",
-        ),
-        ({"action": "read", "path": str(document / "HIGHLIGHTS.md")}, "invalid_params"),
-        (
-            {"action": "read", "path": "Articles/missing/highlights.md"},
-            "invalid_params",
-        ),
-        (
-            {"action": "read", "path": str(linked.relative_to(root) / "highlights.md")},
+            {"action": "read", "document": "article-missing-0000", "part": "notes"},
             "not_found",
         ),
-        (
-            {"action": "read", "path": "Articles/article-folder-link/highlights.md"},
-            "not_found",
-        ),
+        ({"action": "read", "document": ident, "part": "full"}, "not_found"),
+        ({"action": "read", "document": ident, "part": "x"}, "invalid_params"),
         ({"action": "search", "query": " "}, "invalid_params"),
         ({"action": "write"}, "invalid_params"),
     ]:
         assert failure(settings, args) == code, args
-    assert vault.tool(settings, {"action": "read", "path": "AGENTS.md"})["lines"] > 10
     anchors = vault.tool(
-        settings, {"action": "read", "path": str(document / "anchors.json")}
+        settings, {"action": "read", "document": ident, "part": "anchors"}
+    )
+    assert anchors["path"] == f".tabgent/documents/{ident}/anchors.json"
+    assert '"turns"' in anchors["text"]
+    assert vault.tool(settings, {"action": "read", "path": anchors["path"]})["lines"]
+    by_part = vault.tool(
+        settings, {"action": "read", "document": ident, "part": "notes"}
+    )
+    assert by_part["path"].startswith("Articles/") and by_part["text"].startswith(
+        "1: ---"
+    )
+    # A note replaced by a link is no longer readable.
+    saved = note.read_bytes()
+    note.unlink()
+    note.symlink_to(outside)
+    assert (
+        failure(settings, {"action": "read", "path": best["path"]}) == "invalid_params"
     )
     assert (
-        anchors["path"] == str(document / "anchors.json")
-        and '"turns"' in anchors["text"]
+        failure(settings, {"action": "read", "path": "Copied.md"}) == "invalid_params"
     )
+    assert (
+        "notes"
+        not in vault.tool(settings, {"action": "list", "document": ident})["documents"][
+            0
+        ]
+    ), "The copy is not taken for the missing note"
+    note.unlink()
+    note.write_bytes(saved)
+    assert vault.tool(settings, {"action": "read", "path": "AGENTS.md"})["lines"] > 10
     listed = [d["path"] for d in vault.tool(settings, {"action": "list"})["documents"]]
-    assert all("linked" not in p and "folder-link" not in p for p in listed), listed
+    assert all("Copied" not in p and "escape" not in p for p in listed), listed
     assert not any(
         "secret" in m["text"]
         for m in vault.tool(settings, {"action": "search", "query": "secret private"})[
