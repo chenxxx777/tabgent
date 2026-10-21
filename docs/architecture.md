@@ -535,7 +535,32 @@ video turned into a link, a page whose text did not load), is `contentStatus: "l
 (not for selections or X posts). It is saved, but the page says that only links were saved
 instead of the usual message, the reader shows a notice and the library marks it.
 
-A coverage check guards against text the extraction drops silently (not for selections, X posts, or video and podcast clips, whose text is notes and a transcript from captions or another page: putting a page passage back could repeat the transcript). It walks the copy's visible text nodes and looks for each in the extracted text (in page order, and again without spaces). The content region is the deepest element holding 95% of the matched text, widened to its `<article>` when that is at most half again as large. Inside it, navigation, forms, buttons, dialogs, comments, sharing, likes, related or recommended posts, subscribe boxes, ads, tables of contents, references and citations, summary boxes, headers, footers and asides, counts, short labels outside text blocks and link lists are not counted (class names, ids and labels are read as words; CSS-module hashes are skipped), nor is back matter: a section headed "References", "Further reading", "External links", "See also", "参考文献", "延伸阅读" and the like. Author, guest and acknowledgement cards (by name, or text such as "A guest post by") count even inside a footer, but not anywhere in a header, where they are the byline, nor when they are mostly links ("More from this author"); counts in a table's cells are content. When the kept share falls under 95% with at least 150 characters missing, or one missing run reaches 300 characters, each missing run with kept text on both sides is put back after the kept text that preceded it on the page; missing cards are put back wherever they are. Only whole elements that lost all their text and hold no noise are put back (40 characters or more, 30 for a card), copied with their links and emphasis but without images or hidden parts (a row or row group stays in a table): an element that lost part of its text was rewritten by the extractor (footnotes, citations), not dropped. If more is missing than was kept (over 5,000 characters), the region is likely wrong: nothing but cards is put back and the clip is marked `incomplete`; a check that fails leaves the clip as extracted. The result's `coverage` (`visibleChars`, `keptChars`, `ratio`, `restoredPassages`, `restoredChars`, `incomplete`) is bounded by `cleanClip`, recorded in `article.json`, and the page's saved message says how many passages were put back or that text may be missing.
+A coverage check guards against text the extraction drops silently (not for selections, X
+posts, or video and podcast clips, whose text is notes and a transcript from captions or
+another page: putting a page passage back could repeat the transcript). It walks the copy's
+visible text nodes and looks for each in the extracted text (in page order, and again without
+spaces). The content region is the deepest element holding 95% of the matched text, widened
+to its `<article>` when that is at most half again as large. Inside it, navigation, forms,
+buttons, dialogs, comments, sharing, likes, related or recommended posts, subscribe boxes,
+ads, tables of contents, references and citations, summary boxes, headers, footers and
+asides, counts, short labels outside text blocks and link lists are not counted (class names,
+ids and labels are read as words; CSS-module hashes are skipped), nor is back matter: a
+section headed "References", "Further reading", "External links", "See also", "参考文献", "延伸阅读"
+and the like. Author, guest and acknowledgement cards (by name, or text such as "A guest post
+by") count even inside a footer, but not anywhere in a header, where they are the byline, nor
+when they are mostly links ("More from this author"); counts in a table's cells are content.
+When the kept share falls under 95% with at least 150 characters missing, or one missing run
+reaches 300 characters, each missing run with kept text on both sides is put back after the
+kept text that preceded it on the page; missing cards are put back wherever they are. Only
+whole elements that lost all their text and hold no noise are put back (40 characters or
+more, 30 for a card), copied with their links and emphasis but without images or hidden parts
+(a row or row group stays in a table): an element that lost part of its text was rewritten by
+the extractor (footnotes, citations), not dropped. If more is missing than was kept (over
+5,000 characters), the region is likely wrong: nothing but cards is put back and the clip is
+marked `incomplete`; a check that fails leaves the clip as extracted. The result's `coverage`
+(`visibleChars`, `keptChars`, `ratio`, `restoredPassages`, `restoredChars`, `incomplete`) is
+bounded by `cleanClip`, recorded in `article.json`, and the page's saved message says how
+many passages were put back or that text may be missing.
 
 The worker treats the result as untrusted: `cleanClip` refuses oversized or empty text and
 bounds every field before `vault/clip/save`. The vault writes `article.html` (the cleaned
