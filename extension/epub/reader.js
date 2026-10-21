@@ -6,6 +6,7 @@ import { openBook, label } from './book.js';
 import * as epubAnchor from './anchor.js';
 import * as library from './library.js';
 import { initFeeds } from './feeds-ui.js';
+import { initLibrarySearch } from './library-search.js';
 import { pdfViewerUrl } from '../pdf-routing.js';
 import { isLocalFileUrl } from '../local-files.js';
 import { clipViewerUrl } from '../clip-routing.js';
@@ -103,8 +104,10 @@ function showTab(name) {
   $('#feedsPanel').hidden = !isFeeds;
   $('#start').classList.toggle('feeds', isFeeds);
   history.replaceState(null, '', isFeeds ? '?view=feeds' : location.pathname);
-  if (isFeeds) void feeds.show();
-  else {
+  if (isFeeds) {
+    librarySearch.hide();
+    void feeds.show();
+  } else {
     feeds.hide();
     void showDocuments();
   }
@@ -118,20 +121,7 @@ async function showLibrary() {
 }
 
 async function showDocuments() {
-  const list = $('#books');
-  list.replaceChildren();
-  for (const url of coverUrls.splice(0)) URL.revokeObjectURL(url);
-  $('#booksStatus').textContent = t('epubLoading');
-  try {
-    const [{ documents }, seen] = await Promise.all([
-      library.send({ type: 'libraryDocuments' }),
-      library.positions(),
-    ]);
-    $('#booksStatus').textContent = documents.length ? '' : t('libraryEmpty');
-    for (const item of documents) list.append(libraryItem(item, seen));
-  } catch (error) {
-    $('#booksStatus').textContent = loadTimeData.getStringF('epubBooksUnavailable', shown(error));
-  }
+  return librarySearch.show();
 }
 
 const LOCAL_PDF = /^urn:sha256:[0-9a-f]{64}$/;
@@ -150,8 +140,16 @@ const host = (url) => {
 function destination(item) {
   if (item.kind === 'web' && isLocalFileUrl(item.url))
     return { label: 'libraryKindFile', href: item.url };
-  if (item.kind === 'web' && web(item.url) && item.clip?.complete)
-    return { label: 'libraryKindClipped', href: clipViewerUrl(item.url), original: item.url };
+  if (
+    item.kind === 'web' &&
+    (web(item.url) || /^urn:tabgent:feed:[0-9a-f]{64}$/.test(item.url)) &&
+    item.clip?.complete
+  )
+    return {
+      label: 'libraryKindClipped',
+      href: clipViewerUrl(item.url),
+      original: web(item.url) && item.url,
+    };
   if (item.kind === 'web') return { label: 'libraryKindWeb', href: web(item.url) && item.url };
   if (item.kind === 'pdf' && LOCAL_PDF.test(item.url))
     return { label: 'libraryKindLocalPdf', href: item.source && pdfViewerUrl(item.url) };
@@ -266,6 +264,7 @@ function libraryItem(item, seen) {
     category ? t(category) : '',
     category && PLAIN_KINDS.has(label) ? '' : t(label),
     flag ? t(flag) : '',
+    item.hasFullText === false ? t('libraryNoFullText') : '',
     item.author,
     host(item.url),
     loadTimeData.getStringF('epubHighlightCount', item.highlightCount),
@@ -286,6 +285,17 @@ function libraryItem(item, seen) {
   }
   return li;
 }
+
+const librarySearch = initLibrarySearch({
+  send: library.send,
+  positions: library.positions,
+  renderItem: libraryItem,
+  explain: shown,
+  beforeRender() {
+    covers.disconnect();
+    for (const url of coverUrls.splice(0)) URL.revokeObjectURL(url);
+  },
+});
 
 // Each open (or a return to the library) supersedes the ones still loading, which stop
 // at their next step so two books never share the reader state or an upload.
@@ -425,6 +435,7 @@ async function showBook(file, sha256, token) {
     library.announce({ sha256, title: state.title });
     document.title = state.title;
     $('#bookTitle').textContent = state.title;
+    librarySearch.hide();
     $('#start').hidden = true;
     $('#viewer').hidden = $('#footer').hidden = $('#reading').hidden = false;
     $('#contentsButton').disabled = false;
@@ -461,6 +472,10 @@ async function showBook(file, sha256, token) {
     if (state.view !== view) return false;
     await view.init({ lastLocation: saved?.cfi, showTextStart: !saved?.cfi });
     if (state.view !== view) return false;
+    const target = /^#tabgent-highlight=(h\d{3,9})$/.exec(location.hash)?.[1];
+    const highlight = target && state.highlights.get(target);
+    if (highlight)
+      await navigate((view) => view.goTo(highlight.cfi || highlight.record.anchor.cfi));
     status('');
     void verifyAll();
     return true;

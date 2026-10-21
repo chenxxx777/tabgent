@@ -217,6 +217,12 @@ try {
     disconnect: () => {},
   });
   assert.deepEqual(await call({ type: 'libraryDocuments' }, library), { documents: [] });
+  assert.deepEqual(await call({ type: 'librarySearch', query: '中文' }, library), {
+    documents: [],
+    tags: [],
+    total: 0,
+    offset: 0,
+  });
   const upload = {
     type: 'epubSourceSave',
     kind: 'pdf',
@@ -271,6 +277,10 @@ try {
   );
   const stranger = { ...library, documentId: 'another-reader' };
   assert.match((await call({ type: 'libraryDocuments' }, stranger)).error, /Invalid EPUB reader/);
+  assert.match(
+    (await call({ type: 'librarySearch', query: '中文' }, stranger)).error,
+    /Invalid EPUB reader/,
+  );
   console.log('PASS the library imports a PDF as urn:sha256 and lists vault documents');
 
   // Only the library page manages subscriptions: other readers and web pages cannot.

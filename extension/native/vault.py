@@ -76,6 +76,8 @@ lock
 uploads/
 feeds.db
 feeds.db-*
+library-search.db
+library-search.db-*
 documents/*/original.*
 *.tmp
 """
@@ -836,6 +838,13 @@ def list_documents(settings, params):
     return {"documents": documents}
 
 
+def search_documents(settings, params):
+    # Separate UI index: the reading_vault tool keeps its own search behavior.
+    import library_search
+
+    return library_search.search(settings, params)
+
+
 def save_clip(settings, params):
     """Saves a clipped webpage: its text as the document's full text file (Full Document
     Contents/<category>/<name>.md), its cleaned HTML and, last, its record (article.json)
@@ -1217,6 +1226,7 @@ METHODS = {
     "vault/source/read": read_source,
     "vault/books/list": list_books,
     "vault/documents/list": list_documents,
+    "vault/library/search": search_documents,
     "vault/clip/save": save_clip,
     "vault/clip/asset": save_clip_asset,
     "vault/clip/read": read_clip,

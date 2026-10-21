@@ -77,6 +77,54 @@
           </button>
         </div>
         <div id="documentsPanel" role="tabpanel" aria-labelledby="documentsTab">
+          <form id="librarySearchForm" role="search">
+            <input
+              id="libraryQuery"
+              type="search"
+              maxlength="500"
+              autocomplete="off"
+              placeholder="$i18n{librarySearchPlaceholder}"
+              aria-label="$i18n{librarySearchPlaceholder}"
+            />
+            <div id="libraryFilterBar">
+              <select id="libraryCategory" aria-label="$i18n{libraryFilterCategory}">
+                <option value="">$i18n{libraryAllCategories}</option>
+                <option value="articles">$i18n{libraryCategoryArticles}</option>
+                <option value="tweets">$i18n{libraryCategoryTweets}</option>
+                <option value="videos">$i18n{libraryCategoryVideos}</option>
+                <option value="podcasts">$i18n{libraryCategoryPodcasts}</option>
+                <option value="pdfs">$i18n{libraryCategoryPdfs}</option>
+                <option value="books">$i18n{libraryCategoryBooks}</option>
+                <option value="local-files">$i18n{libraryCategoryLocalFiles}</option>
+              </select>
+              <select id="libraryState" aria-label="$i18n{libraryFilterState}">
+                <option value="">$i18n{libraryAllStates}</option>
+                <option value="inbox">$i18n{libraryStateInbox}</option>
+                <option value="later">$i18n{feedsLater}</option>
+                <option value="archive">$i18n{feedsArchive}</option>
+              </select>
+              <label
+                ><input id="libraryHasComments" type="checkbox" /> $i18n{libraryHasComments}</label
+              >
+              <label
+                ><input id="libraryHasHighlights" type="checkbox" />
+                $i18n{libraryHasHighlights}</label
+              >
+              <details id="libraryTags">
+                <summary>$i18n{libraryFilterTags}</summary>
+                <div id="libraryTagChoices"></div>
+              </details>
+              <label
+                ><input id="libraryDiscussions" type="checkbox" />
+                $i18n{libraryIncludeDiscussions}</label
+              >
+            </div>
+            <div class="libraryFilterSummary">
+              <div id="libraryActiveFilters" aria-label="$i18n{libraryCurrentFilters}"></div>
+              <button id="libraryClear" type="button" hidden>$i18n{libraryClearFilters}</button>
+            </div>
+          </form>
+          <p class="muted librarySearchScope">$i18n{librarySearchScope}</p>
           <div id="drop">
             <h1>$i18n{libraryTitle}</h1>
             <p>$i18n{libraryDropHint}</p>
@@ -89,8 +137,9 @@
             />
           </div>
           <h2>$i18n{libraryDocuments}</h2>
-          <p id="booksStatus" class="muted"></p>
+          <p id="booksStatus" class="muted" role="status" aria-live="polite"></p>
           <ul id="books"></ul>
+          <button id="libraryMore" hidden>$i18n{feedsMore}</button>
         </div>
         <div id="feedsPanel" role="tabpanel" aria-labelledby="feedsTab" hidden>
           <form id="feedAddForm">

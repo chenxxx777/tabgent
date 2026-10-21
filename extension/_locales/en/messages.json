@@ -1605,5 +1605,80 @@
   },
   "errorGeneric": {
     "message": "Something went wrong"
+  },
+  "librarySearchPlaceholder": {
+    "message": "Search titles, authors, URLs, comments, highlights and text…"
+  },
+  "libraryFilterCategory": {
+    "message": "Category"
+  },
+  "libraryAllCategories": {
+    "message": "All categories"
+  },
+  "libraryFilterState": {
+    "message": "Reading state"
+  },
+  "libraryAllStates": {
+    "message": "All reading states"
+  },
+  "libraryStateInbox": {
+    "message": "Inbox"
+  },
+  "libraryHasComments": {
+    "message": "Has comments"
+  },
+  "libraryHasHighlights": {
+    "message": "Has highlights"
+  },
+  "libraryFilterTags": {
+    "message": "Tags (match all)"
+  },
+  "libraryNoTags": {
+    "message": "No document tags yet"
+  },
+  "libraryIncludeDiscussions": {
+    "message": "Include discussions"
+  },
+  "libraryCurrentFilters": {
+    "message": "Current search and filters"
+  },
+  "libraryClearFilters": {
+    "message": "Clear all"
+  },
+  "libraryRemoveFilter": {
+    "message": "Remove filter: $1"
+  },
+  "libraryResultCount": {
+    "message": "$1 of $2 documents"
+  },
+  "libraryNoResults": {
+    "message": "No documents match. Try another search or clear the filters."
+  },
+  "librarySearchScope": {
+    "message": "Searches saved documents and available full text, including PDF pages and book chapters. Unsaved subscription items stay in Subscriptions. Discussions are excluded unless selected."
+  },
+  "libraryMatchTitle": {
+    "message": "Title"
+  },
+  "libraryMatchAuthor": {
+    "message": "Author"
+  },
+  "libraryMatchUrl": {
+    "message": "URL"
+  },
+  "libraryMatchComment": {
+    "message": "Comment"
+  },
+  "libraryMatchHighlight": {
+    "message": "Highlight"
+  },
+  "libraryMatchBody": {
+    "message": "Text"
+  },
+  "libraryMatchDiscussion": {
+    "message": "Discussion"
+  },
+  "libraryNoFullText": {
+    "message": "Full text not saved"
   }
 }

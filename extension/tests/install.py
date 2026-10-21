@@ -52,6 +52,7 @@ with tempfile.TemporaryDirectory(prefix="tabgent-install-") as directory:
     assert {"vault", "epub_text", "pdf_text"} <= helper
     for name in helper:
         assert (installed / f"{name}.py").is_file(), name
+    assert (installed / "library_search.py").is_file()
     assert (
         "export CODEX_HOME=" + shlex.quote(str(codex_home.resolve()))
         in launcher.read_text()

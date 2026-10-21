@@ -86,6 +86,7 @@ with zipfile.ZipFile(
         "message_fork.py",
         "local_files.py",
         "vault.py",
+        "library_search.py",
         "feeds.py",
         "epub_text.py",
         "pdf_text.py",
