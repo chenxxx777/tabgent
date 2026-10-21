@@ -424,8 +424,9 @@ const video = `<!doctype html><html><head><meta charset="utf-8"><title>Recorded 
       'Clipped',
     );
     assert.deepEqual(folders(), [folder], 'The clip goes into the page document');
+    // The record names the full text once the clip's write finishes, just after article.json.
     assert.equal(
-      docOf(folder).fullTextPath,
+      await until(() => docOf(folder).fullTextPath),
       path.join(vault, 'Full Document Contents/Articles/On Autonomy.md'),
     );
     const markdown = read(folder, 'article.md');

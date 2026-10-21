@@ -290,8 +290,12 @@ body.dragging #drop {
 #books .item[data-content] .meta {
   color: #a15c00;
 }
-/* The user's comment on a document and its tags, under its row. */
-#books li:has(> .document-notes) .item {
+/* The user's comment on a document and its tags, under its row. A document with neither
+   keeps its row's height: its buttons show at the right on hover or keyboard focus. */
+#books li {
+  position: relative;
+}
+#books li:has(> .document-notes:not(.empty)) .item {
   border-bottom: 0;
 }
 #books li > .document-notes {
@@ -299,17 +303,32 @@ body.dragging #drop {
   border-bottom: 1px solid var(--border);
   font-size: 12px;
 }
+#books li > .document-notes.empty {
+  position: absolute;
+  right: 12px;
+  bottom: 9px;
+  padding: 0;
+  border: 0;
+  visibility: hidden;
+}
+#books li:hover > .document-notes.empty,
+#books li:focus-within > .document-notes.empty {
+  visibility: visible;
+}
+/* The heading keeps its height: the tag manager's button sits on its line. */
 #documentsHeading {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  position: relative;
   margin: 32px 0 8px;
 }
 #documentsHeading h2 {
-  flex: 1;
   margin: 0;
+  padding-right: 120px;
 }
 #documentsHeading button {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  transform: translateY(-50%);
   color: var(--muted);
   font-size: 12px;
 }

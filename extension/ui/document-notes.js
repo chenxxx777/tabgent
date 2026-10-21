@@ -118,6 +118,14 @@ export function createDocumentNotes({
       chips.append(chip);
     }
     add.hidden = !editable || !field.hidden;
+    showEmpty();
+  }
+  // Nothing to show yet: a list may then show only the buttons, on hover or focus.
+  function showEmpty() {
+    root.classList.toggle(
+      'empty',
+      !value.tags.length && !value.comment && !editing && field.hidden,
+    );
   }
 
   async function changeTags(change) {
@@ -222,6 +230,7 @@ export function createDocumentNotes({
 
   function renderComment() {
     commentBox.replaceChildren();
+    showEmpty();
     if (!editing) {
       if (value.comment) {
         const text = make('p', 'dn-comment-text', value.comment);

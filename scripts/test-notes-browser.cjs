@@ -208,6 +208,9 @@ for method, params in json.loads(sys.argv[3]):
     // A comment on the clipped page, which has no highlights: saved to its note.
     const comment = '保存这篇是为了比较两种方法。\n\n第二种方法的适用条件还要验证。';
     const clipped = row('Clipped Essay');
+    // Without tags or a comment, a row shows its buttons on hover.
+    assert.equal(await clipped.locator('.dn-comment-open').isVisible(), false);
+    await clipped.hover();
     await clipped.locator('.dn-comment-open').click();
     await clipped.locator('textarea').fill(comment);
     await clipped.locator('textarea').press('Control+Enter');
