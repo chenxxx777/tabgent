@@ -354,8 +354,17 @@ async function showClip() {
     },
     images: (root) => prepareImages(root, clip.assets),
   });
-  // Only links were saved: said here too, so the copy is not taken for the page's text.
+  // Only links, or only show notes, were saved: said here too, so the copy is not taken for
+  // the page's text; a missing transcript says why.
+  const reason = {
+    login: 'clipTranscriptLogin',
+    none: 'clipTranscriptNone',
+    empty: 'clipTranscriptEmpty',
+    unplayable: 'clipTranscriptUnplayable',
+  }[clip.transcript?.status === 'unavailable' ? clip.transcript.reason : ''];
   if (clip.contentStatus === 'linksOnly') notice(t('clipLinksOnlyNotice'));
+  else if (clip.contentStatus === 'notesOnly')
+    notice([t('clipNotesOnlyNotice'), reason ? t(reason) : ''].filter(Boolean).join(' '));
   void showCover(clip);
 }
 // The page's cover image above the text, unless the text already shows that image.

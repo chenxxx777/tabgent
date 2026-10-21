@@ -107,7 +107,9 @@ checks that the reader refuses a changed `article.html` and cleans forged markup
 running scripts or loading anything, clips a page that enforces Trusted Types, saves a short
 page whole, saves a page with only an embedded player as links only (the page, the reader and
 the library say so), checks the cover saved with the page's Referer, its published date and its
-library thumbnail, checks that a highlight in another tab saves within two seconds while a clip saves
+library thumbnail, clips two generated YouTube pages served at `www.youtube.com` (one saves its
+captions as a transcript with chapters; one, whose captions return no text, saves only its
+description and says why), checks that a highlight in another tab saves within two seconds while a clip saves
 about 18 MB of images, then stops the server, restarts the browser, opens the clipped copy
 from the library offline and deletes it.
 Every request outside `127.0.0.1` is refused.
@@ -115,7 +117,11 @@ Every request outside `127.0.0.1` is refused.
 Clipping real sites cannot be tested offline. After updating Defuddle, clip by hand, in a
 signed-in browser: a single X post, a thread, a long post and an X article; a post with images
 and a video; a WeChat article; a Substack post; and a technical blog post with code. Check the
-text, the image addresses and the thread's posts in `article.md`.
+text, the image addresses and the thread's posts in `article.md`. YouTube captions also need a
+signed-in browser: YouTube answers caption requests from a fresh, signed-out test browser with a
+sign-in or bot check, or with empty text. Clip a video with captions (once with captions turned
+off, once with CC on) and a podcast page with a transcript, and check the transcript and its
+language in `article.md` and `article.json`.
 
 To compare clips of real pages in a script, launch Chrome through Playwright, or add
 `--disable-field-trial-config` when starting Chrome for Testing directly. Without it, Chrome

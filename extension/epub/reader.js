@@ -243,12 +243,14 @@ function libraryItem(item, seen) {
   meta.className = 'meta';
   const updated = Date.parse(item.updatedAt);
   const read = item.kind === 'epub' && seen[item.source?.sha256]?.fraction;
-  // A clip of only links (an embedded video, a page whose text did not load) says so.
-  const linksOnly = item.clip?.complete && item.clip.contentStatus === 'linksOnly';
-  if (linksOnly) entry.dataset.content = 'linksOnly';
+  // A clip of only links (an embedded video, a page whose text did not load) or only show
+  // notes (a video or podcast without a transcript) says so.
+  const partial = item.clip?.complete && item.clip.contentStatus;
+  const flag = { linksOnly: 'libraryLinksOnly', notesOnly: 'libraryNotesOnly' }[partial];
+  if (flag) entry.dataset.content = partial;
   meta.textContent = [
     t(label),
-    linksOnly ? t('libraryLinksOnly') : '',
+    flag ? t(flag) : '',
     item.author,
     host(item.url),
     loadTimeData.getStringF('epubHighlightCount', item.highlightCount),

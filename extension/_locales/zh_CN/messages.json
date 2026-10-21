@@ -1222,6 +1222,42 @@
   "readingPublished": {
     "message": "发布于 $1"
   },
+  "clipNotesOnly": {
+    "message": "已保存《$1》，但只有节目笔记 / 简介，没有文字稿。"
+  },
+  "clipNotesOnlyNotice": {
+    "message": "只有节目笔记 / 简介，没有文字稿。"
+  },
+  "libraryNotesOnly": {
+    "message": "只有节目笔记"
+  },
+  "clipTranscriptSaved": {
+    "message": "文字稿：$1。"
+  },
+  "clipTranscriptAuto": {
+    "message": "$1（自动生成）"
+  },
+  "clipTranscriptLogin": {
+    "message": "YouTube 要求登录或验证不是机器人，没能读取字幕。"
+  },
+  "clipTranscriptNone": {
+    "message": "没有可用的字幕或文字稿。"
+  },
+  "clipTranscriptEmpty": {
+    "message": "YouTube 没有返回字幕文本。在视频上打开字幕（CC）或展开「显示文字稿」后，再剪藏一次。"
+  },
+  "clipTranscriptUnplayable": {
+    "message": "这个视频在这里无法播放，没能读取字幕。"
+  },
+  "clipVideoDescription": {
+    "message": "简介"
+  },
+  "clipTranscriptHeading": {
+    "message": "文字稿"
+  },
+  "clipTranscriptOf": {
+    "message": "文字稿（$1）"
+  },
   "clipOpen": {
     "message": "打开剪藏版"
   },

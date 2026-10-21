@@ -286,8 +286,8 @@ body.dragging #drop {
 #books .cover:not([src]) {
   visibility: hidden;
 }
-/* A clip that holds only links. */
-#books .item[data-content='linksOnly'] .meta {
+/* A clip that holds only links, or only show notes. */
+#books .item[data-content] .meta {
   color: #a15c00;
 }
 footer {

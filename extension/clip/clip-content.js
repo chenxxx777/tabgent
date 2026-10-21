@@ -189,12 +189,10 @@
   // A Unix time as China time, with its offset: 2026-10-18T21:00:00+08:00.
   const chinaTime = (seconds) =>
     new Date((seconds + 8 * 3600) * 1000).toISOString().slice(0, 19) + '+08:00';
-  // Defuddle writes a date it read as text at midnight UTC; that is a date, not an instant.
+  // Defuddle writes a date it read as text ("March 5, 2026") as midnight UTC in this exact
+  // form; that is a date, not an instant. Times a page states (2026-03-05T00:00:00Z) stay.
   const dateOnly = (value) =>
-    String(value || '').replace(
-      /^(\d{4}-\d{2}-\d{2})T00:00(?::00(?:\.0+)?)?(?:Z|[+-]00:?00)$/,
-      '$1',
-    );
+    String(value || '').replace(/^(\d{4}-\d{2}-\d{2})T00:00:00\+00:00$/, '$1');
   // The few blocks before and after the page's first heading: its meta line.
   function titleLine(doc) {
     const h1 = doc.querySelector('h1');
@@ -687,22 +685,27 @@
   }
 
   // Returns the clipped text, or { ok: false, reason } when there is nothing to clip.
+  // player: a YouTube video's player data, which the worker reads in the page's own world.
   const address = (value) => String(value).split('#')[0];
-  function run({ mode = 'article', url = location.href, expected = '' } = {}) {
+  async function run({ mode = 'article', url = location.href, expected = '', player = null } = {}) {
     // A single-page app can change its address without a new document: the text would no
     // longer be the page the clip is saved under.
     if (address(url) !== address(location.href)) return { ok: false, reason: 'navigated' };
     if (mode !== 'selection' && xPage(url) === 'other') return { ok: false, reason: 'x-not-post' };
     if (mode === 'selection' && !selected(expected)) return { ok: false, reason: 'no-selection' };
+    const media = globalThis.tabgentClipMedia;
     let found;
     try {
-      found = extract(mode, url);
+      // A YouTube video: its description and captions, saved as a transcript.
+      if (mode !== 'selection' && media) found = await media.youtube(url, player);
+      found ||= extract(mode, url);
     } catch (error) {
       return { ok: false, reason: 'error', message: String(error?.message || error).slice(0, 300) };
     }
     // Not for X posts: their author is the post's, and the page's image is no cover. A page
-    // these rules cannot read is clipped with Defuddle's metadata alone.
-    if (found && !found.unknownX && found.extractor !== 'x') {
+    // these rules cannot read is clipped with Defuddle's metadata alone. A YouTube video has
+    // its own from the player.
+    if (found && !found.unknownX && found.extractor !== 'x' && found.extractor !== 'youtube') {
       try {
         const { author, published, cover, sources } = pageDetails(document, url, found);
         // A selection is a quote: it has the page's author and date, not a cover.
@@ -712,6 +715,11 @@
     }
     if (!found) return { ok: false, reason: 'no-selection' };
     if (found.unknownX) return { ok: false, reason: 'x-layout' };
+    // A podcast episode: its transcript when the page has one, else only its show notes.
+    if (mode !== 'selection' && media && found.extractor === 'defuddle')
+      found = await media.podcast(document, url, found).catch(() => found);
+    // Captions and transcripts are requested over the network: the page may have moved on.
+    if (address(url) !== address(location.href)) return { ok: false, reason: 'navigated' };
     const selection = getSelection();
     return finish(found, url, {
       mode,
@@ -784,6 +792,19 @@
         sources[key] = found.sources[key];
     const cover = remote(found.cover) ? found.cover : '';
     if (!cover) delete sources.cover;
+    // A video's or podcast's transcript: saved (with its language and kind), or why not.
+    const one = (value, list) => (list.includes(value) ? value : '');
+    const transcript =
+      found.transcript && typeof found.transcript === 'object'
+        ? {
+            status: one(found.transcript.status, ['saved', 'unavailable']) || 'unavailable',
+            reason: one(found.transcript.reason, ['login', 'none', 'empty', 'unplayable']),
+            language: label(found.transcript.language, 35),
+            kind: one(found.transcript.kind, ['manual', 'auto']),
+            name: label(found.transcript.name, 200),
+            source: one(found.transcript.source, ['captions', 'player', 'panel', 'page', 'link']),
+          }
+        : null;
     return {
       ok: true,
       mode,
@@ -805,9 +826,14 @@
       posts,
       cover,
       metaSources: sources,
-      contentStatus: linksOnly ? 'linksOnly' : 'text',
-      // A short post is still the whole post: no "save whole page" offer for X.
-      tooLittle: mode === 'article' && !enough && found.extractor !== 'x',
+      // notesOnly: a video's description or a podcast's show notes, without a transcript.
+      // The page's own word that it has notes without a transcript comes first.
+      contentStatus:
+        found.contentStatus === 'notesOnly' ? 'notesOnly' : linksOnly ? 'linksOnly' : 'text',
+      transcript,
+      // A short post is still the whole post, and a video's page has nothing more: no "save
+      // whole page" offer for X or YouTube.
+      tooLittle: mode === 'article' && !enough && !['x', 'youtube'].includes(found.extractor),
       hasSelection,
     };
   }
