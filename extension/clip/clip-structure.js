@@ -34,9 +34,12 @@
 
   // The source element's attributes (class, id, test ids, hidden...) on the new table, row or
   // cell, except its role: Defuddle reads them to drop noise such as a grid of related posts.
+  // Copies of the attributes: a name the parser accepted from broken markup (<span =x>)
+  // would make setAttribute throw.
   const keep = (from, to) => {
-    for (const { name, value } of from.attributes)
-      if (!/^(?:role|aria-colspan|aria-rowspan)$/.test(name)) to.setAttribute(name, value);
+    for (const attribute of from.attributes)
+      if (!/^(?:role|aria-colspan|aria-rowspan)$/.test(attribute.name))
+        to.setAttributeNode(attribute.cloneNode());
   };
 
   // A table drawn with role="table" (or grid) on other elements becomes a real table, so its
@@ -329,6 +332,7 @@
     /^(?:a )?guest post by\b|^about the author\b|^written by\b|^(?:作者|嘉宾|关于作者)/i;
   const CONTENT_BLOCKS =
     'p,li,dt,dd,h1,h2,h3,h4,h5,h6,blockquote,pre,figcaption,caption,td,th,[role="cell"],[role="gridcell"],[role="columnheader"],[role="rowheader"]';
+  const COUNT = /^[\d\s.,:;%+#·•|/()\-–—kKmMwW万亿千]*$/;
   const SKIP = new Set(
     (
       'script style noscript template svg math button select option textarea input label ' +
@@ -353,7 +357,8 @@
     );
   }
 
-  // What a text node of the page is: 'noise' (navigation, buttons, comments, counts...),
+  // What a text node of the page is: 'noise' (navigation, buttons, comments, link lists...),
+  // 'minor' (a count or a short label on its own: not counted, but part of what it sits in),
   // 'card' (an author or guest card) or 'text'. memo caches per-element results.
   function kindOf(node, region, memo) {
     let strong = false,
@@ -417,12 +422,21 @@
       return share > 0.6;
     };
     // A card in a header, however deep, is the byline: metadata, kept in the front matter.
-    if (card && !header && (!weak || weak.contains(card)))
-      return links() || links(card) ? 'noise' : 'card';
+    // A card's own links (the author's name) are part of it: the share is the whole card's.
+    if (card && !header && (!weak || weak.contains(card))) return links(card) ? 'noise' : 'card';
     if (weak) return 'noise';
-    // Counts and dates are noise, except in a table's cells.
-    if (!cell && /^[\d\s.,:;%+#·•|/()\-–—kKmMwW万亿千]*$/.test(text)) return 'noise';
-    if (!block && text.length <= 20) return 'noise';
+    // A count or date on its own (a share count, a date line) is not text; one in a sentence
+    // ("about <strong>4%</strong> lower") or in a table's cell is.
+    if (!cell && COUNT.test(text)) {
+      const host = block || parent.closest('div, section, article, li, p') || parent;
+      let alone = memo.alone.get(host);
+      if (alone === undefined) {
+        alone = COUNT.test(squash(host.textContent));
+        memo.alone.set(host, alone);
+      }
+      if (alone) return 'minor';
+    }
+    if (!block && text.length <= 20) return 'minor';
     return links() ? 'noise' : 'text';
   }
 
@@ -500,7 +514,7 @@
         (!!heading && heading.includes(item.text));
     }
 
-    const memo = { words: new Map(), links: new Map(), starts: new Map() };
+    const memo = { words: new Map(), links: new Map(), starts: new Map(), alone: new Map() };
     // A section headed "References", "Further reading", "参考文献"... is back matter until a
     // heading of its level or above.
     let back = 0;
@@ -516,7 +530,7 @@
         }
         return { ...item, kind: back ? 'noise' : kindOf(item.node, region, memo) };
       });
-    const items = classified.filter((item) => item.kind !== 'noise');
+    const items = classified.filter((item) => item.kind !== 'noise' && item.kind !== 'minor');
     const visible = items.reduce((sum, item) => sum + item.text.length, 0);
     const kept = items.reduce((sum, item) => sum + (item.found ? item.text.length : 0), 0);
     const missing = visible - kept;
@@ -541,13 +555,14 @@
     };
     // Each element's text, its missing part and its noise, to restore whole elements: an
     // element is copied only when all its text is missing and none of it is noise (a copy
-    // would bring back the share buttons or link lists it holds).
+    // would bring back the share buttons or link lists it holds). Counts and short labels
+    // ('minor') do not stop it.
     const totals = new Map();
     for (const item of classified)
       for (let element = item.node.parentElement; element; element = element.parentElement) {
         const entry = totals.get(element) || { all: 0, gone: 0, noise: 0 };
         if (item.kind === 'noise') entry.noise += item.text.length;
-        else {
+        else if (item.kind !== 'minor') {
           entry.all += item.text.length;
           if (!item.found) entry.gone += item.text.length;
         }

@@ -441,7 +441,8 @@ put their cell text in such wrappers), and images keep their displayed size, so 
 user reads is never modified. Before Defuddle reads the copy, `clip-structure.js` turns
 tables drawn with ARIA roles (`role="table"`, `grid` or `treegrid` with `row` and cell roles)
 into real tables, header rows in `<thead>`, keeping the elements' other attributes so Defuddle
-still drops noise grids (related posts); puts loose text in a table cell that also holds
+still drops noise grids (related posts; copied as attribute nodes, so a malformed name from
+broken markup cannot stop the clip); puts loose text in a table cell that also holds
 blocks into a block of its own (Defuddle replaces a layout table by its only block, which
 dropped the text beside it); and turns inline elements holding only a space into that space
 (Defuddle removes empty elements, and words ran together). On
@@ -543,24 +544,25 @@ spaces). The content region is the deepest element holding 95% of the matched te
 to its `<article>` when that is at most half again as large. Inside it, navigation, forms,
 buttons, dialogs, comments, sharing, likes, related or recommended posts, subscribe boxes,
 ads, tables of contents, references and citations, summary boxes, headers, footers and
-asides, counts, short labels outside text blocks and link lists are not counted (class names,
-ids and labels are read as words; CSS-module hashes are skipped), nor is back matter: a
-section headed "References", "Further reading", "External links", "See also", "参考文献", "延伸阅读"
-and the like. Author, guest and acknowledgement cards (by name, or text such as "A guest post
-by") count even inside a footer, but not anywhere in a header, where they are the byline, nor
-when they are mostly links ("More from this author"); counts in a table's cells are content.
-When the kept share falls under 95% with at least 150 characters missing, or one missing run
-reaches 300 characters, each missing run with kept text on both sides is put back after the
-kept text that preceded it on the page; missing cards are put back wherever they are. Only
-whole elements that lost all their text and hold no noise are put back (40 characters or
-more, 30 for a card), copied with their links and emphasis but without images or hidden parts
-(a row or row group stays in a table): an element that lost part of its text was rewritten by
-the extractor (footnotes, citations), not dropped. If more is missing than was kept (over
-5,000 characters), the region is likely wrong: nothing but cards is put back and the clip is
-marked `incomplete`; a check that fails leaves the clip as extracted. The result's `coverage`
-(`visibleChars`, `keptChars`, `ratio`, `restoredPassages`, `restoredChars`, `incomplete`) is
-bounded by `cleanClip`, recorded in `article.json`, and the page's saved message says how
-many passages were put back or that text may be missing.
+asides, counts standing alone (a count in a sentence or a table's cell is text), short labels
+outside text blocks and link lists are not counted (class names, ids and labels are read as
+words; CSS-module hashes are skipped), nor is back matter: a section headed "References",
+"Further reading", "External links", "See also", "参考文献", "延伸阅读" and the like. Author, guest
+and acknowledgement cards (by name, or text such as "A guest post by") count even inside a
+footer, but not anywhere in a header, where they are the byline, nor when the card as a whole
+is mostly links ("More from this author"; a linked author name is part of the card). When the
+kept share falls under 95% with at least 150 characters missing, or one missing run reaches
+300 characters, each missing run with kept text on both sides is put back after the kept text
+that preceded it on the page; missing cards are put back wherever they are. Only whole
+elements that lost all their text and hold no noise (counts and short labels aside) are put
+back (40 characters or more, 30 for a card), copied with their links and emphasis but without
+images or hidden parts (a row or row group stays in a table): an element that lost part of
+its text was rewritten by the extractor (footnotes, citations), not dropped. If more is
+missing than was kept (over 5,000 characters), the region is likely wrong: nothing but cards
+is put back and the clip is marked `incomplete`; a check that fails leaves the clip as
+extracted. The result's `coverage` (`visibleChars`, `keptChars`, `ratio`, `restoredPassages`,
+`restoredChars`, `incomplete`) is bounded by `cleanClip`, recorded in `article.json`, and the
+page's saved message says how many passages were put back or that text may be missing.
 
 The worker treats the result as untrusted: `cleanClip` refuses oversized or empty text and
 bounds every field before `vault/clip/save`. The vault writes `article.html` (the cleaned

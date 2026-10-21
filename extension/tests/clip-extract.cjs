@@ -92,6 +92,8 @@ ${Array.from({ length: 900 }, (_, i) => `<p>Figure ${i}</p><img src="${longImage
       <div role="rowgroup"><div role="row"><span role="columnheader">Day</span><span role="columnheader">Session</span></div></div>
       <div role="rowgroup"><div role="row"><span role="rowheader">Monday</span><span role="gridcell"><span class="wrap">Opening talk</span></span></div>
       <div role="row"><span role="rowheader">Tuesday</span><span role="gridcell">Workshops</span></div></div></div>
+    <div role="grid" aria-label="Odd markup"><div role="row"><span role="cell" =x>Odd cell text</span>
+      <span role="cell">Fine cell text</span></div></div>
     <div role="grid" class="related-posts"><div role="row"><span role="gridcell"><a href="/p/9">Pencil notes for beginners</a></span>
       <span role="gridcell">5 min</span></div><div role="row"><span role="gridcell"><a href="/p/10">Margins that matter</a></span>
       <span role="gridcell">7 min</span></div></div>
@@ -113,7 +115,7 @@ ${Array.from({ length: 900 }, (_, i) => `<p>Figure ${i}</p><img src="${longImage
         <span class="count">128</span> <span class="likes">42 likes</span></div>
       <footer class="entry-footer">
         <div class="author-bio"><img src="/img/jane.jpg" alt="Jane Fixture" width="64" height="64">
-          <div><h4>About the author</h4><p>Jane Fixture writes about reading habits and the history of
+          <div><h4>About the author</h4><h5><a href="/author/jane">Jane Fixture</a></h5><p>Jane Fixture writes about reading habits and the history of
           the book. Her newsletter covers slow reading practices.</p></div></div>
         <div class="guest-card">A guest post by <a href="/@sam">Sam Guest</a>, editor of the Fixture Review.</div>
         <div class="author-more"><h4>More from this author</h4><ul><li><a href="/p/3">Reading by lamplight in winter</a></li>
@@ -134,7 +136,7 @@ ${Array.from({ length: 900 }, (_, i) => `<p>Figure ${i}</p><img src="${longImage
       <div class="card"><div class="card-content"><h3>Morning series</h3><p>Taken at six, before
         the wind rises; the readings are steady and agree with the earlier field season.</p></div></div>
       <div class="card"><div class="card-content"><h3>Night series</h3><p>Taken at ten, after the
-        ground cools; about four percent lower than the morning readings on most days.</p></div></div>
+        ground cools; about <strong>4%</strong> lower than the morning readings on most days.</p></div></div>
       <div class="card"><div class="card-content"><h3>Both together</h3><p>Read the figures as ranges,
         not exact values, before drawing conclusions about the trend over the decade.</p></div></div>
     </div>
@@ -705,6 +707,8 @@ function xThread() {
       /\*\*Feature\*\*[\s\S]*\*\*Basic\*\*[\s\S]*\*\*Team\*\*[\s\S]*Exports[\s\S]*Monthly[\s\S]*Daily/,
     );
     assert.doesNotMatch(sm, /\| +\||Home|Docs/);
+    // A cell with an attribute name only broken markup has (=x) is converted all the same.
+    assert.match(sm, /\| Odd cell text \| Fine cell text \|\n\| --- \| --- \|/);
     // An ARIA grid named as related posts is noise, as the same grid of divs would be.
     assert.doesNotMatch(sm, /Pencil notes for beginners|Margins that matter/);
     assert.equal(shapes.coverage.restoredPassages, 0);
@@ -717,7 +721,7 @@ function xThread() {
     const cm = cards.markdown;
     assert.match(
       cm,
-      /Slow paragraph 8[^\n]*\n\n#### About the author\n\nJane Fixture writes about reading habits/,
+      /Slow paragraph 8[^\n]*\n\n#### About the author\n\n##### \[Jane Fixture\]\(https:\/\/clip\.test\/author\/jane\)\n\nJane Fixture writes about reading habits/,
     );
     assert.match(
       cm,
@@ -773,7 +777,7 @@ function xThread() {
     assert.equal(field.ok, true);
     assert.match(
       field.markdown,
-      /Field paragraph 6[^\n]*\n\n### Morning series\n\nTaken at six, before the wind rises;[^\n]*\n\n### Night series\n\n[^\n]+\n\n### Both together\n\nRead the figures as ranges,[^\n]*over the decade\.\n\nLater paragraph 1/,
+      /Field paragraph 6[^\n]*\n\n### Morning series\n\nTaken at six, before the wind rises;[^\n]*\n\n### Night series\n\nTaken at ten, after the ground cools; about \*\*4%\*\* lower than the morning readings on most days\.\n\n### Both together\n\nRead the figures as ranges,[^\n]*over the decade\.\n\nLater paragraph 1/,
     );
     assert.equal(field.coverage.restoredPassages, 1);
     assert(field.coverage.restoredChars > 300, JSON.stringify(field.coverage));
