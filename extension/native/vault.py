@@ -833,6 +833,9 @@ def save_clip(settings, params):
         raise VaultError(
             "invalid_params", "contentStatus must be text, linksOnly or notesOnly"
         )
+    coverage = _clip_coverage(params.get("coverage"))
+    if coverage is not None:
+        details["coverage"] = coverage
     assets = _clip_assets(params.get("assets"))
     details["cover"] = _clip_cover(params.get("cover"), assets)
     extractor = _label(origin.get("extractor"), "origin.extractor")[:60]
@@ -2035,6 +2038,33 @@ def _clip_cover(value, assets):
             "invalid_params", "cover.file must be one of the clip's images"
         )
     return {"source": source, "file": file}
+
+
+def _clip_coverage(value):
+    """The clipping script's coverage check: the characters of text the page showed in its
+    content region, how many the extraction kept (and their ratio), the passages and
+    characters it put back, and whether text may still be missing. None when the page's
+    text was not checked (a feed item, a selection, an X post)."""
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise VaultError("invalid_params", "coverage must be an object")
+    counts = {
+        key: _integer(value, key, 0, 100_000_000, 0)
+        for key in ("visibleChars", "keptChars", "restoredPassages", "restoredChars")
+    }
+    ratio = value.get("ratio", 1)
+    if (
+        isinstance(ratio, bool)
+        or not isinstance(ratio, (int, float))
+        or not 0 <= ratio <= 1
+    ):
+        raise VaultError("invalid_params", "coverage.ratio must be between 0 and 1")
+    return {
+        **counts,
+        "ratio": round(float(ratio), 3),
+        "incomplete": value.get("incomplete") is True,
+    }
 
 
 def _clip_assets(value):

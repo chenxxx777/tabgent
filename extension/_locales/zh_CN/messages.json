@@ -1159,6 +1159,12 @@
   "clipTruncated": {
     "message": "正文过长，已截断。"
   },
+  "clipRestored": {
+    "message": "已按原位置补回提取时漏掉的 $1 段文字。"
+  },
+  "clipTextMissing": {
+    "message": "页面上的部分文字可能没有剪藏进来。"
+  },
   "clipReplaceAsk": {
     "message": "已于 $1 剪藏过这个网页，用当前页面替换吗？"
   },

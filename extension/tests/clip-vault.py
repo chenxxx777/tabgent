@@ -129,6 +129,7 @@ with tempfile.TemporaryDirectory(prefix="tabgent-clip-vault-") as directory:
             "failed": [],
         }
         assert record["assets"] == [] and record["truncated"] is False
+        assert "coverage" not in record, "a clip without a coverage check records none"
         # The machine record has the document; no highlights.md until a highlight.
         assert not (folder / "highlights.md").exists()
         anchors = json.loads((folder / "anchors.json").read_text())
@@ -235,6 +236,21 @@ with tempfile.TemporaryDirectory(prefix="tabgent-clip-vault-") as directory:
         fixed = clip(settings, replace=True, markdown="Fourth version.")
         assert fixed["saved"] is True and fixed["backup"].startswith("article-edited-")
         assert fixed["clip"]["complete"] is True
+        # The coverage check's figures go into the record.
+        coverage = {
+            "visibleChars": 900,
+            "keptChars": 810,
+            "ratio": 0.9,
+            "restoredPassages": 2,
+            "restoredChars": 90,
+            "incomplete": False,
+        }
+        saved = clip(
+            settings, replace=True, markdown="Fourth version.", coverage=coverage
+        )
+        assert saved["saved"] is True
+        record = json.loads((folder / "article.json").read_text())
+        assert record["coverage"] == coverage
 
         # Invalid requests are refused before anything is written.
         for change in (
@@ -250,6 +266,10 @@ with tempfile.TemporaryDirectory(prefix="tabgent-clip-vault-") as directory:
             {"images": {"found": -1}},
             {"words": "many"},
             {"expected": 12},
+            {"coverage": "all"},
+            {"coverage": {"ratio": 2}},
+            {"coverage": {"ratio": True}},
+            {"coverage": {"visibleChars": -1}},
         ):
             params = {
                 "url": "https://example.test/invalid",
