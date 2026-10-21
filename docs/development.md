@@ -105,7 +105,9 @@ the page names `article.md`. It then clips again (the page asks first and an edi
 the others linked), highlights and asks Codex there and sees the highlight on the live page,
 checks that the reader refuses a changed `article.html` and cleans forged markup without
 running scripts or loading anything, clips a page that enforces Trusted Types, saves a short
-page whole, checks that a highlight in another tab saves within two seconds while a clip saves
+page whole, saves a page with only an embedded player as links only (the page, the reader and
+the library say so), checks the cover saved with the page's Referer, its published date and its
+library thumbnail, checks that a highlight in another tab saves within two seconds while a clip saves
 about 18 MB of images, then stops the server, restarts the browser, opens the clipped copy
 from the library offline and deletes it.
 Every request outside `127.0.0.1` is refused.
@@ -114,6 +116,16 @@ Clipping real sites cannot be tested offline. After updating Defuddle, clip by h
 signed-in browser: a single X post, a thread, a long post and an X article; a post with images
 and a video; a WeChat article; a Substack post; and a technical blog post with code. Check the
 text, the image addresses and the thread's posts in `article.md`.
+
+To compare clips of real pages in a script, launch Chrome through Playwright, or add
+`--disable-field-trial-config` when starting Chrome for Testing directly. Without it, Chrome
+for Testing's field-trial configuration turns on HTTPS upgrades: an `http://` page whose site
+also answers HTTPS with an invalid certificate (for example
+`http://www.incompleteideas.net/IncIdeas/BitterLesson.html`) then fails with
+`ERR_BLOCKED_BY_CLIENT`, with or without Tabgent. Tabgent's own network rules only redirect
+PDFs (by `Content-Type`) and set the Referer of its own image requests. Everyday Chrome falls
+back to `http://` when such an upgrade fails, or, with **Always use secure connections** on,
+shows its warning first.
 
 `npm run test:local-files` generates a PDF, Markdown, text and HTML files in the temporary
 folder and opens them by `file://` URL. It checks that a PDF goes straight to the PDF.js

@@ -100,6 +100,30 @@ main {
 #status {
   color: var(--muted);
 }
+/* The page's cover image, above the text. */
+#cover {
+  display: block;
+  max-width: 100%;
+  max-height: 60vh;
+  margin: -16px auto 32px;
+  border-radius: 8px;
+}
+/* A caption stays under its image (or above it, where the page puts it first). */
+#content figure {
+  margin: 1.5em 0;
+}
+#content figure img {
+  margin: 0 auto;
+}
+#content figcaption {
+  margin: 0.5em 0 0;
+  color: var(--muted);
+  font-size: 0.85em;
+  text-align: center;
+}
+#content figcaption:first-child {
+  margin: 0 0 0.5em;
+}
 #content {
   font:
     var(--size) / 1.7 Charter,

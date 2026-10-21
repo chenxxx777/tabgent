@@ -1210,6 +1210,18 @@
   "clipImagesFailed": {
     "message": "$1 张图片未能保存，仍链接到网上。"
   },
+  "clipLinksOnly": {
+    "message": "已保存《$1》，但只保存了链接，没有取得正文 / 文字稿。"
+  },
+  "clipLinksOnlyNotice": {
+    "message": "只保存了链接，没有取得正文 / 文字稿。"
+  },
+  "libraryLinksOnly": {
+    "message": "只有链接"
+  },
+  "readingPublished": {
+    "message": "发布于 $1"
+  },
   "clipOpen": {
     "message": "打开剪藏版"
   },

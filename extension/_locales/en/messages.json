@@ -1210,6 +1210,18 @@
   "clipImagesFailed": {
     "message": "$1 images could not be saved and stay linked online."
   },
+  "clipLinksOnly": {
+    "message": "Saved “$1”, but only links: no article text or transcript was found on the page."
+  },
+  "clipLinksOnlyNotice": {
+    "message": "Only links were saved: no article text or transcript was found on the page."
+  },
+  "libraryLinksOnly": {
+    "message": "Links only"
+  },
+  "readingPublished": {
+    "message": "Published $1"
+  },
   "clipOpen": {
     "message": "Open clipped copy"
   },

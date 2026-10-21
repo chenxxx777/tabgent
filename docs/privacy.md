@@ -36,7 +36,9 @@ without them). The Referer is sent because some image hosts refuse requests with
 (for example sspai.com answers 403); it tells the image server only what it learns anyway
 when you view the page, and each clip sends its own page's Referer only for its own images. Up to 50 JPEG, PNG, GIF, WebP or
 AVIF images per page are saved, each up to 5 MB and 30 MB together; others (SVG, larger
-images, failed downloads) stay linked at their web addresses.
+images, failed downloads) stay linked at their web addresses. The page's cover image (the one
+it names for link previews, such as `og:image`) is downloaded the same way and counts toward
+these limits.
 Clipping does not send anything to Codex. A message about the page names the clipped text
 (its `article.md` path) in the reading context, and Codex reads it only on request.
 
@@ -111,8 +113,9 @@ remove saved notes. Nothing in the vault is uploaded by Tabgent.
 
 A clipped page is saved in its page's folder as `article.md` (the text as Markdown, with
 the page address and clip time), `article.html` (the cleaned page, without scripts, styles,
-forms or frames), its images in `assets/`, and `article.json` (when and how it was clipped,
-and the address each image came from). Clipping the page again
+forms or frames), its images and cover in `assets/`, and `article.json` (when and how it was
+clipped, the address each image came from, where the author, date and cover were found, and
+whether only links were saved). Clipping the page again
 replaces them after asking; an `article.md` you edited is kept as
 `article-edited-<time>.md`. Tabgent's reader shows a clipped page from these files, in an extension page that runs no
 script from the page and loads nothing from the web; links open in a new tab. Choose

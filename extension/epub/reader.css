@@ -270,6 +270,26 @@ body.dragging #drop {
   color: var(--muted);
   font-size: 12px;
 }
+/* A clipped page's cover, beside its title. */
+#books .item:has(> .cover) {
+  display: flow-root;
+}
+#books .cover {
+  float: right;
+  width: 84px;
+  height: 56px;
+  margin-left: 12px;
+  border-radius: 6px;
+  object-fit: cover;
+  background: var(--hover);
+}
+#books .cover:not([src]) {
+  visibility: hidden;
+}
+/* A clip that holds only links. */
+#books .item[data-content='linksOnly'] .meta {
+  color: #a15c00;
+}
 footer {
   display: flex;
   align-items: center;
