@@ -300,7 +300,7 @@ document.addEventListener('webviewerloaded', async (event) => {
     externalLinkTarget: 2,
     locale: 'en-US',
     enableComment: true,
-    // Tabgent's selection toolbar (Highlight / Ask AI) replaces the PDF.js floating button;
+    // Tabgent's selection toolbar (Highlight / Comment / Ask AI) replaces the PDF.js floating button;
     // the PDF.js highlight tool still annotates the PDF for savePdf.
     enableHighlightFloatingButton: false,
     enableAltTextModelDownload: false,

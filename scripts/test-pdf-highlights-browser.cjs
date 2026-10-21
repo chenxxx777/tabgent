@@ -497,6 +497,52 @@ const fixture = textPdf(
       second,
     ]);
     console.log('PASS delete removes the PDF highlight record and Markdown');
+
+    // Comment on a new selection: cancel stores nothing; save keeps the highlight and comment.
+    const beforeComment = docs()[0].anchors.highlights.length;
+    await drag('for longer');
+    await press('comment');
+    await page.keyboard.press('Escape');
+    await wait(400);
+    assert.equal(docs()[0].anchors.highlights.length, beforeComment, 'Escape stores nothing');
+    await drag('for longer');
+    await press('comment');
+    await page.keyboard.press('Control+Enter');
+    await wait(400);
+    assert.equal(
+      docs()[0].anchors.highlights.length,
+      beforeComment,
+      'An empty comment stores nothing',
+    );
+    const emptyHtml = await layerHtml();
+    assert(
+      ['The comment is empty, so nothing was saved.', '评论是空的，未保存。'].some((text) =>
+        emptyHtml.includes(text),
+      ),
+    );
+    await page.keyboard.press('Escape');
+    await pdf.evaluate(() => getSelection()?.removeAllRanges());
+    await wait(400);
+    const comment = 'Goals that last.';
+    await drag('a goal');
+    await press('comment');
+    await page.keyboard.type(comment);
+    await page.keyboard.press('Control+Enter');
+    assert(await until(() => docs()[0].anchors.highlights.some((h) => h.note === comment)));
+    const made = docs()[0].anchors.highlights.find((h) => h.text === 'a goal');
+    assert.equal(made.note, comment);
+    assert.match(docs()[0].markdown, /### 笔记\n\nGoals that last\./);
+    await page.close();
+    await open('');
+    assert(
+      await until(async () => (await painted()).includes('a goal')),
+      'Comment highlight restored',
+    );
+    const at = await textPoint('a goal');
+    await page.mouse.click(at.left + 4, at.y);
+    await wait(300);
+    assert((await layerHtml()).includes(comment), 'Comment shown after reload');
+    console.log('PASS PDF comment saves the highlight and comment; cancel stores nothing');
     passed = true;
   } finally {
     await context?.close().catch(() => {});

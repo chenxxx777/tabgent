@@ -884,34 +884,40 @@
     "message": "Sent to Tabgent. Click the Tabgent toolbar button to open the side panel."
   },
   "highlightNoteAdd": {
-    "message": "Add note"
+    "message": "Comment"
   },
   "highlightNoteEdit": {
-    "message": "Edit note"
+    "message": "Edit comment"
   },
   "highlightNoteLabel": {
-    "message": "Your note"
+    "message": "Comment"
   },
   "highlightNotePlaceholder": {
-    "message": "What do you think about this passage? Leave empty to remove the note."
+    "message": "What do you think about this passage? Leave empty to remove the comment."
+  },
+  "highlightCommentPlaceholder": {
+    "message": "What do you think about this passage?"
   },
   "highlightNoteHint": {
     "message": "⌘ Enter to save · Esc to cancel"
   },
   "highlightNoteSave": {
-    "message": "Save note"
+    "message": "Save comment"
   },
   "highlightNoteCancel": {
     "message": "Cancel"
   },
   "highlightNoteSaved": {
-    "message": "Note saved to your reading notes."
+    "message": "Comment saved to your reading notes."
   },
   "highlightNoteRemoved": {
-    "message": "Note removed."
+    "message": "Comment removed."
   },
   "highlightNoteFailed": {
-    "message": "The note could not be saved: $1"
+    "message": "The comment could not be saved: $1"
+  },
+  "highlightCommentEmpty": {
+    "message": "The comment is empty, so nothing was saved."
   },
   "pdfPageLabel": {
     "message": "p. $1"

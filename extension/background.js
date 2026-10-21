@@ -933,6 +933,7 @@ async function highlightMessage(msg, sender) {
       text = pageText(msg.text, 20000);
     if (!anchor || !text.trim()) throw new VaultError('invalid_params', 'Invalid highlight');
     const location = pageText(msg.location, 200).trim();
+    const note = typeof msg.note === 'string' ? pageText(msg.note, 20000) : '';
     let created = {},
       failure = null;
     try {
@@ -946,6 +947,7 @@ async function highlightMessage(msg, sender) {
         text,
         anchor,
         ...(location ? { location } : {}),
+        ...(note.trim() ? { note } : {}),
       });
     } catch (error) {
       if (!msg.ask) throw error;
@@ -1142,6 +1144,7 @@ async function epubMessage(msg, sender) {
     const anchor = cleanEpubAnchor(msg.anchor),
       text = pageText(msg.text, 20000);
     if (!anchor || !text.trim()) throw new VaultError('invalid_params', 'Invalid highlight');
+    const note = typeof msg.note === 'string' ? pageText(msg.note, 20000) : '';
     let created = {},
       failure = null;
     try {
@@ -1150,6 +1153,7 @@ async function epubMessage(msg, sender) {
         text,
         anchor,
         ...(anchor.chapter.title ? { location: anchor.chapter.title } : {}),
+        ...(note.trim() ? { note } : {}),
       });
     } catch (error) {
       if (!msg.ask) throw error;

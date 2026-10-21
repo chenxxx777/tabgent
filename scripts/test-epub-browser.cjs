@@ -487,6 +487,13 @@ async function until(check, ms = 10000) {
     // Keyboard: Tab moves from the selection into the toolbar, Enter activates.
     await page.keyboard.press('Tab');
     assert.equal(await page.evaluate(() => document.activeElement?.id), 'highlightAdd');
+    await page.keyboard.press('ArrowRight');
+    assert.equal(await page.evaluate(() => document.activeElement?.id), 'highlightComment');
+    await page.keyboard.press('ArrowRight');
+    assert.equal(await page.evaluate(() => document.activeElement?.id), 'highlightAsk');
+    await page.keyboard.press('ArrowLeft');
+    await page.keyboard.press('ArrowLeft');
+    assert.equal(await page.evaluate(() => document.activeElement?.id), 'highlightAdd');
     await page.keyboard.press('Enter');
     await until(() => saved().highlights.length === 4);
     assert.equal(saved().highlights[3].anchor.quote.exact, 'Repeated line. Shared ending two');
@@ -578,6 +585,57 @@ async function until(check, ms = 10000) {
     );
     console.log('PASS an EPUB highlight note is saved from the highlight menu');
 
+    // Comment on a new selection saves the highlight and the comment together.
+    const beforeComment = saved().highlights.length;
+    await select('Canonical Fragment Identifier');
+    await page.click('#highlightComment');
+    await page.waitForSelector('#noteEditor:popover-open');
+    await page.keyboard.press('Escape');
+    await page.waitForSelector('#noteEditor:not(:popover-open)', { state: 'attached' });
+    assert.equal(saved().highlights.length, beforeComment, 'Escape stores nothing');
+    await page.evaluate(() => {
+      for (const frame of document.querySelectorAll('iframe')) {
+        try {
+          frame.contentDocument?.getSelection()?.removeAllRanges();
+        } catch {}
+      }
+    });
+    await page.waitForSelector('#toolbar:not(:popover-open)', { state: 'attached' });
+    await select('Canonical Fragment Identifier');
+    await page.click('#highlightComment');
+    await page.waitForSelector('#noteEditor:popover-open');
+    await page.keyboard.press('Control+Enter');
+    await page.waitForSelector('#toast:popover-open');
+    assert.match(
+      await page.textContent('#toast'),
+      /empty, so nothing was saved|评论是空的，未保存/,
+    );
+    assert.equal(saved().highlights.length, beforeComment, 'An empty comment stores nothing');
+    await page.evaluate(() => {
+      for (const frame of document.querySelectorAll('iframe')) {
+        try {
+          frame.contentDocument?.getSelection()?.removeAllRanges();
+        } catch {}
+      }
+    });
+    await page.waitForSelector('#toolbar:not(:popover-open)', { state: 'attached' });
+    const comment = 'The shared ending is the point.';
+    await select('Shared ending one');
+    await page.click('#highlightComment');
+    await page.waitForSelector('#noteEditor:popover-open');
+    assert.equal(
+      await page.locator('#noteText').getAttribute('placeholder'),
+      await message('highlightCommentPlaceholder'),
+    );
+    await page.keyboard.type(comment);
+    await page.keyboard.press('Control+Enter');
+    await until(() => saved().highlights.some((h) => h.note === comment));
+    const created = saved().highlights.find((h) => h.text === 'Shared ending one');
+    assert.equal(created.note, comment);
+    assert.match(noteFile(), /### 笔记\n\nThe shared ending is the point\./);
+    assert(await paintedIs(2), 'The comment highlight is painted');
+    console.log('PASS EPUB comment saves the highlight and comment; cancel stores nothing');
+
     // Restart the browser. A record that no longer matches the text stays unanchored.
     await closeBrowser();
     const data = saved();
@@ -588,7 +646,7 @@ async function until(check, ms = 10000) {
     await openReader('?book=' + encodeURIComponent(documentId));
     await page.waitForSelector('#viewer:not([hidden])');
     assert(await until(async () => (await chapterTitle()) === 'Chapter Two: Repetition'));
-    assert(await paintedIs(1));
+    assert(await paintedIs(2));
     // After the restart, clicking the highlight shows the note; the list shows it too.
     const kept = await textBox('Shared ending two');
     await page.mouse.click(kept.x1 + 4, kept.y1);
@@ -596,13 +654,18 @@ async function until(check, ms = 10000) {
     assert.equal(await page.textContent('#menuNoteText'), note);
     assert.equal(await page.textContent('#menuNoteEdit'), await message('highlightNoteEdit'));
     await page.keyboard.press('Escape');
+    const ending = await textBox('Shared ending one');
+    await page.mouse.click(ending.x1 + 4, ending.y1);
+    await page.waitForSelector('#highlightMenu:popover-open');
+    assert.equal(await page.textContent('#menuNoteText'), comment);
+    await page.keyboard.press('Escape');
     await page.click('#contentsButton');
     await page.click('#highlightsTab');
     await page.waitForSelector('#highlightList li.unanchored');
     assert.equal(await page.textContent('#highlightList li .note'), note);
-    assert.equal(await page.locator('#highlightList li').count(), 3);
+    assert.equal(await page.locator('#highlightList li').count(), 4);
     assert.equal(await page.locator('#highlightList li.unanchored').count(), 1);
-    assert.equal(await page.locator('#highlightList li.anchored').count(), 2);
+    assert.equal(await page.locator('#highlightList li.anchored').count(), 3);
     if (shots) await page.screenshot({ path: path.join(shots, 'highlights.png') });
     await page.click('#highlightList li.anchored button >> nth=0');
     assert(await until(async () => (await chapterTitle()) === 'Chapter One: Beginnings'));

@@ -101,7 +101,7 @@ chrome.runtime.onMessage.addListener((m, sender, reply) => {
       if (!anchor) throw Error('Invalid highlight');
       saved.document ||= { id: 'paper-reading-companion-fixture-1a2b3c4d', createdAt: 'now' };
       const highlight = { id: 'h' + String(saved.next++).padStart(3, '0'), text: m.text, anchor,
-        location: m.location, turnCount: 0 };
+        location: m.location, note: typeof m.note === 'string' ? m.note : '', turnCount: 0 };
       saved.highlights.push(highlight);
       return { document: saved.document, highlight, ...(m.ask ? { panelOpened: true } : {}) };
     }
@@ -577,6 +577,45 @@ chrome.runtime.onMessage.addListener((m, sender, reply) => {
     );
     assert.equal((await calls('highlightCreate')).length, 4, 'Escape created nothing');
     console.log('PASS keyboard: Tab reaches the toolbar, Escape dismisses, Enter highlights');
+
+    // Comment: cancel and an empty comment create nothing; save stores both and survives reload.
+    await drag(2, 'for longer');
+    await page.keyboard.press('Tab');
+    await page.keyboard.press('ArrowRight');
+    await page.keyboard.press('Enter');
+    assert.equal(await pdf.evaluate(() => document.activeElement.localName), 'tabgent-reader');
+    assert.equal((await calls('highlightCreate')).length, 4, 'Comment does not create before save');
+    await page.keyboard.press('Escape');
+    assert.equal((await calls('highlightCreate')).length, 4, 'Escape stores nothing');
+    await drag(2, 'for longer');
+    await press('comment');
+    await page.keyboard.press('Control+Enter');
+    await wait(300);
+    assert.equal((await calls('highlightCreate')).length, 4, 'An empty comment stores nothing');
+    const emptyHtml = await readerHtml();
+    assert(
+      message('highlightCommentEmpty').some((label) => emptyHtml.includes(label)),
+      'Empty comment explains that nothing was saved',
+    );
+    await drag(2, 'a goal');
+    await press('comment');
+    await page.keyboard.type('Persists.');
+    await page.keyboard.press('Control+Enter');
+    const commented = await until(async () =>
+      (await calls('highlightCreate')).find((m) => m.anchor.quote.exact === 'a goal'),
+    );
+    assert.equal(commented.note, 'Persists.');
+    assert.equal(commented.ask, undefined);
+    await open('#page=2');
+    await showPage(2);
+    assert(
+      await until(async () => (await painted()).includes('a goal')),
+      'The comment highlight is restored',
+    );
+    await clickHighlight('a goal');
+    assert((await readerHtml()).includes('Persists.'), 'The comment shows after reload');
+    await page.keyboard.press('Escape');
+    console.log('PASS PDF comment saves the highlight and comment together; cancel stores nothing');
   } finally {
     await browser?.close();
     server.close();

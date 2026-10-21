@@ -120,6 +120,8 @@
       if (event.isComposing || event.keyCode === 229) return;
       if (event.key === 'Escape') {
         event.preventDefault();
+        // An in-flight save is not discarded.
+        if (busy) return;
         close();
       } else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
         event.preventDefault();
@@ -136,9 +138,12 @@
       element.addEventListener(name, (event) => event.stopPropagation());
     return {
       element,
-      open({ note = '', text = '' }) {
+      open({ note = '', text = '', creating = false }) {
         initial = note;
         input.value = note;
+        input.placeholder = t(
+          creating ? 'highlightCommentPlaceholder' : 'highlightNotePlaceholder',
+        );
         quote.textContent = text ? `“${text.replace(/\s+/g, ' ').trim()}”` : '';
         quote.hidden = !text;
         error.hidden = true;
