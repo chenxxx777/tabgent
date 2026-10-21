@@ -30,7 +30,7 @@ import {
   bookUrl,
   cleanEpubAnchor,
 } from './vault-client.js';
-import { isChapterFile } from './document-id.js';
+import { isSection } from './document-id.js';
 import { createReadingCompanion } from './reading-companion.js';
 import { createClipper } from './clipper.js';
 import { clearRefererRules } from './referer.js';
@@ -111,7 +111,7 @@ const event = (port, name, value) => {
 const broadcast = (s, message) => {
   for (const port of s.ports) event(port, 'codex-message', message);
 };
-// Highlight and document conversations saved to the ReadingVault (reading-companion.js).
+// Highlight and document conversations saved to the reading vault (reading-companion.js).
 const reading = createReadingCompanion({
   sessions,
   sidebarViews,
@@ -1128,15 +1128,14 @@ async function epubMessage(msg, sender) {
     before: pageText(msg.context?.before, 2000),
     after: pageText(msg.context?.after, 2000),
   };
-  const chapterFile = isChapterFile(msg.chapterFile) ? msg.chapterFile : '';
-  // Codex reads the chapter from the vault instead of receiving the whole book.
+  const section = isSection(msg.section) ? msg.section : null;
+  // Codex reads the chapter from the book's full text in the vault instead of receiving
+  // the whole book: the section is the chapter's number.
   const locator = (anchor, document) => ({
     kind: 'epub',
     anchor,
     documentId: document?.id || null,
-    ...(document?.folder && chapterFile
-      ? { chapterFile: `${document.folder}/${chapterFile}` }
-      : {}),
+    ...(document?.fullTextPath && section ? { section, fullText: document.fullTextPath } : {}),
   });
   if (msg.type === 'epubHighlightCreate') {
     const anchor = cleanEpubAnchor(msg.anchor),

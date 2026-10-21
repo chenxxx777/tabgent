@@ -43,7 +43,7 @@ flowchart LR
 | `extension/_locales/en/`          | English UI strings; i18n structure is retained.                             |
 | `extension/native/host.py`        | App-server discovery, sessions, authentication events, and RPC transport.   |
 | `extension/native/attachments.py` | Bounded uploads and text/PDF/DOCX reading.                                  |
-| `extension/native/vault.py`       | ReadingVault highlights, discussions, and Markdown files.                   |
+| `extension/native/vault.py`       | Reading vault: notes by category, discussions, full texts and records.      |
 | `extension/native/epub_text.py`   | EPUB chapter text for the vault, using the standard library only.           |
 | `extension/native/feeds.py`       | Feed and OPML parsing, and the subscription index `.tabgent/feeds.db`.      |
 | `extension/native/pdf_text.py`    | Imported PDF page text for the vault, read with macOS PDFKit.               |
@@ -76,7 +76,7 @@ using a response-header declarative rule. The source URL and Chrome tab ID remai
 the conversation context. PDF.js runs locally with PDF JavaScript disabled. It
 provides text-layer selections with page numbers/PDF coordinates, page reads,
 exact text selection, highlights, and annotated PDF downloads. Highlights made with
-Tabgent's selection toolbar are saved to the ReadingVault (see
+Tabgent's selection toolbar are saved to the reading vault (see
 [PDF highlights](#pdf-highlights)). The viewer's native annotation tools also support
 manual highlights, comments and edits. Those PDF.js changes must be downloaded to
 save a copy; they are not automatically persisted across reloads.
@@ -100,48 +100,153 @@ reads are limited to 10 MB and temporary files are deleted. Screenshot, pointer,
 keyboard, and scroll tools operate the native viewer directly. Neither text
 reading path implements OCR for scanned pages.
 
-## ReadingVault
+## Reading vault
 
-The connector keeps reading highlights and discussions in a local Markdown folder,
-`~/ReadingVault` by default. The extension sends `{ op: "vault", id, method, params }`
-on the existing native port and receives `{ op: "vault", id, result }` or
-`{ op: "vault", id, error: { code, message } }`. Vault requests run on their own
-single-worker queue in arrival order. They never use `warm` settings, sessions, or
-the Codex app-server, so highlights save while Codex is offline or signed out.
+The connector keeps reading highlights, comments and discussions in a local Markdown
+folder, `~/Tabgent` by default (outside Desktop, Documents and Downloads, which macOS
+may not let a connector started by Chrome write). The extension sends
+`{ op: "vault", id, method, params }` on the existing native port and receives
+`{ op: "vault", id, result }` or `{ op: "vault", id, error: { code, message } }`.
+Vault requests run on their own single-worker queue in arrival order. They never use
+`warm` settings, sessions, or the Codex app-server, so highlights save while Codex is
+offline or signed out.
 
 `vault/configure` stores a chosen folder in `$CODEX_HOME/projects/tabgent/vault.json`;
 otherwise the default folder is created on the first write. Each write scaffolds
-`AGENTS.md` (layout, `rg` retrieval hints, and reading rules for Codex), `Articles/`,
-and `Books/`. Web pages live in `Articles/article-<title slug>-<URL hash>/`, PDF
-documents in `Books/paper-<title slug>-<URL hash>/`, and EPUB books in `Books/` (see [EPUB reader](#epub-reader)). A PDF imported from the computer is a `paper-*` document
-named `urn:sha256:<hex>` (see [Library and local PDFs](#library-and-local-pdfs)). URLs are
-matched without their fragment, as in page history, through `.tabgent/index.json`, which
-is rebuilt from the folders if missing. `vault/documents/list` lists every document. A
-clipped webpage also has `article.md`, `article.html` and `article.json` in its folder (see
-[Web clips](#web-clips)).
+`AGENTS.md` (layout, `rg` retrieval hints, and reading rules for Codex) and `.tabgent/`
+(the catalog and a `.gitignore` for files that change often). `vault/status` reports
+`layout: 2`. The folder is laid out like a Readwise export:
+
+```text
+~/Tabgent/
+├── AGENTS.md
+├── Articles/ Tweets/ Videos/ Podcasts/ PDFs/ Books/ Local Files/   one note per document
+├── Discussions/<category>/<name>.md            discussions with Codex
+├── Full Document Contents/<category>/<name>.md  clipped text, or a book's or PDF's text
+├── Attachments/Images/<hash>.<ext>             clipped images and covers, shared
+├── Attachments/PDFs/<name>.pdf, Books/<name>.epub   visible copies of originals
+└── .tabgent/
+    ├── catalog.json                            document ID → files, URL → document ID
+    └── documents/<document ID>/                anchors.json, article.json, article.html,
+                                                source.json, original.pdf | original.epub
+```
+
+A document's category is chosen once, when it is created (`_category` in `vault.py`):
+`tweets` for x.com and twitter.com, `videos` for YouTube watch, shorts and live pages
+and clips the YouTube extractor read, `podcasts` for known podcast hosts and clips with
+a transcript, `pdfs` and `books` by kind, `local-files` for `file://` pages, and
+`articles` for every other page, including items saved from feeds (their feed is named
+in the note). Category folders appear with their first note. Tabgent never moves a
+document to another category.
+
+File names come from the title (`_file_title`): Unicode NFC, without control, zero-width
+and direction characters, with `/ \ : * ? " < > | # ^ [ ]` replaced by spaces, without
+noise such as an unread count or a ` - YouTube` suffix, an X post's
+`Author on X: "Text"` written `Author：Text`, a site and date for a generic title, and
+at most 100 characters and 180 UTF-8 bytes (cut at a space between words, never inside
+an emoji). A name is free when the note, full text and discussions folders (and the
+visible original's) have no file of that name, compared without case; otherwise
+`<name> (2)`, `(3)`... The name is chosen once and kept in the record.
+
+A document ID (`article-…`, `paper-…`, `book-…`, from the title slug and a hash of the
+URL) is an opaque key, independent of file names: it names the record folder and is the
+`tabgent_id` in the front matter of each of the document's Markdown files
+(`tabgent_part: discussions`, `full`, `full-2` for the others). The record and the
+catalog name the files. A file the user renamed or moved inside the vault is found
+again by a scan of the vault's Markdown files outside hidden folders, reading only
+their first 2 KB, and only files with Tabgent's markers count; its new place is
+recorded, and Tabgent never moves it back. A note the user deleted (or moved out of the
+vault, or into Obsidian's `.trash`) is written again at its recorded place on the next
+write. URLs are matched without their fragment, as in page history, through the
+catalog, which is rebuilt from the records when missing. `vault/documents/list` lists
+every record; each document reports `category`, `notesPath`, `discussionsPath`,
+`fullTextPath` and its record `folder`.
 
 `anchors.json` is the machine record: anchors, highlight IDs (`h001`, never reused),
-the user's notes on highlights, and discussion turns, which are idempotent on thread
-and turn ID. `highlights.md` is the readable record with YAML front matter, one
-`## Highlight NNN` section per highlight, and a `## 文档对话` section for
-document-level discussion. HTML comment markers delimit Tabgent's blocks. After a file
-exists, Tabgent only inserts into or removes those blocks, so edits elsewhere are
-preserved; a deleted highlight removes its whole block. Missing blocks or files are
-restored from `anchors.json` on the next write to them. Unreadable JSON or non-UTF-8
-Markdown is reported, never replaced.
+the user's comments on highlights (`note`), discussion turns (idempotent on thread and
+turn ID), and the document's category, name, files, the keys Tabgent wrote in the
+note's front matter and a hash of each marked block it last wrote.
 
-`vault/highlight/update` (`{ documentId, highlightId, note }`) sets the user's own note
-on a highlight. The note is trimmed, limited to 20,000 characters, and stored on the
-highlight in `anchors.json`; every highlight result carries it as `note` (empty when
-there is none). In `highlights.md` it is a `### 笔记` part inside the highlight's block,
-between the quote and `### 对话`, delimited by `<!-- tabgent:note hNNN start/end -->`.
-An update replaces only that part, so text the user wrote elsewhere in the block stays;
-an empty note removes the part, and an unchanged note writes nothing. Markdown is
-written before `anchors.json`, so a retried update repeats the same edit. A deleted
-highlight takes its note with it, and a deleted or unknown highlight returns
-`not_found`. As with turns, `anchors.json` is the source: editing the note text inside
-its marked part in `highlights.md` does not change the saved note, and the next update
-from Tabgent replaces it.
+The note is the human record:
+
+```text
+---
+tabgent_id: article-ada-lin-on-x-1a2b3c4d
+title: "Ada Lin on X: \"Reading is a loop, not a line\""
+aliases:
+  - "Ada Lin on X: \"Reading is a loop, not a line\""
+category: tweets
+kind: web
+source: "https://x.com/adalin/status/1"
+author: "[[Ada Lin]]"
+saved: 2026-10-19T21:03:00+08:00
+---
+
+# Ada Lin：Reading is a loop, not a line
+
+<!-- tabgent:metadata document start -->
+## 元数据
+
+- 作者：[[Ada Lin]]
+- 完整标题：Ada Lin on X: "Reading is a loop, not a line"
+- 类别：#tweets
+- 网址：https://x.com/adalin/status/1
+- 保存：2026-10-19 · 剪藏：2026-10-19
+- 全文：[[../Full Document Contents/Tweets/Ada Lin：Reading is a loop, not a line|查看全文 →]]
+- 讨论：[[../Discussions/Tweets/Ada Lin：Reading is a loop, not a line|与 Codex 的讨论]]
+<!-- tabgent:metadata document end -->
+
+<!-- Tabgent 只在带 tabgent 标记的块里插入、更新或删除内容，其余内容都是你的。 -->
+
+## 高亮
+
+<!-- tabgent:highlight h001 start -->
+- Reading is a loop: you return to the same passage. ^h001
+    - 评论：和"精读要反复回到原文"是一回事。
+    - 2026-10-19 21:05 · [原文位置](https://x.com/adalin/status/1#:~:text=Reading%20is%20a%20loop) · [[../Discussions/Tweets/Ada Lin：Reading is a loop, not a line#高亮 001|讨论 2 条]]
+<!-- tabgent:highlight h001 end -->
+```
+
+Front matter keys are written when the note is created; later Tabgent adds only keys it
+never wrote to the file (and `tabgent_id` whenever it is missing), and never changes or
+removes a key, so the user's own keys such as `tags` stay. The metadata block holds the
+cover, author, title, category tag, address, dates, the feed a saved item came from,
+the clip's summary and transcript status, page or chapter counts, and links to the full
+text, the visible original and the discussions. Each highlight is a list item: its
+quoted text ending with its block ID (`^h001`), the user's comment as `- 评论：`, then
+its location, time, a link to its place (the text fragment on the web page, the page of
+the visible PDF copy, or the chapter in a book's full text) and to its discussion.
+Links between the vault's notes are Obsidian links relative to the file
+(`[[../Discussions/…#高亮 001|…]]`), so they resolve wherever the vault is, also inside a
+larger Obsidian vault; images are relative Markdown links. The place between the
+metadata block and `## 高亮` is kept for a document-level comment block, and `tags` in
+the front matter for document tags.
+
+`Discussions/<category>/<name>.md` has a `## 高亮 NNN` block per highlight with turns
+(the quoted text, linking back to `^hNNN` in the note, then each turn's
+`<!-- tabgent:turn <key> -->`, `**我** · <time>`, the question and `**Codex**`'s answer)
+and a `## 关于整篇` block for document-level turns. Turns are only appended to the end
+of their block; turns and blocks missing from the file (an editor saving its open copy
+over Tabgent's) are written again on the next write.
+
+Writes save the record first, then bring the Markdown files to what the record says,
+then save the record again with the hashes of what was written. A block that is missing
+is inserted; a block Tabgent has something new for is replaced when it is as Tabgent
+last wrote it, and otherwise (the user edited it) the user's version is kept as their
+own text above the new block. A block the user edited is left alone while Tabgent has
+nothing new for it. A deleted highlight's block is removed, or kept as the user's text
+when they edited it. HTML comment markers delimit Tabgent's blocks; blocks of kinds
+Tabgent does not know are never touched. Unreadable JSON or non-UTF-8 Markdown is
+reported, never replaced, and a request that would change a non-UTF-8 note writes
+nothing.
+
+`vault/highlight/update` (`{ documentId, highlightId, note }`) sets the user's own
+comment on a highlight. It is trimmed, limited to 20,000 characters, and stored on the
+highlight in `anchors.json` as `note`; every highlight result carries it (empty when
+there is none). An empty note removes it, and an unchanged note writes nothing. A
+deleted highlight takes its comment with it, and a deleted or unknown highlight returns
+`not_found`. `anchors.json` is the source: editing the comment in the note does not
+change the saved comment.
 
 Writes hold a process lock plus an advisory lock on `.tabgent/lock`, and replace
 files through a temporary file and rename, so concurrent requests and a second
@@ -290,22 +395,30 @@ font size, and the reading position stored in `chrome.storage.local`. A book is 
 by choosing or dropping a file, or from the library.
 
 A book's identity is the SHA-256 of its file: the vault URL is `urn:sha256:<hex>`, so a
-re-picked file or the vault copy maps to the same `Books/book-<title slug>-<hash>/`
-document, and another edition is another book. On first open the reader uploads the
+re-picked file or the vault copy maps to the same `book-<title slug>-<hash>` document,
+and another edition is another book. On first open the reader uploads the
 file with `vault/source/save` in 2 MiB base64 chunks. The host appends them to
 `.tabgent/uploads/<sha256>.part`, so an interrupted import resumes, verifies the hash,
-and moves the file to `original.epub` with a `source.json` record. Originals are limited
+and moves the file to `original.epub` in the document's record folder, with a
+`source.json` record and an APFS clone for other apps in `Attachments/Books/<name>.epub`
+(a plain copy on other file systems; when Tabgent's own copy is lost, it is restored
+from that one if its hash matches). Originals are limited
 to 100 MiB and never replaced. The tab URL then becomes `reader.html?book=<document ID>`,
 which reopens the book through `vault/source/read` (checked against the recorded hash)
 and names it in page history and message context. `vault/books/list` lists books whose
 original is stored.
 
-At import, `epub_text.py` writes each spine document with text to
-`chapters/NN-<title>.md`, with front matter naming the book, chapter and EPUB path. Titles
-come from the navigation document or NCX, then the first heading. The archive is read
-in memory with entry and total size limits, XML entity declarations are rejected, and
-missing chapter files are regenerated from the original. `AGENTS.md` tells Codex to read
-or search these files instead of the whole book.
+At import, `epub_text.py` reads each spine document with text, and the vault writes the
+book's full text, `Full Document Contents/Books/<name>.md`: a table of contents, then a
+`## <chapter>` section per chapter in reading order after `<!-- tabgent:section N -->`,
+with the chapter's own headings two levels down. A text above 8 MiB is split into parts
+at chapter boundaries (`<name>（第 2 部分）.md`). Titles come from the navigation
+document or NCX, then the first heading. The archive is read in memory with entry and
+total size limits, XML entity declarations are rejected, and a deleted full text is
+written again from the original (a part the user edited is kept). `source.json` lists
+the chapters (number, title, href, part); the reader names a selection's chapter by its
+number, and `AGENTS.md` tells Codex to read the sections it needs instead of the whole
+book.
 
 Books cannot run scripts. Script resources are not loaded, `<script>` elements get an
 inert type (so CFIs are unchanged), and event attributes, `srcdoc` and `javascript:` URLs
@@ -377,20 +490,22 @@ limit for originals. The library reads its title and author with PDF.js, as the 
 does, which also refuses a damaged file before it is copied; an encrypted PDF is named by
 its file. Its identity is the SHA-256 of its bytes: `vault/source/save` stores it with
 `kind: "pdf"` and the URL `urn:sha256:<hex>` in the same 2 MiB chunks, resumable uploads
-and checks as an EPUB, as `Books/paper-<title slug>-<hash>/original.pdf` with
-`source.json`. The vault refuses a `urn:sha256:` URL that is not the file's hash. The same
+and checks as an EPUB, as `original.pdf` in a `paper-<title slug>-<hash>` record with
+`source.json` and a visible copy in `Attachments/PDFs/<name>.pdf`. The vault refuses a `urn:sha256:` URL that is not the file's hash. The same
 file always maps to the same document, so dropping it again opens its existing copy.
 After the import the tab opens the viewer for that identity.
 
 At import, `pdf_text.py` reads every page's text with macOS PDFKit in one `osascript`
-process (as the PDF fallback reader does for one page) and the vault writes
-`pages/NNN.md` for each page with text, with front matter naming the paper and page.
-Text is bounded per page and per document; pages without text (scanned pages) get no
-file, and a PDF without any text, an encrypted one, or one PDFKit cannot read is recorded
-in `source.json` (`pageError`) and still opens. Missing page files are regenerated when
-the file is imported again. `reading_vault` searches and reads them like EPUB chapters,
-and the reading context of a message about an imported PDF names its `pages` folder, so
-Codex can read the paper while its viewer tab is closed.
+process (as the PDF fallback reader does for one page) and the vault writes its full
+text, `Full Document Contents/PDFs/<name>.md`, with a `## 第 N 页` section per page with
+text after `<!-- tabgent:page N -->`. Text is bounded per page and per document; pages
+without text (scanned pages) get no section, and a PDF without any text, an encrypted
+one, or one PDFKit cannot read is recorded in `source.json` (`pageError`) and still
+opens. A deleted full text is written again when the file is imported again.
+`reading_vault` searches it and reads a page by number, and the reading context of a
+message about an imported PDF names its full text, so Codex can read the paper while its
+viewer tab is closed. A highlight in the note links its page in the visible copy
+(`[[…/Attachments/PDFs/<name>.pdf#page=N|原文位置]]`), which Obsidian opens at that page.
 
 A PDF opened from the web and an imported copy of the same file stay separate documents
 with separate notes. The web identity is the address, which can serve a revised file
@@ -565,18 +680,22 @@ extracted. The result's `coverage` (`visibleChars`, `keptChars`, `ratio`, `resto
 page's saved message says how many passages were put back or that text may be missing.
 
 The worker treats the result as untrusted: `cleanClip` refuses oversized or empty text and
-bounds every field before `vault/clip/save`. The vault writes `article.html` (the cleaned
-HTML in a page whose policy, `default-src 'none'`, blocks scripts and remote loads if the
-file is opened directly), then `article.md` (front matter with `source`, `clipped` and the
-page metadata, then the text), and last `article.json`, the record naming both files with
-their SHA-256 and size. A clip is complete when the files have the recorded sizes. A
-document with a clip conflicts unless the request says `replace` and `expected` still
-names its `clippedAt`, so two tabs cannot overwrite each other silently. An `article.md`
-whose hash differs from the record (edited by the user) is renamed to
-`article-edited-<time>.md` before it is replaced. All extraction happens in the browser;
-under the vault lock the connector only writes and renames files. `vault/document/resolve`
-and `vault/documents/list` report the clip, the side panel offers **Clip this page again**,
-and the reading context of any message about the page names its `article.md`.
+bounds every field before `vault/clip/save`. The vault writes `article.html` in the
+document's record folder (the cleaned HTML in a page whose policy, `default-src 'none'`,
+blocks scripts and remote loads if the file is opened directly), then the page's full
+text, `Full Document Contents/<category>/<name>.md` (front matter with `source`,
+`clipped` and the page metadata, a link back to the note, then the text), and last
+`article.json`, the record naming both with their SHA-256 and size (the Markdown by its
+logical name `article.md`). A clip is complete when the HTML has the recorded size and
+the full text is there. A document with a clip conflicts unless the request says
+`replace` and `expected` still names its `clippedAt`, so two tabs cannot overwrite each
+other silently. A full text whose hash differs from the record (edited by the user) is
+renamed to `<name>（编辑版 <time>）.md` (its `tabgent_part` becomes `edited`) before it is
+replaced. All extraction happens in the browser; under the vault lock the connector only
+writes and renames files. `vault/document/resolve` and `vault/documents/list` report the
+clip (`fullTextPath`), the note's metadata links the full text, the side panel offers
+**Clip this page again**, and the reading context of any message about the page names
+its full text.
 
 Images are saved by the worker (`clip-images.js`), not the page. The page's cover goes first
 in the same download (so the count limit never leaves it out), with the same limits, Referer
@@ -599,13 +718,15 @@ images, 5 MiB each and 30 MiB together, one file per SHA-256. Each image is uplo
 `vault/clip/asset` in 2 MiB chunks, one request at a time, so other vault requests wait for
 at most one chunk; the upload is staged in `.tabgent/uploads/asset-<sha256>.ready` after its
 hash is checked. Placeholders then become `assets/<first 16 hex digits>.<ext>`, or the web
-address for images that were not saved. `vault/clip/save` refuses (`missing_asset`) a clip
-whose images are neither staged nor already in the folder before it writes anything, copies
-staged images into `assets/` (refusing a linked `assets` folder; the staged copy stays for
-other clips that share the image and is pruned after a day), records each image's file,
-hash, type and every address that returned it (`sources`) in `article.json`, and removes images the previous clip recorded that
-the new one does not use, unless a kept `article-edited-*.md` still links them;
-other files in `assets/` are kept. Images the size limits cut away are not downloaded, and if
+address for images that were not saved; `assets/` is a logical name, which the full text
+file links as `../../Attachments/Images/<file>`. `vault/clip/save` refuses
+(`missing_asset`) a clip whose images are neither staged nor already in
+`Attachments/Images/` before it writes anything, copies staged images there (refusing a
+linked folder; the staged copy stays for other clips that share the image and is pruned
+after a day), records each image's logical file, hash, type and every address that
+returned it (`sources`) in `article.json`, and removes images the previous clip recorded
+that the new one does not use, unless another document's clip records them or a kept
+edited copy links them; other files there are kept. Images the size limits cut away are not downloaded, and if
 web addresses would make the Markdown too long, unsaved images keep only their description. Failed images are listed with
 the reason. `article.html` keeps every image's address in `data-remote-src`; the reader maps
 each of an image's addresses to its saved file through `article.json`.
@@ -623,9 +744,9 @@ URL, the reader registers a `clip` port, and `isCurrentClipSender` accepts only 
 current top-frame reader document. `clipRead`, `clipAsset` and `clipDelete` resolve the
 document from that address, never from the request, and relay `vault/clip/read` (chunks of
 `article.html` with the record), `vault/clip/asset/read` (only images the record lists, at
-their exact path, no symlinks) and `vault/clip/delete` (which keeps an edited `article.md`
-as a copy, with the images it may link, and leaves highlights, notes and other files in
-`assets/`).
+their exact path in `Attachments/Images/`, no symlinks) and `vault/clip/delete` (which
+keeps an edited full text as a copy, with the images it may link, and leaves highlights,
+comments and the user's files).
 
 The clipped HTML is untrusted, also from the vault: the reader checks it against the
 SHA-256 in `article.json` and refuses a changed copy, then cleans it again with the shared
@@ -657,7 +778,7 @@ a passage repeated in identical context there is left unanchored rather than gue
 AI binds the page's highlight, with `locator.view: 'clip'`. `pageDocument()`, page history,
 the per-message browser context (`viewer: 'clip'`) and `readingState` (`page.view`) map the
 reader tab to the page. The reader is not a browser tool target; the instructions tell Codex
-to read `article.md` instead. Reading positions and the text size stay in
+to read its full text file instead. Reading positions and the text size stay in
 `chrome.storage.local`.
 
 ## Subscriptions
@@ -779,7 +900,7 @@ vault copy as a clip does; otherwise the reader shows the feed's HTML, or full t
 yet, saves what the reader shows. For a highlight the worker asks the reader over its `clip`
 port (`feedCommit`) before `vault/highlight/create`, after opening the side panel for Ask
 AI; for a question the reading companion does the same before it builds the reading context,
-so Codex gets the `article.md` path. `feedSave` bounds the result with `cleanClip`, fetches
+so Codex gets the full text path. `feedSave` bounds the result with `cleanClip`, fetches
 the images without cookies, and calls `vault/clip/save` with
 `origin: { type: 'feed', method: 'feed' | 'fulltext', sourceId, sourceUrl, sourceTitle, guid,
 publishedAt, pageUrl }`, which accepts `urn:tabgent:feed:` addresses for feed items only.
@@ -817,7 +938,7 @@ image or media file gets none. Highlights, Ask AI, notes and page conversations 
 webpages: the worker accepts `file://` senders from the top frame of the current document,
 checked against Chrome's frame record like HTTP(S) senders, and accepts no `file://`
 subframe, because a local page can load other local files into frames. The vault document
-is the `file://` URL without its fragment, kind `web`, in `Articles/`. A text file is
+is the `file://` URL without its fragment, kind `web`, filed under `Local Files/`. A text file is
 edited in place, so a content hash would orphan its notes after every edit; the path keeps
 them, and the web anchors re-find passages after edits. Moving or renaming the file leaves
 its notes at the old path. Markdown is shown as Chrome shows it, as plain text.
@@ -862,7 +983,7 @@ when a saved page conversation or a reopened PDF finds the document), through
 `pdfFileSave` messages relaying `vault/source/save` in the import's 2 MiB chunks. The worker
 accepts them only from the tab's current `file.html` viewer and fills in `url` and
 `sha256` from the announced hash; the vault checks the bytes. The copy is `original.pdf`
-with `source.json` and the page text in `pages/`, exactly as an import, so the library
+with `source.json` and the page text in its full text, exactly as an import, so the library
 reopens it and Codex can read its pages after the file moves or the tab closes. Copying at
 the first note, rather than on open, means opening PDFs to read them writes nothing, while
 any PDF with notes keeps its source. A PDF larger than the 100 MiB vault limit keeps its
@@ -916,7 +1037,7 @@ non-commentary answer. Appends are idempotent on thread and turn ID. Failures th
 retrying can fix wait in `chrome.storage.local` (`readingOutbox`, at most 100) and
 retry after the next successful save and on worker start.
 
-Page-level questions save to the document's `## 文档对话` section only when the
+Page-level questions save to the `## 关于整篇` block of the document's discussions only when the
 conversation is set to save. **Reading notes** in the composer shows the target
 (Highlight N, Page notes or Not saved). It defaults on for a highlight conversation
 or when the page already has vault notes, and off otherwise, so unrelated
@@ -927,18 +1048,21 @@ For questions across documents, Codex searches the vault on demand. The read-onl
 sandbox already allows reading the vault folder, but in Ask for approval mode Codex
 asks before every shell command, including `rg` and `cat`. The connector therefore
 adds a `reading_vault` dynamic tool next to `read_attachment`. The host answers it
-locally on the vault queue: `list` names the documents, `search` ranks lines of
-`highlights.md`, `source.md` and clipped pages' `article.md` by matching keywords (the
-user's notes first), optionally within one `document`.
-A book's `chapters/*.md` and an imported PDF's `pages/*.md` are searched only when
-`document` names that book or paper, and its notes still rank first, so their text never
-crowds out the user's notes and a search never scans the whole library. `read` returns
-numbered lines of the vault's `AGENTS.md`, a document's `highlights.md`, `source.md` or
-`anchors.json`, a clipped page's `article.md` (only under `Articles/article-*`), an imported book's `chapters/NN-<title>.md`, or an imported PDF's
-`pages/NNN.md` (only under `Books/book-*` and `Books/paper-*` respectively). The vault folder may be shared, for example
-with Obsidian or the home folder, so no other file is readable. Each file must sit at
-its exact place under `Articles/` or `Books/` with Tabgent's file names and no symlink
-in between. The tool cannot write. Shell reads still work where the permission mode
+locally on the vault queue: `list` names the documents with their notes, discussions
+and full text (and, with `document`, a book's or PDF's table of contents), `search` ranks
+lines of notes, then discussions, then clipped pages' full text by matching keywords
+(front matter is skipped; full-text matches name their section), optionally within one
+`document`. A book's or imported PDF's full text is searched only when `document` names
+it, and its notes still rank first, so their text never crowds out the user's notes and a
+search never scans the whole library. `read` returns numbered lines of the vault's
+`AGENTS.md` or of a document's file, by the path `list` or `search` gave or by
+`document` and `part` (`notes`, `discussions`, `full`, `anchors`); with `section` (a
+chapter or page number) it reads that section of the full text, in whichever part it
+is, and `offset` counts from the section's start. Files are read as streams, so
+full texts of several MiB are fine. The vault folder may be shared, for example with
+Obsidian or the home folder, so no other file is readable: only the files the catalog
+names for a document, at their exact place (no symlink in between, the name as
+written), whose front matter names that document. The tool cannot write. Shell reads still work where the permission mode
 allows them. The instructions in
 `session-config.js` and the vault's `AGENTS.md` describe both.
 

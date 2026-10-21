@@ -240,7 +240,7 @@ print("PASS unclosed and deeply nested markup, damaged chapters and damaged pack
 with tempfile.TemporaryDirectory(prefix="tabgent-epub-vault-") as directory:
     base = Path(directory)
     settings = base / "codex/projects/tabgent/vault.json"
-    root = base / "ReadingVault"
+    root = base / "Tabgent"
     with patch.object(vault, "default_path", lambda: root):
         # A progress check for an unknown book writes nothing, not even the vault.
         probe = save(settings, 0, b"")
@@ -261,7 +261,7 @@ with tempfile.TemporaryDirectory(prefix="tabgent-epub-vault-") as directory:
         upload = root / ".tabgent/uploads" / f"{DIGEST}.part"
         assert upload.stat().st_size == 1000
         assert save(settings, 1000, BOOK[1000:half])["complete"] is False
-        assert not (root / "Books").exists() or not any((root / "Books").iterdir())
+        assert not (root / "Books").exists()
 
         # A highlight before the import finishes creates the same document.
         created = call(
@@ -280,6 +280,7 @@ with tempfile.TemporaryDirectory(prefix="tabgent-epub-vault-") as directory:
         document = created["document"]
         assert re.fullmatch(r"book-a-small-book-of-reading-[0-9a-f]{8}", document["id"])
         assert document["url"] == URL and document["kind"] == "epub"
+        assert document["category"] == "books" and document["fullTextPath"] is None
         assert created["highlight"]["anchor"] == epub_anchor("Autonomy")
         assert created["highlight"]["location"] == "Chapter One: Beginnings"
         assert save(settings, half, b"")["document"]["id"] == document["id"]
@@ -288,63 +289,87 @@ with tempfile.TemporaryDirectory(prefix="tabgent-epub-vault-") as directory:
         assert done["complete"] is True and done["received"] == len(BOOK)
         assert done["document"]["id"] == document["id"]
         folder = Path(done["document"]["folder"])
-        assert folder == root / "Books" / document["id"]
+        assert folder == root / ".tabgent/documents" / document["id"]
         assert (folder / "original.epub").read_bytes() == BOOK
         assert not upload.exists()
         source = done["source"]
+        name = "A Small Book of Reading"
+        full = root / "Full Document Contents/Books" / f"{name}.md"
+        notes = root / "Books" / f"{name}.md"
         assert source["path"] == str(folder / "original.epub")
         assert source["sha256"] == DIGEST and source["size"] == len(BOOK)
         assert source["name"] == "small-book.epub"
-        assert source["chaptersPath"] == str(folder / "chapters")
-        assert [c["file"] for c in source["chapters"]] == [
-            "chapters/01-chapter-one-beginnings.md",
-            "chapters/02-chapter-two-repetition.md",
-            "chapters/03-chapter-three-endings.md",
-        ]
+        assert source["fullTextPath"] == str(full) == done["document"]["fullTextPath"]
+        # A visible copy for Obsidian and other apps; Tabgent reads its own.
+        visible = root / "Attachments/Books" / f"{name}.epub"
+        assert source["visiblePath"] == str(visible) and visible.read_bytes() == BOOK
+        assert [c["number"] for c in source["chapters"]] == [1, 2, 3]
         assert source["chapters"][1] == {
             "number": 2,
+            "title": "Chapter Two: Repetition",
+            "part": 1,
+            "chars": source["chapters"][1]["chars"],
             "index": 2,
             "href": "OEBPS/ch2.xhtml",
-            "title": "Chapter Two: Repetition",
-            "file": "chapters/02-chapter-two-repetition.md",
-            "chars": source["chapters"][1]["chars"],
         }
-        chapter = (folder / "chapters/02-chapter-two-repetition.md").read_text()
-        assert chapter.startswith(
-            "---\n"
-            'title: "Chapter Two: Repetition"\n'
-            'book: "A Small Book of Reading"\n'
-            f"document_id: {document['id']}\n"
-            "chapter: 2\n"
-            'href: "OEBPS/ch2.xhtml"\n'
-            "---\n\n# Chapter Two: Repetition\n"
-        )
+        assert source["sections"] == [
+            {k: c[k] for k in ("number", "title", "part", "chars")}
+            for c in source["chapters"]
+        ]
+        text = full.read_text()
+        assert text.startswith(
+            f"---\ntabgent_id: {document['id']}\ntabgent_part: full\n"
+            f'title: "{name}"\ncategory: books\nsource: "{URL}"\n'
+        ), text
+        for expected in [
+            "\n# A Small Book of Reading\n",
+            f"[[../../Books/{name}|← 阅读笔记]] · "
+            f"[[../../Attachments/Books/{name}.epub|原文件]]",
+            "\n## 目录\n\n- [[#Chapter One Beginnings]]\n",
+            "\n<!-- tabgent:section 2 -->\n## Chapter Two: Repetition\n\n",
+            "\n#### 2.1 A subsection\n",  # Headings inside a chapter go two levels down.
+        ]:
+            assert expected in text, expected
+        assert "# Chapter Two: Repetition" not in text.replace(
+            "## Chapter Two: Repetition", ""
+        ), "A chapter's own title is not repeated"
         record = json.loads((folder / "source.json").read_text())
         assert record["metadata"]["author"] == epub_fixture.AUTHOR
         assert sorted(p.name for p in folder.iterdir()) == [
             "anchors.json",
-            "chapters",
-            "highlights.md",
             "original.epub",
             "source.json",
         ]
         agents = (root / "AGENTS.md").read_text()
-        assert "original.epub" in agents and "/chapters" in agents
-        # W1's highlight record is untouched by the import.
-        markdown = (folder / "highlights.md").read_text()
-        assert "type: book" in markdown and "> Autonomy" in markdown
-        assert "位置：Chapter One: Beginnings" in markdown
+        assert "Full Document Contents" in agents and "tabgent:section N" in agents
+        # The highlight made before the import links its chapter in the full text.
+        markdown = notes.read_text()
+        assert "kind: epub" in markdown and "- Autonomy ^h001" in markdown
+        assert (
+            "Chapter One: Beginnings · " in markdown
+            and f"[[../Full Document Contents/Books/{name}#Chapter One Beginnings"
+            "|在全文中查看]]" in markdown
+        ), markdown
+        assert "- 章数：3" in markdown
+        assert f"- 原文件：[[../Attachments/Books/{name}.epub|{name}.epub]]" in markdown
 
         # Re-importing the same file is a no-op that reports the stored original.
         again = save(settings, 0, b"")
         assert again["complete"] is True and again["source"]["sha256"] == DIGEST
         assert save(settings, 0, BOOK[:10]) == again
         assert not upload.exists()
-        # Deleted chapter files are regenerated from the stored EPUB.
-        (folder / "chapters/01-chapter-one-beginnings.md").unlink()
+        # A deleted full text is written again from the stored EPUB; an edited one stays.
+        full.unlink()
         save(settings, 0, b"")
-        assert (folder / "chapters/01-chapter-one-beginnings.md").is_file()
-        assert not [p for p in folder.iterdir() if p.name.startswith(".chapters")]
+        assert full.read_text() == text
+        full.write_text(text + "\nMy note in the book.\n")
+        save(settings, 0, b"")
+        assert full.read_text().endswith("My note in the book.\n")
+        full.write_text(text)
+        # A lost copy of the original comes back from the visible one.
+        (folder / "original.epub").unlink()
+        assert save(settings, 0, b"")["complete"] is True
+        assert (folder / "original.epub").read_bytes() == BOOK
 
         # Reading the original back in bounded chunks.
         read = call(
@@ -378,33 +403,45 @@ with tempfile.TemporaryDirectory(prefix="tabgent-epub-vault-") as directory:
         assert listed["source"]["chapters"] == source["chapters"]
         assert call(settings, "vault/books/list", {"kind": "pdf"}) == {"books": []}
 
-        # reading_vault searches and reads a book's chapters, after the user's notes.
+        # reading_vault searches and reads a book's text by chapter, after the notes.
         ident = document["id"]
         listed = vault.tool(settings, {"action": "list"})["documents"]
         assert listed == [
             {
-                "path": f"Books/{ident}/highlights.md",
+                "id": ident,
                 "title": epub_fixture.TITLE,
-                "chapters": f"Books/{ident}/chapters",
-                "chapterCount": 3,
+                "kind": "epub",
+                "category": "books",
+                "notes": f"Books/{name}.md",
+                "path": f"Books/{name}.md",
+                "fullText": f"Full Document Contents/Books/{name}.md",
+                "sections": 3,
             }
-        ]
+        ], listed
+        contents = vault.tool(settings, {"action": "list", "document": ident})
+        assert [c["section"] for c in contents["documents"][0]["contents"]] == [1, 2, 3]
         found = vault.tool(
             settings, {"action": "search", "query": "autonomy", "document": ident}
         )["matches"]
-        assert found[0]["path"] == f"Books/{ident}/highlights.md", found
-        chapter_hits = [m for m in found if "/chapters/" in m["path"]]
+        assert found[0]["path"] == f"Books/{name}.md", found
+        chapter_hits = [m for m in found if "section" in m]
+        line = text.split("\n").index(
+            "Autonomy does not mean independence from others, but endorsement of "
+            "one’s own actions."
+        )
         assert chapter_hits[0] == {
-            "path": f"Books/{ident}/chapters/01-chapter-one-beginnings.md",
-            "line": 11,
-            "title": "A Small Book of Reading — Chapter One: Beginnings",
+            "path": f"Full Document Contents/Books/{name}.md",
+            "line": line + 1,
+            "title": epub_fixture.TITLE,
             "text": "Autonomy does not mean independence from others, but "
-            "endorsement of one\u2019s own actions.",
-        }
+            "endorsement of one’s own actions.",
+            "section": 1,
+            "sectionTitle": "Chapter One: Beginnings",
+        }, chapter_hits[0]
         cjk = vault.tool(
             settings, {"action": "search", "query": "独立于他人", "document": ident}
         )
-        assert cjk["matches"][0]["path"].endswith("02-chapter-two-repetition.md")
+        assert cjk["matches"][0]["section"] == 2
         # Without document, book text is not searched: only the user's notes compete.
         assert (
             vault.tool(settings, {"action": "search", "query": "独立于他人"})["matches"]
@@ -441,27 +478,42 @@ with tempfile.TemporaryDirectory(prefix="tabgent-epub-vault-") as directory:
         query = {"action": "search", "query": "autonomy endorsement"}
         everywhere = vault.tool(settings, query)
         assert [m["path"] for m in everywhere["matches"]] == [
-            f"Books/{ident}/highlights.md"
+            f"Books/{name}.md"
         ], everywhere
         in_book = vault.tool(settings, {**query, "document": other})["matches"]
         assert len(in_book) == vault.TOOL_RESULTS
-        assert all(m["path"].startswith(f"Books/{other}/chapters/") for m in in_book)
+        assert all(
+            m["path"] == "Full Document Contents/Books/Crowded Book.md" for m in in_book
+        )
         # Within a book, its notes come first even when chapter lines score higher.
         mine = vault.tool(settings, {**query, "document": ident})["matches"]
-        assert mine[0]["path"] == f"Books/{ident}/highlights.md"
+        assert mine[0]["path"] == f"Books/{name}.md"
         assert mine[1]["text"].startswith("Autonomy does not mean"), mine
-        shutil.rmtree(root / "Books" / other)
-        (root / ".tabgent" / "index.json").unlink()
-        text = vault.tool(
+        shutil.rmtree(root / ".tabgent/documents" / other)
+        (root / ".tabgent/catalog.json").unlink()
+        read = vault.tool(
             settings,
             {
                 "action": "read",
                 "path": chapter_hits[0]["path"],
-                "offset": 10,
+                "offset": line,
                 "limit": 1,
             },
         )
-        assert text["text"] == "11: " + chapter_hits[0]["text"]
+        assert read["text"] == f"{line + 1}: " + chapter_hits[0]["text"]
+        # A chapter by its number, with offsets from its start.
+        chapter = vault.tool(
+            settings,
+            {"action": "read", "document": ident, "part": "full", "section": 2},
+        )
+        assert chapter["section"]["title"] == "Chapter Two: Repetition"
+        assert chapter["text"].split("\n")[0].endswith("<!-- tabgent:section 2 -->")
+        assert "自主性" in chapter["text"] and "Chapter Three" not in chapter["text"]
+        more = vault.tool(
+            settings,
+            {"action": "read", "path": chapter["path"], "section": 2, "offset": 1},
+        )
+        assert more["text"].split("\n")[0].endswith("## Chapter Two: Repetition")
         assert (
             vault.tool(
                 settings,
@@ -476,46 +528,46 @@ with tempfile.TemporaryDirectory(prefix="tabgent-epub-vault-") as directory:
         assert (
             code(settings, "vault/source/read", {"documentId": "x"}) == "invalid_params"
         )
-        try:
-            vault.tool(settings, {"action": "list", "document": "../etc"})
-            raise AssertionError("expected VaultError")
-        except vault.VaultError as error:
-            assert error.code == "invalid_params"
-        # Only Tabgent's chapter files are readable: NN-<title>.md, at their place in
-        # Books/<id>/chapters/, with no symlink in between.
+        for args, expected in [
+            ({"action": "list", "document": "../etc"}, "invalid_params"),
+            (
+                {"action": "read", "document": ident, "part": "full", "section": 9},
+                "not_found",
+            ),
+            (
+                {"action": "read", "document": ident, "part": "full", "section": 0},
+                "invalid_params",
+            ),
+        ]:
+            try:
+                vault.tool(settings, args)
+                raise AssertionError("expected VaultError")
+            except vault.VaultError as error:
+                assert error.code == expected, (args, error.code)
+        # Only Tabgent's files are readable, at their place, with no symlink between.
         absolute = str(root / chapter_hits[0]["path"])
         assert vault.tool(settings, {"action": "read", "path": absolute})["lines"] > 10
-        chapters = root / "Books" / ident / "chapters"
+        texts = root / "Full Document Contents/Books"
         secret = base / "secret.md"
         secret.write_text("private autonomy notes\n")
-        (chapters / "notes.md").write_text("autonomy notes the user keeps here\n")
-        (chapters / "99-linked.md").symlink_to(secret)
-        stray = root / "Articles" / "article-x-00000000" / "chapters"
-        stray.mkdir(parents=True)
-        (stray / "01-stray.md").write_text("autonomy\n")
-        for path, expected in [
-            (f"Books/{ident}/chapters/notes.md", "invalid_params"),
-            (f"Books/{ident}/chapters/99-linked.md", "not_found"),
-            ("Articles/article-x-00000000/chapters/01-stray.md", "invalid_params"),
-            (f"Books/{ident}/chapters/../../../../secret.md", "invalid_params"),
+        (texts / "notes.md").write_text("autonomy notes the user keeps here\n")
+        (texts / "linked.md").symlink_to(secret)
+        for path in [
+            "Full Document Contents/Books/notes.md",
+            "Full Document Contents/Books/linked.md",
+            "Full Document Contents/Books/../../../secret.md",
         ]:
             try:
                 vault.tool(settings, {"action": "read", "path": path})
                 raise AssertionError("expected VaultError: " + path)
             except vault.VaultError as error:
-                assert error.code == expected, (path, error.code)
+                assert error.code == "invalid_params", (path, error.code)
         searched = vault.tool(settings, {"action": "search", "query": "autonomy"})
         paths = [m["path"] for m in searched["matches"]]
-        assert not [
-            p for p in paths if "notes.md" in p or "linked" in p or "stray" in p
-        ]
-        assert (
-            vault.tool(settings, {"action": "list"})["documents"][0]["chapterCount"]
-            == 3
-        )
-        for extra in (chapters / "notes.md", chapters / "99-linked.md"):
+        assert not [p for p in paths if "notes.md" in p or "linked" in p]
+        assert vault.tool(settings, {"action": "list"})["documents"][0]["sections"] == 3
+        for extra in (texts / "notes.md", texts / "linked.md"):
             extra.unlink()
-        shutil.rmtree(root / "Articles" / "article-x-00000000")
 
         # A web page and a book without an original are not books to reopen.
         call(
@@ -700,39 +752,25 @@ with tempfile.TemporaryDirectory(prefix="tabgent-epub-vault-") as directory:
             b["id"] == result["document"]["id"]
             for b in call(settings, "vault/books/list", {})["books"]
         )
-        # A chapter folder that cannot be written completes the import too, and the next
+        # A full text that cannot be written completes the import too, and the next
         # check retries the write instead of keeping the failure.
-        with patch.object(Path, "write_text", side_effect=OSError(28, "No space left")):
+        real_write = vault._write
+
+        def full_disk(path, data, mode=None):
+            if "Full Document Contents" in str(path):
+                raise OSError(28, "No space left")
+            return real_write(path, data, mode)
+
+        with patch.object(vault, "_write", full_disk):
             result, params = import_book("No Space")
         assert result["complete"] and result["source"]["chapters"] == []
         assert "No space left" in result["source"]["chapterWriteError"]
         assert "chapterError" not in result["source"]
-        folder = Path(result["document"]["folder"])
-        assert not [p.name for p in folder.iterdir() if p.name.startswith(".chapters")]
+        assert result["source"]["fullTextPath"] is None
         retried = call(settings, "vault/source/save", {**params, "data": ""})
         assert len(retried["source"]["chapters"]) == 3
         assert "chapterWriteError" not in retried["source"]
-        assert len(list((folder / "chapters").iterdir())) == 3
-        # A failed swap puts the earlier chapter files back.
-        (folder / "chapters" / "01-chapter-one-beginnings.md").unlink()
-        real_rename = Path.rename
-
-        def failing_rename(path, target):
-            if path.name.endswith(".tmp"):
-                raise OSError(28, "No space left")
-            return real_rename(path, target)
-
-        with patch.object(Path, "rename", failing_rename):
-            failed = call(settings, "vault/source/save", {**params, "data": ""})
-        assert "chapterWriteError" in failed["source"]
-        assert sorted(p.name for p in (folder / "chapters").iterdir()) == [
-            "02-chapter-two-repetition.md",
-            "03-chapter-three-endings.md",
-        ]
-        assert not [p.name for p in folder.iterdir() if p.name.startswith(".chapters")]
-        restored = call(settings, "vault/source/save", {**params, "data": ""})
-        assert len(list((folder / "chapters").iterdir())) == 3
-        assert "chapterWriteError" not in restored["source"]
+        assert Path(retried["source"]["fullTextPath"]).is_file()
         # A damaged chapter is listed in the record; the readable ones are written.
         data = corrupt(epub_fixture.build(title="Damaged"), "OEBPS/ch2.xhtml")
         digest = hashlib.sha256(data).hexdigest()
@@ -754,7 +792,7 @@ with tempfile.TemporaryDirectory(prefix="tabgent-epub-vault-") as directory:
             "OEBPS/ch3.xhtml",
         ]
         assert result["source"]["skippedChapters"][0]["href"] == "OEBPS/ch2.xhtml"
-print("PASS vault source save/read, books list, and reading_vault over chapter files")
+print("PASS vault source save/read, books list, and reading_vault over chapters")
 
 
 # The host returns large source reads in chunk frames, without Codex.
@@ -771,7 +809,7 @@ with tempfile.TemporaryDirectory(prefix="tabgent-epub-host-") as directory:
         buffer = frames
 
     with patch.object(host, "HOME", base / "codex"), patch.object(
-        vault, "default_path", lambda: base / "ReadingVault"
+        vault, "default_path", lambda: base / "Tabgent"
     ), patch.object(host.sys, "stdout", Stdout), patch.object(
         host, "executable", side_effect=AssertionError("Codex must not be discovered")
     ):

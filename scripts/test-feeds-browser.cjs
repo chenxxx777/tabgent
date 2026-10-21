@@ -7,6 +7,7 @@ const assert = require('node:assert/strict'),
   http = require('node:http'),
   os = require('node:os'),
   path = require('node:path'),
+  { vaultDocuments } = require('./vault-files.cjs'),
   zlib = require('node:zlib'),
   { execSync, spawnSync } = require('node:child_process');
 const root = path.resolve(__dirname, '..'),
@@ -111,10 +112,11 @@ const big = rss('Big', [...Array(200).keys()], { content: '<p>' + 'x'.repeat(220
   const profile = path.join(temp, 'profile'),
     home = path.join(temp, 'home'),
     codexHome = path.join(home, 'codex'),
-    vault = path.join(home, 'ReadingVault'),
+    vault = path.join(home, 'Tabgent'),
     index = path.join(vault, '.tabgent/feeds.db');
-  const personal = path.join(os.homedir(), 'ReadingVault');
-  const personalState = () => (fs.existsSync(personal) ? fs.statSync(personal).mtimeMs : null);
+  const personal = ['ReadingVault', 'Tabgent'].map((name) => path.join(os.homedir(), name));
+  const personalState = () =>
+    personal.map((dir) => (fs.existsSync(dir) ? fs.statSync(dir).mtimeMs : null)).join();
   const personalBefore = personalState();
   fs.mkdirSync(codexHome, { recursive: true });
   const python = process.env.PYTHON || execSync('command -v python3').toString().trim();
@@ -373,7 +375,7 @@ const big = rss('Big', [...Array(200).keys()], { content: '<p>' + 'x'.repeat(220
     const flakyState = () =>
       query("SELECT failures, last_error FROM sources WHERE url LIKE '%flaky.xml'")[0];
     assert.deepEqual(flakyState(), [1, 'HTTP 500']);
-    assert.equal(fs.existsSync(path.join(vault, 'Articles')), false, 'Subscribing adds no folders');
+    assert.equal(fs.existsSync(path.join(vault, 'Articles')), false, 'Subscribing adds no notes');
     console.log('PASS OPML import adds feeds with categories; nothing is added to Articles');
     if (shots) await page.screenshot({ path: path.join(shots, 'subscriptions.png') });
 
@@ -513,7 +515,7 @@ const big = rss('Big', [...Array(200).keys()], { content: '<p>' + 'x'.repeat(220
     });
     await drag('#probe', 'Article paragraph 3');
     await clickAction('highlight');
-    const articles = path.join(vault, 'Articles');
+    const articles = path.join(vault, '.tabgent/documents');
     const folder = await until(
       () =>
         fs.existsSync(articles) &&
@@ -532,10 +534,12 @@ const big = rss('Big', [...Array(200).keys()], { content: '<p>' + 'x'.repeat(220
     assert.equal(record.origin.type, 'feed');
     assert.equal(record.origin.method, 'fulltext');
     assert.equal(record.origin.sourceTitle, 'Reading');
-    assert.match(
-      fs.readFileSync(path.join(articles, folder, 'article.md'), 'utf8'),
-      /Article paragraph 3/,
-    );
+    const saved = vaultDocuments(vault).find((doc) => doc.id === folder);
+    assert.match(saved.fullText, /Article paragraph 3/);
+    // An item saved from a feed is filed by its content, with the feed named.
+    assert.equal(saved.category, 'articles');
+    assert.match(saved.notes, /\nfeed: "Reading"\n/);
+    assert.match(saved.notes, /- 来源：RSS《Reading》/);
     assert.notEqual(query("SELECT document_id FROM items WHERE key = 'read-summary'")[0][0], null);
     assert(await until(() => page.isDisabled('#save')), 'The reader shows it as saved');
     console.log('PASS the first highlight saves the item as a document with its text');
@@ -621,7 +625,7 @@ const big = rss('Big', [...Array(200).keys()], { content: '<p>' + 'x'.repeat(220
     console.log('PASS unsubscribing and switching back to the documents tab');
 
     assert(!logs.some((line) => line.startsWith('pageerror')), logs.join('\n'));
-    assert.equal(personalState(), personalBefore, 'The personal ReadingVault was not touched');
+    assert.equal(personalState(), personalBefore, 'The personal vault was not touched');
     passed = true;
   } finally {
     await context?.close().catch(() => {});

@@ -1,7 +1,8 @@
-"""Local PDF import and the library list in the ReadingVault: an imported PDF is named by
-the SHA-256 of its bytes (urn:sha256:...) and stored as Books/paper-*/original.pdf with
-its page text in pages/NNN.md, reading_vault reads those pages under exact-path checks,
-and vault/documents/list lists every document. Uses generated, non-sensitive fixtures.
+"""Local PDF import and the library list in the vault: an imported PDF is named by the
+SHA-256 of its bytes (urn:sha256:...), stored in its record folder with a visible copy
+in Attachments/PDFs/ and its page text as a section per page in its full text file;
+reading_vault reads those pages under exact-path checks, and vault/documents/list
+lists every document. Uses generated, non-sensitive fixtures.
 """
 
 import base64
@@ -89,8 +90,7 @@ def documents(settings):
 
 
 def set_updated(root, ident, value):
-    folder = "Articles" if ident.startswith("article-") else "Books"
-    path = root / folder / ident / "anchors.json"
+    path = root / ".tabgent/documents" / ident / "anchors.json"
     data = json.loads(path.read_text())
     data["document"]["updatedAt"] = value
     path.write_text(json.dumps(data))
@@ -99,7 +99,7 @@ def set_updated(root, ident, value):
 with tempfile.TemporaryDirectory(prefix="tabgent-library-vault-") as directory:
     base = Path(directory)
     settings = base / "codex/projects/tabgent/vault.json"
-    root = base / "ReadingVault"
+    root = base / "Tabgent"
     with patch.object(vault, "default_path", lambda: root):
         # Listing an empty vault writes nothing, not even the vault folder.
         assert documents(settings) == []
@@ -143,7 +143,7 @@ with tempfile.TemporaryDirectory(prefix="tabgent-library-vault-") as directory:
         assert not root.exists()
         print("PASS a PDF import must match its hash identity and the EPUB size limits")
 
-        # Chunked import into Books/paper-<title>-<hash>/original.pdf.
+        # Chunked import into the record folder, with a visible copy in Attachments/PDFs.
         half = len(PDF) // 2
         assert save(settings, 0, b"")["received"] == 0
         assert not root.exists(), "A progress check for an unknown file writes nothing"
@@ -157,8 +157,11 @@ with tempfile.TemporaryDirectory(prefix="tabgent-library-vault-") as directory:
             r"paper-reading-companion-paper-[0-9a-f]{8}", document["id"]
         )
         assert document["kind"] == "pdf" and document["url"] == URL
-        folder = root / "Books" / document["id"]
-        assert Path(document["folder"]) == folder
+        folder = root / ".tabgent/documents" / document["id"]
+        assert Path(document["folder"]) == folder and document["category"] == "pdfs"
+        notes = root / "PDFs" / f"{TITLE}.md"
+        full = root / "Full Document Contents/PDFs" / f"{TITLE}.md"
+        assert (root / "Attachments/PDFs" / f"{TITLE}.pdf").read_bytes() == PDF
         assert (folder / "original.pdf").read_bytes() == PDF
         record = json.loads((folder / "source.json").read_text())
         assert record["file"] == "original.pdf" and record["kind"] == "pdf"
@@ -166,36 +169,29 @@ with tempfile.TemporaryDirectory(prefix="tabgent-library-vault-") as directory:
         assert record["name"] == "companion-paper.pdf" and record["chapters"] == []
         assert done["source"]["path"] == str(folder / "original.pdf")
         assert not list((root / ".tabgent/uploads").iterdir())
-        assert "original.pdf" in (root / "AGENTS.md").read_text()
-        print("PASS a local PDF is imported in chunks as Books/paper-*/original.pdf")
+        assert "Full Document Contents" in (root / "AGENTS.md").read_text()
+        print("PASS a local PDF is imported in chunks into its record and Attachments")
 
-        # Each page with text is written to pages/NNN.md for Codex; the empty page is not.
+        # Each page with text is a section of the full text; the empty page is not.
         if PDFKIT:
             assert sorted(p.name for p in folder.iterdir()) == [
                 "anchors.json",
                 "original.pdf",
-                "pages",
                 "source.json",
             ]
-            assert sorted(p.name for p in (folder / "pages").iterdir()) == [
-                "001.md",
-                "003.md",
-            ]
-            page = (folder / "pages/003.md").read_text()
-            assert page.startswith(
-                '---\ntitle: "Page 3"\npaper: "Reading Companion Paper"\n'
-                f"document_id: {document['id']}\npage: 3\n---\n\n"
-            ), page
-            assert "Autonomy is the endorsement of one's own actions." in page
+            text = full.read_text()
+            assert text.startswith(
+                f"---\ntabgent_id: {document['id']}\ntabgent_part: full\n"
+                f'title: "{TITLE}"\ncategory: pdfs\n'
+            ), text
+            assert "\n<!-- tabgent:page 3 -->\n## 第 3 页\n\n" in text
+            assert "Autonomy is the endorsement of one's own actions." in text
+            assert "tabgent:page 2 " not in text
             assert record["pageCount"] == 3 and "pageError" not in record
-            assert [(p["page"], p["file"]) for p in record["pages"]] == [
-                (1, "pages/001.md"),
-                (3, "pages/003.md"),
-            ]
-            assert done["source"]["pagesPath"] == str(folder / "pages")
+            assert [(p["page"], p["part"]) for p in record["pages"]] == [(1, 1), (3, 1)]
             assert done["source"]["pages"] == record["pages"]
-            assert "pages/NNN.md" in (root / "AGENTS.md").read_text()
-            print("PASS page text is written to pages/NNN.md for each page with text")
+            assert done["source"]["fullTextPath"] == str(full)
+            print("PASS page text is a section per page with text in the full text")
         else:
             assert record["pageError"] and record["pages"] == []
             print("SKIP page text needs macOS PDFKit; the import records pageError")
@@ -203,18 +199,17 @@ with tempfile.TemporaryDirectory(prefix="tabgent-library-vault-") as directory:
         # Importing the same file again is the same document; nothing is uploaded.
         again = save(settings, 0, b"", name="renamed.pdf")
         assert again["complete"] is True and again["document"]["id"] == document["id"]
-        assert [p.name for p in (root / "Books").iterdir()] == [document["id"]]
+        assert [p.name for p in (root / ".tabgent/documents").iterdir()] == [
+            document["id"]
+        ]
         assert json.loads((folder / "source.json").read_text())["name"] == (
             "companion-paper.pdf"
         )
         if PDFKIT:
-            # A deleted page file is written again when the file is imported again.
-            (folder / "pages/001.md").unlink()
+            # A deleted full text is written again when the file is imported again.
+            full.unlink()
             assert save(settings, 0, b"")["complete"] is True
-            assert sorted(p.name for p in (folder / "pages").iterdir()) == [
-                "001.md",
-                "003.md",
-            ]
+            assert full.read_text() == text
         # Another file under this identity is refused; the original never changes.
         assert (
             code(
@@ -273,9 +268,11 @@ with tempfile.TemporaryDirectory(prefix="tabgent-library-vault-") as directory:
             },
         )
         assert created["document"]["id"] == document["id"]
-        markdown = (folder / "highlights.md").read_text()
-        assert f'source: "{URL}"' in markdown and "type: paper" in markdown
-        assert 'author: "Fixture Author"' in markdown
+        markdown = notes.read_text()
+        assert f'source: "{URL}"' in markdown and "kind: pdf" in markdown
+        assert 'author: "[[Fixture Author]]"' in markdown
+        # Its page link opens the visible copy at the page, in Obsidian's PDF viewer.
+        assert f"[[../Attachments/PDFs/{TITLE}.pdf#page=1|原文位置]]" in markdown
         books = call(settings, "vault/books/list", {"kind": "pdf"})["books"]
         assert [b["id"] for b in books] == [document["id"]]
         assert call(settings, "vault/books/list", {})["books"] == []
@@ -283,15 +280,20 @@ with tempfile.TemporaryDirectory(prefix="tabgent-library-vault-") as directory:
 
         if PDFKIT:
             # reading_vault: an imported PDF's pages are listed, searched within the
-            # paper (the user's notes first) and read like EPUB chapters.
+            # paper (the user's notes first) and read by page number.
             ident = document["id"]
             listed = tool(settings, {"action": "list", "document": ident})["documents"]
+            assert [c["section"] for c in listed[0].pop("contents")] == [1, 3]
             assert listed == [
                 {
-                    "path": f"Books/{ident}/highlights.md",
+                    "id": ident,
                     "title": TITLE,
-                    "pages": f"Books/{ident}/pages",
-                    "pageCount": 2,
+                    "kind": "pdf",
+                    "category": "pdfs",
+                    "notes": f"PDFs/{TITLE}.md",
+                    "path": f"PDFs/{TITLE}.md",
+                    "fullText": f"Full Document Contents/PDFs/{TITLE}.md",
+                    "sections": 2,
                 }
             ]
             found = tool(
@@ -299,76 +301,61 @@ with tempfile.TemporaryDirectory(prefix="tabgent-library-vault-") as directory:
                 {"action": "search", "query": "endorsement", "document": ident},
             )["matches"]
             assert [m["path"] for m in found] == [
-                f"Books/{ident}/highlights.md",
-                f"Books/{ident}/pages/003.md",
+                f"PDFs/{TITLE}.md",
+                f"Full Document Contents/PDFs/{TITLE}.md",
             ]
-            assert found[1]["title"] == f"{TITLE} — Page 3"
+            assert found[1]["section"] == 3 and found[1]["sectionTitle"] == "第 3 页"
             everywhere = tool(settings, {"action": "search", "query": "endorsement"})
-            assert all("/pages/" not in m["path"] for m in everywhere["matches"])
+            assert all("Full Document" not in m["path"] for m in everywhere["matches"])
             read = tool(
-                settings, {"action": "read", "path": f"Books/{ident}/pages/003.md"}
+                settings,
+                {"action": "read", "document": ident, "part": "full", "section": 3},
             )
             assert "Autonomy is the endorsement" in read["text"]
-            absolute = str(folder / "pages/001.md")
-            assert (
-                "Careful readers"
-                in tool(settings, {"action": "read", "path": absolute})["text"]
-            )
+            assert "Careful readers" not in read["text"]
+            first = tool(settings, {"action": "read", "path": str(full), "section": 1})
+            assert "Careful readers" in first["text"]
+            assert tool(
+                settings,
+                {"action": "read", "document": ident, "part": "full", "section": 2},
+            ) == {"error": "not_found"}, "A page without text has no section"
 
-            # Only page files at their exact place are readable.
-            pages = folder / "pages"
+            # Only the full text at its exact place is readable.
+            texts = full.parent
             outside = base / "private.md"
             outside.write_text("private text")
-            (pages / "notes.md").write_text("not a page")
-            (pages / "01.md").write_text("too short a name")
-            (pages / "004.md").symlink_to(outside)
-            book_pages = root / "Books/book-other-00000000/pages"
-            book_pages.mkdir(parents=True)
-            (book_pages / "001.md").write_text("a book has chapters, not pages")
-            article_pages = root / "Articles/article-other-00000000/pages"
-            article_pages.mkdir(parents=True)
-            (article_pages / "001.md").write_text("an article has no pages")
+            (texts / "notes.md").write_text("not a page")
+            (texts / "linked.md").symlink_to(outside)
             for path in (
-                f"Books/{ident}/pages/notes.md",
-                f"Books/{ident}/pages/01.md",
-                f"Books/{ident}/Pages/001.md",
-                f"Books/{ident}/pages/../../../../private.md",
-                "Books/book-other-00000000/pages/001.md",
-                "Articles/article-other-00000000/pages/001.md",
+                "Full Document Contents/PDFs/notes.md",
+                "Full Document Contents/PDFs/linked.md",
+                f"Full Document Contents/pdfs/{TITLE}.md",
+                "Full Document Contents/PDFs/../../../private.md",
             ):
                 assert tool(settings, {"action": "read", "path": path}) == {
                     "error": "invalid_params"
                 }, path
+            # A full text replaced by a link to another place is not read either.
+            saved = full.read_bytes()
+            elsewhere = base / "elsewhere.md"
+            elsewhere.write_bytes(saved)
+            full.unlink()
+            full.symlink_to(elsewhere)
             assert tool(
-                settings, {"action": "read", "path": f"Books/{ident}/pages/004.md"}
-            ) == {"error": "not_found"}
-            linked = tool(
-                settings,
-                {"action": "search", "query": "private", "document": ident},
-            )
-            assert linked["matches"] == []
-            # A pages folder that is a symlink to another place is not read either.
-            elsewhere = base / "elsewhere"
-            shutil.copytree(pages, elsewhere, symlinks=True)
-            shutil.rmtree(pages)
-            pages.symlink_to(elsewhere)
-            assert tool(
-                settings, {"action": "read", "path": f"Books/{ident}/pages/003.md"}
+                settings, {"action": "read", "document": ident, "part": "full"}
             ) == {"error": "not_found"}
             assert (
-                "pages"
+                "fullText"
                 not in tool(settings, {"action": "list", "document": ident})[
                     "documents"
                 ][0]
             )
-            pages.unlink()
-            shutil.move(str(elsewhere), str(pages))
-            for extra in ("notes.md", "01.md", "004.md"):
-                (pages / extra).unlink()
-            shutil.rmtree(root / "Books/book-other-00000000")
-            shutil.rmtree(root / "Articles/article-other-00000000")
+            full.unlink()
+            full.write_bytes(saved)
+            for extra in ("notes.md", "linked.md"):
+                (texts / extra).unlink()
             print(
-                "PASS reading_vault lists, searches and reads page files at exact paths"
+                "PASS reading_vault lists, searches and reads a PDF's pages by number"
             )
 
         # Other kinds of documents, as the extension creates them.
@@ -473,7 +460,9 @@ with tempfile.TemporaryDirectory(prefix="tabgent-library-vault-") as directory:
             "importedAt": record["importedAt"],
         }
         assert local["folder"] == str(folder)
-        assert local["highlightsPath"] == str(folder / "highlights.md")
+        assert local["notesPath"] == str(notes) and local["category"] == "pdfs"
+        assert by_id[web["id"]]["category"] == "articles"
+        assert by_id[epub["id"]]["category"] == "books"
         assert local["updatedAt"] == "2026-10-19T23:30:00-03:00"
         assert by_id[epub["id"]]["kind"] == "epub"
         assert by_id[epub["id"]]["author"] == epub_fixture.AUTHOR
@@ -485,8 +474,11 @@ with tempfile.TemporaryDirectory(prefix="tabgent-library-vault-") as directory:
             "kind",
             "title",
             "url",
+            "category",
+            "notesPath",
+            "discussionsPath",
+            "fullTextPath",
             "folder",
-            "highlightsPath",
             "createdAt",
             "updatedAt",
             "author",
@@ -500,14 +492,15 @@ with tempfile.TemporaryDirectory(prefix="tabgent-library-vault-") as directory:
             "PASS the library lists web pages, online and imported PDFs, and EPUB books"
         )
 
-        # Unreadable or misplaced folders are left out; the other documents still list.
-        (root / "Articles" / web["id"] / "anchors.json").write_text("{not json")
-        (root / "Books" / "article-misplaced-00000000").mkdir()
-        (root / "Books" / "notes").mkdir()
-        (root / "Books" / "paper-no-anchors-00000000").mkdir()
+        # Unreadable or misplaced records are left out; the other documents still list.
+        records = root / ".tabgent/documents"
+        (records / web["id"] / "anchors.json").write_text("{not json")
+        (records / "notes").mkdir()
+        (records / "paper-no-anchors-00000000").mkdir()
         (root / "Articles" / "README.md").write_text("mine")
         # A document whose original was removed is listed without a source.
-        (root / "Books" / epub["id"] / "original.epub").unlink()
+        (records / epub["id"] / "original.epub").unlink()
+        (root / "Attachments/Books" / f"{epub_fixture.TITLE}.epub").unlink()
         listed = documents(settings)
         assert [d["id"] for d in listed] == [
             online["id"],
@@ -516,20 +509,20 @@ with tempfile.TemporaryDirectory(prefix="tabgent-library-vault-") as directory:
             discussed["id"],
         ]
         assert {d["id"]: d for d in listed}[epub["id"]]["source"] is None
-        print("PASS unreadable, misplaced and incomplete folders do not hide documents")
+        print("PASS unreadable, misplaced and incomplete records do not hide documents")
 
-        # A missing Articles folder (or one that is a file) lists the books.
+        # The library lists the records: notes moved or deleted by the user do not hide
+        # their documents.
         shutil.rmtree(root / "Articles")
-        (root / "Articles").write_text("not a folder")
-        assert [d["kind"] for d in documents(settings)] == ["pdf", "pdf", "epub"]
-        print("PASS a vault without an Articles folder still lists its books")
+        assert len(documents(settings)) == 4
+        print("PASS a vault without its notes folders still lists its documents")
 
 
 # Failures leave the original readable, without page files.
 with tempfile.TemporaryDirectory(prefix="tabgent-library-pages-") as directory:
     base = Path(directory)
     settings = base / "codex/projects/tabgent/vault.json"
-    root = base / "ReadingVault"
+    root = base / "Tabgent"
 
     def import_pdf(data, title):
         digest = hashlib.sha256(data).hexdigest()
@@ -558,8 +551,7 @@ with tempfile.TemporaryDirectory(prefix="tabgent-library-pages-") as directory:
             assert locked["complete"] is True
             assert locked["source"]["pageError"] == "The PDF is encrypted"
             assert locked["source"]["pages"] == []
-            folder = Path(locked["document"]["folder"])
-            assert not (folder / "pages").exists()
+            assert locked["source"]["fullTextPath"] is None
             assert call(settings, "vault/source/save", {**params, "data": ""})
         assert len(calls) == 1, "An unreadable PDF is not read again on every import"
 
@@ -568,33 +560,26 @@ with tempfile.TemporaryDirectory(prefix="tabgent-library-pages-") as directory:
         if PDFKIT:
             assert scanned["source"]["pageError"] == "The PDF has no text layer"
             assert scanned["source"]["pageCount"] == 2
-        assert not (Path(scanned["document"]["folder"]) / "pages").exists()
+        assert scanned["source"]["fullTextPath"] is None
 
-        # A page folder that cannot be written keeps the earlier files and is retried.
+        # A full text that cannot be written is retried at the next import check.
         if PDFKIT:
-            written, params = import_pdf(
-                text_pdf.build([["First page."], ["Second page."]]), "Written"
-            )
-            folder = Path(written["document"]["folder"])
-            (folder / "pages/001.md").unlink()
-            real_rename = Path.rename
+            real_write = vault._write
 
-            def failing_rename(path, target):
-                if path.name.endswith(".tmp"):
+            def full_disk(path, data, mode=None):
+                if "Full Document Contents" in str(path):
                     raise OSError(28, "No space left")
-                return real_rename(path, target)
+                return real_write(path, data, mode)
 
-            with patch.object(Path, "rename", failing_rename):
-                failed = call(settings, "vault/source/save", {**params, "data": ""})
-            assert "pageWriteError" in failed["source"], failed["source"]
-            assert [p.name for p in (folder / "pages").iterdir()] == ["002.md"]
-            assert not [p for p in folder.iterdir() if p.name.startswith(".pages")]
+            with patch.object(vault, "_write", full_disk):
+                written, params = import_pdf(
+                    text_pdf.build([["First page."], ["Second page."]]), "Written"
+                )
+            assert "pageWriteError" in written["source"], written["source"]
             restored = call(settings, "vault/source/save", {**params, "data": ""})
             assert "pageWriteError" not in restored["source"]
-            assert sorted(p.name for p in (folder / "pages").iterdir()) == [
-                "001.md",
-                "002.md",
-            ]
+            assert [p["page"] for p in restored["source"]["pages"]] == [1, 2]
+            assert Path(restored["source"]["fullTextPath"]).is_file()
         # An EPUB's source record has no page fields.
         book = epub_fixture.build()
         book_digest = hashlib.sha256(book).hexdigest()
@@ -611,7 +596,7 @@ with tempfile.TemporaryDirectory(prefix="tabgent-library-pages-") as directory:
                 "data": b64(book),
             },
         )
-        assert not {"pages", "pagesPath", "pageError"} & set(epub["source"])
+        assert not {"pages", "pageCount", "pageError"} & set(epub["source"])
 print("PASS unreadable, scanned and unwritable page text leaves the PDF readable")
 
 

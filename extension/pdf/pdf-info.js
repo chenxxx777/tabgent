@@ -1,4 +1,4 @@
-// The title and metadata a PDF is saved under in the ReadingVault: the metadata title as
+// The title and metadata a PDF is saved under in the reading vault: the metadata title as
 // PDF.js chooses it, else the file name. The viewer and the library's import both use it,
 // so an imported PDF and its highlights name the same document.
 export async function pdfInfo(pdfDocument, source, name) {

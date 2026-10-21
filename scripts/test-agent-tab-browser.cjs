@@ -2,13 +2,14 @@
 // and the real connector: a webpage and an imported PDF, each with a highlight discussion
 // continued in its Agent tab. A temporary profile, HOME and CODEX_HOME isolate the browser,
 // the vault and Codex state; Codex is the fixture app-server and pages are served locally,
-// so no account, model, network or personal ReadingVault is used.
+// so no account, model, network or personal vault is used.
 const assert = require('node:assert/strict'),
   crypto = require('node:crypto'),
   fs = require('node:fs'),
   http = require('node:http'),
   os = require('node:os'),
   path = require('node:path'),
+  { vaultDocuments } = require('./vault-files.cjs'),
   { execSync } = require('node:child_process');
 const root = path.resolve(__dirname, '..'),
   { chromium } = require(root + '/node_modules/playwright');
@@ -45,10 +46,11 @@ const paper = textPdf(
   const profile = path.join(temp, 'profile'),
     home = path.join(temp, 'home'),
     codexHome = path.join(home, 'codex'),
-    vault = path.join(home, 'ReadingVault');
+    vault = path.join(home, 'Tabgent');
   // The personal vault is never touched: its state is the same before and after.
-  const personal = path.join(os.homedir(), 'ReadingVault');
-  const personalState = () => (fs.existsSync(personal) ? fs.statSync(personal).mtimeMs : null);
+  const personal = ['ReadingVault', 'Tabgent'].map((name) => path.join(os.homedir(), name));
+  const personalState = () =>
+    personal.map((dir) => (fs.existsSync(dir) ? fs.statSync(dir).mtimeMs : null)).join();
   const personalBefore = personalState();
   const paperFile = path.join(temp, 'closing-paper.pdf');
   fs.writeFileSync(paperFile, paper);
@@ -208,10 +210,18 @@ const paper = textPdf(
       evaluate.close = () => socket.close();
       return evaluate;
     }
+    // Documents' record folders of a kind: Articles (webpages) or Books (PDFs and books).
     const folder = (kind) => {
-      const dir = path.join(vault, kind);
-      return fs.existsSync(dir) ? fs.readdirSync(dir).map((name) => path.join(dir, name)) : [];
+      const dir = path.join(vault, '.tabgent/documents');
+      const prefixes = kind === 'Articles' ? ['article-'] : ['paper-', 'book-'];
+      return fs.existsSync(dir)
+        ? fs
+            .readdirSync(dir)
+            .filter((name) => prefixes.some((prefix) => name.startsWith(prefix)))
+            .map((name) => path.join(dir, name))
+        : [];
     };
+    const docOf = (dir) => vaultDocuments(vault).find((doc) => doc.id === path.basename(dir));
     const anchors = (dir) => JSON.parse(fs.readFileSync(path.join(dir, 'anchors.json'), 'utf8'));
     const threads = () => {
       try {
@@ -425,7 +435,10 @@ const paper = textPdf(
       folder('Books').find((dir) => path.basename(dir).startsWith('paper-closing-paper-')),
     );
     assert(paperFolder, 'The PDF is imported');
-    assert(fs.existsSync(path.join(paperFolder, 'pages/002.md')), 'Its page text is saved');
+    assert(
+      await until(() => docOf(paperFolder)?.fullText.includes('<!-- tabgent:page 2 -->')),
+      'Its page text is saved',
+    );
     await drag('Masked attention');
     await press('ask');
     assert(await until(() => anchors(paperFolder).highlights.length === 1));
@@ -460,9 +473,9 @@ const paper = textPdf(
     assert.equal(contexts.page.closed, true);
     assert.match(contexts.page.url, /^urn:sha256:[0-9a-f]{64}/);
     assert.equal(contexts.reading.saving, 'highlight');
-    assert.equal(contexts.reading.document.pages, path.join(paperFolder, 'pages'));
+    assert.equal(contexts.reading.document.fullText, docOf(paperFolder).fullTextPath);
     assert.match(
-      fs.readFileSync(path.join(paperFolder, 'highlights.md'), 'utf8'),
+      docOf(paperFolder).discussions,
       /The viewer is closed: read page 2 from the vault only\./,
     );
     console.log('PASS imported PDF: the Agent tab reads the vault pages and saves after closing');
@@ -473,7 +486,7 @@ const paper = textPdf(
 
     if (shots) fs.writeFileSync(path.join(shots, 'console.txt'), logs.join('\n'));
     assert(!logs.some((line) => line.startsWith('pageerror')), logs.join('\n'));
-    assert.equal(personalState(), personalBefore, 'The personal ReadingVault was not touched');
+    assert.equal(personalState(), personalBefore, 'The personal vault was not touched');
     passed = true;
   } finally {
     await context?.close().catch(() => {});

@@ -1,7 +1,7 @@
 // The library and local PDFs in real Chromium with the source extension and the real
 // connector. A temporary profile, HOME and CODEX_HOME isolate the browser, the vault and
 // Codex state, and Codex is the fixture app-server: no account, model or personal
-// ReadingVault is used. Every document is generated fixture text.
+// vault (~/Tabgent, ~/ReadingVault) is used. Every document is generated fixture text.
 const assert = require('node:assert/strict'),
   crypto = require('node:crypto'),
   fs = require('node:fs'),
@@ -48,11 +48,12 @@ const article = `<!doctype html><html><head><title>On Autonomy</title></head><bo
   const profile = path.join(temp, 'profile'),
     home = path.join(temp, 'home'),
     codexHome = path.join(home, 'codex'),
-    vault = path.join(home, 'ReadingVault'),
-    books = path.join(vault, 'Books');
+    vault = path.join(home, 'Tabgent'),
+    books = path.join(vault, '.tabgent/documents');
   // The personal vault is never touched: its state is the same before and after.
-  const personal = path.join(os.homedir(), 'ReadingVault');
-  const personalState = () => (fs.existsSync(personal) ? fs.statSync(personal).mtimeMs : null);
+  const personal = ['ReadingVault', 'Tabgent'].map((name) => path.join(os.homedir(), name));
+  const personalState = () =>
+    personal.map((dir) => (fs.existsSync(dir) ? fs.statSync(dir).mtimeMs : null)).join();
   const personalBefore = personalState();
   const files = {
     local: path.join(temp, 'local-paper.pdf'),
@@ -208,6 +209,7 @@ for method, params in json.loads(sys.argv[3]):
       page.$$eval('#books .item', (entries) =>
         entries.map((entry) => ({
           kind: entry.dataset.kind,
+          category: entry.dataset.category,
           title: entry.querySelector('.title').textContent,
           meta: entry.querySelector('.meta').textContent,
           href: entry.getAttribute('href'),
@@ -349,7 +351,8 @@ for method, params in json.loads(sys.argv[3]):
       onlineItem = byTitle(seeded, 'Online Fixture Paper');
     assert.equal(webItem.kind, 'web');
     assert.equal(webItem.href, articleUrl);
-    assert(webItem.meta.includes(await message('libraryKindWeb')), webItem.meta);
+    // The category the note is filed in.
+    assert(webItem.meta.includes(await message('libraryCategoryArticles')), webItem.meta);
     assert(webItem.meta.includes('127.0.0.1'));
     assert(webItem.meta.includes(await message('epubHighlightCount', '1')));
     const today = new Intl.DateTimeFormat(
@@ -359,8 +362,8 @@ for method, params in json.loads(sys.argv[3]):
     assert(webItem.meta.includes(await message('libraryUpdated', today)), webItem.meta);
     assert.equal(onlineItem.kind, 'pdf');
     assert.equal(onlineItem.href, viewerUrl(onlineUrl));
-    assert(onlineItem.meta.includes(await message('libraryKindPdf')));
-    console.log('PASS the library lists vault documents with kind, highlights and update date');
+    assert(onlineItem.meta.includes(await message('libraryCategoryPdfs')));
+    console.log('PASS the library lists vault documents with category, highlights and date');
     if (shots) await page.screenshot({ path: path.join(shots, 'library-seeded.png') });
 
     // Choose a local PDF: it is copied into the vault, then opens in PDF.js from that copy.
@@ -383,16 +386,21 @@ for method, params in json.loads(sys.argv[3]):
     assert.equal(await page.textContent('#title'), 'local-paper.pdf');
     assert(await page.isHidden('#native'), 'No Chrome viewer fallback for a vault copy');
     assert.deepEqual(fs.readdirSync(path.join(vault, '.tabgent/uploads')), []);
-    // Page text for Codex, read by the connector with PDFKit at import.
-    assert.deepEqual(fs.readdirSync(path.join(books, local, 'pages')), [
-      '001.md',
-      '002.md',
-      '003.md',
-    ]);
-    assert.match(
-      fs.readFileSync(path.join(books, local, 'pages/002.md'), 'utf8'),
-      /^---\ntitle: "Page 2"\npaper: "Local Reading Fixture"[\s\S]*Autonomy is the endorsement of one's own actions\./,
+    // Page text for Codex, read by the connector with PDFKit at import: a section per page.
+    const localText = fs.readFileSync(
+      path.join(vault, 'Full Document Contents/PDFs/Local Reading Fixture.md'),
+      'utf8',
     );
+    assert.deepEqual(
+      [...localText.matchAll(/<!-- tabgent:page (\d+) -->/g)].map((m) => m[1]),
+      ['1', '2', '3'],
+    );
+    assert.match(
+      localText,
+      /## 第 2 页\n\n[\s\S]*Autonomy is the endorsement of one's own actions\./,
+    );
+    const localNotes = path.join(vault, 'PDFs/Local Reading Fixture.md');
+    const localTalk = path.join(vault, 'Discussions/PDFs/Local Reading Fixture.md');
     console.log('PASS a chosen PDF is imported with its page text and opens in PDF.js');
 
     // Highlight and Ask AI on the imported PDF.
@@ -439,10 +447,11 @@ for method, params in json.loads(sys.argv[3]):
       ),
     );
     assert(await until(() => anchorsOf(local).turns.length === 1, 15000), 'The turn is saved');
-    const markdown = fs.readFileSync(path.join(books, local, 'highlights.md'), 'utf8');
+    const markdown = fs.readFileSync(localNotes, 'utf8');
     assert.match(markdown, new RegExp(`^source: "${urn}"$`, 'm'));
-    assert.match(markdown, /## Highlight 002[\s\S]*Why is autonomy not independence\?/);
-    assert.match(markdown, /Fixture answer 1\./);
+    const talk = fs.readFileSync(localTalk, 'utf8');
+    assert.match(talk, /## 高亮 002[\s\S]*Why is autonomy not independence\?/);
+    assert.match(talk, /Fixture answer 1\./);
     console.log('PASS highlights, Ask AI and saved turns on the imported PDF');
     if (shots) await page.screenshot({ path: path.join(shots, 'local-pdf.png') });
 
@@ -476,6 +485,13 @@ for method, params in json.loads(sys.argv[3]):
     const epubItem = byTitle(four, 'A Small Book of Reading');
     assert.equal(epubItem.href, '?book=' + bookId);
     assert(epubItem.meta.includes(await message('libraryKindEpub')));
+    assert(epubItem.meta.includes(await message('libraryCategoryBooks')));
+    assert.deepEqual(four.map((item) => item.category).sort(), [
+      'articles',
+      'books',
+      'pdfs',
+      'pdfs',
+    ]);
     console.log('PASS an EPUB imported in the library is listed with the other documents');
     if (shots) await page.screenshot({ path: path.join(shots, 'library.png') });
 
@@ -528,8 +544,8 @@ for method, params in json.loads(sys.argv[3]):
     await page.keyboard.press('Control+Enter');
     assert(await until(() => anchorsOf(local).highlights[1].note === note), 'The note is saved');
     assert.match(
-      fs.readFileSync(path.join(books, local, 'highlights.md'), 'utf8'),
-      /## Highlight 002[\s\S]*<!-- tabgent:note h002 start -->\n\n### 笔记\n\n我的看法: endorsement, not isolation\.\n\n<!-- tabgent:note h002 end -->\n\n### 对话[\s\S]*Why is autonomy not independence\?/,
+      fs.readFileSync(localNotes, 'utf8'),
+      /\^h002\n    - 评论：我的看法: endorsement, not isolation\.\n    - [\s\S]*讨论 1 条/,
     );
     await page.close();
     await openLibrary();

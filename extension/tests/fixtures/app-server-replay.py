@@ -7,8 +7,8 @@ in CODEX_HOME so a restarted browser can resume them.
 Directives in the user's text drive the rest, as a model would:
   [hold]          the turn keeps running until turn/steer or turn/interrupt;
   [browser-read]  calls the browser tool's read on the message's tabId;
-  [vault-read:N]  calls reading_vault to read page N of the imported PDF named in the
-                  message's reading context.
+  [vault-read:N]  calls reading_vault to read page N (its section) of the full text of
+                  the imported PDF named in the message's reading context.
 Each tool result is quoted in the answer, so tests can check what the tool returned.
 """
 
@@ -115,7 +115,7 @@ def tools(ident, turn_id, parts):
     for number in re.findall(r"\[vault-read:(\d{3})\]", text):
         reading = context(parts, READING_CONTEXT)
         vault = reading["vault"]["path"].rstrip("/")
-        pages = reading["document"]["pages"]
+        full = reading["document"]["fullText"]
         results.append(
             call_tool(
                 ident,
@@ -123,7 +123,8 @@ def tools(ident, turn_id, parts):
                 "reading_vault",
                 {
                     "action": "read",
-                    "path": os.path.relpath(f"{pages}/{number}.md", vault),
+                    "path": os.path.relpath(full, vault),
+                    "section": int(number),
                 },
             )
         )

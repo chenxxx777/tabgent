@@ -7,7 +7,7 @@ const fileViewer = () => chrome.runtime.getURL('pdf/file.html') + '?url=';
 const views = new Map();
 let sequence = 0;
 // A PDF imported from the computer is named by the SHA-256 of its bytes, like an EPUB book.
-// Its viewer loads the copy in the ReadingVault; there is no web URL to fall back to.
+// Its viewer loads the copy in the reading vault; there is no web URL to fall back to.
 const LOCAL = /^urn:sha256:[0-9a-f]{64}(?:#.*)?$/s;
 const SHA256 = /^[0-9a-f]{64}$/;
 export function pdfSource(url = '') {

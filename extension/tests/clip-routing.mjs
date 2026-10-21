@@ -331,13 +331,19 @@ try {
     JSON.parse(fs.readFileSync(path.join(folder, 'article.json'), 'utf8')).coverage,
     coverage,
   );
-  const markdown = fs.readFileSync(path.join(folder, 'article.md'), 'utf8');
+  // The full text is under Full Document Contents/; its images in Attachments/Images.
+  const fullText = first.document.fullTextPath;
+  assert.equal(path.basename(path.dirname(fullText)), 'Articles');
+  const markdown = fs.readFileSync(fullText, 'utf8');
   assert.match(markdown, /endorsement of one's/);
-  assert.match(markdown, new RegExp(`!\\[Figure\\]\\(assets/${png.slice(0, 16)}\\.png\\)`));
+  assert.match(
+    markdown,
+    new RegExp(`!\\[Figure\\]\\(\\.\\./\\.\\./Attachments/Images/${png.slice(0, 16)}\\.png\\)`),
+  );
   assert.match(markdown, /!\[Gone\]\(https:\/\/cdn\.example\.test\/gone\.png\)/);
   assert.doesNotMatch(markdown, /tabgent-image-/);
   assert.deepEqual(
-    fs.readFileSync(path.join(folder, 'assets', `${png.slice(0, 16)}.png`)),
+    fs.readFileSync(path.join(vaultPath, 'Attachments', 'Images', `${png.slice(0, 16)}.png`)),
     Buffer.from(PNG),
   );
   assert.deepEqual(
@@ -377,8 +383,8 @@ try {
       .find((p) => p.text?.startsWith(readingContextPrefix))
       .text.slice(readingContextPrefix.length),
   );
-  assert.equal(reading.document.article, path.join(folder, 'article.md'));
-  console.log('PASS the reading context names article.md');
+  assert.equal(reading.document.fullText, fullText);
+  console.log('PASS the reading context names the full text');
 
   // Clipping again asks first: Cancel writes nothing, Replace replaces that clip.
   page.ask.push((options) => {
@@ -395,7 +401,7 @@ try {
   const replaced = vaultCalls('vault/clip/save').at(-1).params;
   assert.equal(replaced.replace, true);
   assert.equal(replaced.expected, first.clip.clippedAt);
-  assert.match(fs.readFileSync(path.join(folder, 'article.md'), 'utf8'), /A second version/);
+  assert.match(fs.readFileSync(fullText, 'utf8'), /A second version/);
   console.log('PASS clipping a page again asks before replacing its clip');
 
   // Too little text: the user picks the whole page, which is clipped instead.

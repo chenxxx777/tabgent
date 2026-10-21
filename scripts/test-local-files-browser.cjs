@@ -1,6 +1,6 @@
 // Files opened from the computer (file://) in real Chromium, with the source extension and the
 // real connector. A temporary profile, HOME and CODEX_HOME isolate the browser, the vault and
-// Codex state, and Codex is the fixture app-server: no account, model or personal ReadingVault
+// Codex state, and Codex is the fixture app-server: no account, model or personal vault
 // is used. Every file is generated fixture text in the temporary folder.
 const assert = require('node:assert/strict'),
   crypto = require('node:crypto'),
@@ -8,6 +8,7 @@ const assert = require('node:assert/strict'),
   http = require('node:http'),
   os = require('node:os'),
   path = require('node:path'),
+  { vaultDocuments } = require('./vault-files.cjs'),
   { pathToFileURL } = require('node:url'),
   { execSync } = require('node:child_process');
 const root = path.resolve(__dirname, '..'),
@@ -53,13 +54,16 @@ Short daily sessions build a durable habit.
   const mainProfile = path.join(temp, 'profile'),
     home = path.join(temp, 'home'),
     codexHome = path.join(home, 'codex'),
-    vault = path.join(home, 'ReadingVault'),
-    books = path.join(vault, 'Books'),
-    articles = path.join(vault, 'Articles'),
+    vault = path.join(home, 'Tabgent'),
+    // Documents' records, by ID (article-*, paper-*); docOf adds their Markdown files.
+    books = path.join(vault, '.tabgent/documents'),
+    articles = books,
+    docOf = (id) => vaultDocuments(vault).find((doc) => doc.id === id),
     folder = path.join(temp, 'Documents');
   // The personal vault is never touched: its state is the same before and after.
-  const personal = path.join(os.homedir(), 'ReadingVault');
-  const personalState = () => (fs.existsSync(personal) ? fs.statSync(personal).mtimeMs : null);
+  const personal = ['ReadingVault', 'Tabgent'].map((name) => path.join(os.homedir(), name));
+  const personalState = () =>
+    personal.map((dir) => (fs.existsSync(dir) ? fs.statSync(dir).mtimeMs : null)).join();
   const personalBefore = personalState();
   fs.mkdirSync(folder);
   fs.mkdirSync(codexHome, { recursive: true });
@@ -496,16 +500,13 @@ Short daily sessions build a durable habit.
       [record.kind, record.sha256, record.name, record.size],
       ['pdf', digest, 'reading paper.pdf', paperPdf.length],
     );
-    // Page text for Codex, read by the connector with macOS PDFKit.
-    assert.deepEqual(fs.readdirSync(path.join(books, paper, 'pages')), [
-      '001.md',
-      '002.md',
-      '003.md',
-    ]);
-    assert.match(
-      fs.readFileSync(path.join(books, paper, 'highlights.md'), 'utf8'),
-      new RegExp(`^source: "${urn}"$`, 'm'),
+    // Page text for Codex, read by the connector with macOS PDFKit: a section per page.
+    assert.deepEqual(
+      [...docOf(paper).fullText.matchAll(/<!-- tabgent:page (\d+) -->/g)].map((m) => m[1]),
+      ['1', '2', '3'],
     );
+    assert.equal(docOf(paper).notesPath, path.join(vault, 'PDFs/Local Reading Fixture.md'));
+    assert.match(docOf(paper).notes, new RegExp(`^source: "${urn}"$`, 'm'));
     console.log('PASS a highlight names the local PDF by its hash and copies it into the vault');
 
     // 4. Ask AI opens the side panel from the click and binds the conversation to the highlight.
@@ -527,8 +528,8 @@ Short daily sessions build a durable habit.
     assert(await send(panel, 'Why is autonomy not independence?'));
     assert(await until(() => anchorsOf(books, paper).turns.length === 1, 15000));
     assert.match(
-      fs.readFileSync(path.join(books, paper, 'highlights.md'), 'utf8'),
-      /## Highlight 002[\s\S]*Why is autonomy not independence\?[\s\S]*Fixture answer 1\./,
+      docOf(paper).discussions,
+      /## 高亮 002[\s\S]*Why is autonomy not independence\?[\s\S]*Fixture answer 1\./,
     );
     // The browser context names the file; Codex reads it page by page in the viewer.
     const threads = () =>
@@ -916,12 +917,12 @@ Short daily sessions build a durable habit.
     contexts = lastContexts(pdfThread);
     assert.deepEqual([contexts.page.closed, contexts.page.url], [true, url(files.pdf)]);
     assert.equal(contexts.reading.document.url, urn);
-    assert.match(contexts.reading.document.pages, /\/Books\/paper-[^/]+\/pages$/);
+    assert.equal(contexts.reading.document.fullText, docOf(paper).fullTextPath);
     await agent.close();
     console.log('PASS Agent tabs keep asking and saving after a local file or PDF closes');
 
     assert(!logs.some((line) => line.startsWith('pageerror')), logs.join('\n'));
-    assert.equal(personalState(), personalBefore, 'The personal ReadingVault was not touched');
+    assert.equal(personalState(), personalBefore, 'The personal vault was not touched');
     passed = true;
   } finally {
     await context?.close().catch(() => {});

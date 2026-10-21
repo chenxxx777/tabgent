@@ -7,7 +7,7 @@ import { pageContextPrefix, readingContextPrefix } from './session-config.js';
 import { selectionContextPrefix } from './ui/user-input.js';
 import { documentUrl } from './vault-client.js';
 import { isLocalFileUrl } from './local-files.js';
-import { isChapterFile } from './document-id.js';
+import { isSection } from './document-id.js';
 import {
   appendParams,
   clip,
@@ -203,7 +203,7 @@ export function createReadingCompanion({
       return parts;
     }
     const current = Number.isInteger(page?.tabId) ? await pageDocument(page.tabId, page, s) : null;
-    // A question about a feed item saves the item first, so Codex can read its article.md.
+    // A question about a feed item saves the item first, so Codex can read its full text.
     if (current?.view === 'clip' && !current.closed)
       await commitItem(page.tabId, current.url).catch(() => null);
     // A quote saved as a highlight binds the conversation, whichever reader it came from.
@@ -243,18 +243,12 @@ export function createReadingCompanion({
       document: document && {
         ...document,
         id: bound?.highlightId ? bound.documentId : existing?.id,
-        notes: existing?.highlightsPath,
-        // An imported EPUB's text, one Markdown file per chapter (chapters/NN-<title>.md).
-        chapters: document.kind === 'epub' && existing?.folder ? existing.folder + '/chapters' : '',
-        // An imported PDF's text, one Markdown file per page with text (pages/NNN.md).
-        pages:
-          document.kind === 'pdf' && document.url.startsWith('urn:sha256:') && existing?.folder
-            ? existing.folder + '/pages'
-            : '',
-        // A clipped webpage's full text (article.md), whichever view the user reads.
-        article:
-          document.kind === 'web' && existing && resolved?.clip?.complete
-            ? clip(resolved.clip.articlePath, 4096)
+        notes: clip(existing?.notesPath, 4096),
+        // The full text in the vault: an imported EPUB's or PDF's (a section per chapter
+        // or page), or a clipped webpage's, whichever view the user reads.
+        fullText:
+          document.kind !== 'web' || resolved?.clip?.complete
+            ? clip(existing?.fullTextPath, 4096)
             : '',
       },
       highlight: bound?.highlightId && {
@@ -522,9 +516,10 @@ export function createReadingCompanion({
             kind: document.kind,
             ...(clipSource(tab?.url) ? { view: 'clip' } : {}),
             anchor: highlight.anchor || null,
-            // The EPUB reader names the chapter file Codex reads instead of the reader tab.
-            ...(isChapterFile(context?.chapterFile)
-              ? { chapterFile: `${resolved.document.folder}/${context.chapterFile}` }
+            // The EPUB reader names the chapter Codex reads from the book's full text
+            // instead of the reader tab.
+            ...(isSection(context?.section) && resolved.document.fullTextPath
+              ? { section: context.section, fullText: resolved.document.fullTextPath }
               : {}),
             capturedAt: new Date().toISOString(),
           },
@@ -580,7 +575,7 @@ export function createReadingCompanion({
     return {
       vault: vaultValue,
       page: document,
-      document: existing && { id: existing.id, highlightsPath: existing.highlightsPath },
+      document: existing && { id: existing.id, notesPath: existing.notesPath },
       // The page's clipped text in the vault, for the reading notes menu.
       clip:
         existing && resolved?.clip?.clippedAt

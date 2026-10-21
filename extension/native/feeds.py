@@ -1,4 +1,4 @@
-"""RSS, Atom and JSON Feed subscriptions for the ReadingVault.
+"""RSS, Atom and JSON Feed subscriptions for the reading vault.
 
 Feeds are fetched by the browser and parsed here. Feeds are untrusted, and the system
 Python on macOS (3.9.6) links expat 2.2.8, which predates expat's entity amplification

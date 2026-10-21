@@ -1,4 +1,4 @@
-"""Page text of an imported PDF for the ReadingVault, read with macOS PDFKit.
+"""Page text of an imported PDF for the reading vault, read with macOS PDFKit.
 
 One osascript process reads every page, as the PDF fallback reader does for one page.
 The text is untrusted data: it is written to Markdown files, never interpreted."""

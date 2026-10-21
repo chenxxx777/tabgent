@@ -1,6 +1,6 @@
 // The EPUB reader in real Chromium with the real native host. HOME and CODEX_HOME point
 // into a temporary folder, so the vault is temporary too, and Codex discovery is disabled:
-// no Codex app-server, account, model or real ~/ReadingVault is used.
+// no Codex app-server, account, model or real vault (~/Tabgent) is used.
 const assert = require('node:assert/strict'),
   crypto = require('node:crypto'),
   fs = require('node:fs'),
@@ -27,7 +27,8 @@ async function until(check, ms = 10000) {
   const profile = path.join(temp, 'profile'),
     home = path.join(temp, 'home'),
     codexHome = path.join(temp, 'codex'),
-    vault = path.join(home, 'ReadingVault'),
+    vault = path.join(home, 'Tabgent'),
+    records = path.join(vault, '.tabgent/documents'),
     book = path.join(temp, 'small-book.epub'),
     second = path.join(temp, 'second-book.epub'),
     large = path.join(temp, 'large-book.epub'),
@@ -290,7 +291,7 @@ async function until(check, ms = 10000) {
       assert(!(await page.isVisible('#start')));
       assert.notEqual(await page.textContent('#status'), await message('epubLoading'));
     }
-    const anchorsFile = () => path.join(vault, 'Books', documentId, 'anchors.json');
+    const anchorsFile = () => path.join(records, documentId, 'anchors.json');
     const saved = () => JSON.parse(fs.readFileSync(anchorsFile(), 'utf8'));
     let documentId;
 
@@ -340,7 +341,7 @@ async function until(check, ms = 10000) {
       assert(await page.isVisible('#start'));
       assert(await page.isHidden('#viewer'));
       assert.equal(new URL(page.url()).search, '');
-      assert(!fs.existsSync(path.join(vault, 'Books')), 'A failed render starts no import');
+      assert(!fs.existsSync(records), 'A failed render starts no import');
       await page.evaluate(() => globalThis.restoreFrames());
     }
     console.log('PASS inaccessible chapters, layout errors and load timeouts allow retry');
@@ -350,14 +351,22 @@ async function until(check, ms = 10000) {
     assert(await text('#status', 'epubSaved'), 'Import finished');
     assert.match(page.url(), /\?book=book-a-small-book-of-reading-[0-9a-f]{8}$/);
     documentId = new URL(page.url()).searchParams.get('book');
-    const folder = path.join(vault, 'Books', documentId);
+    const folder = path.join(records, documentId);
     assert.deepEqual(fs.readFileSync(path.join(folder, 'original.epub')), fs.readFileSync(book));
-    assert.deepEqual(fs.readdirSync(path.join(folder, 'chapters')), [
-      '01-chapter-one-beginnings.md',
-      '02-chapter-two-repetition.md',
-      '03-chapter-three-endings.md',
-    ]);
-    console.log('PASS file import renders the book and saves it with chapter files');
+    // Its text: one full text file with a section per chapter.
+    const fullText = path.join(vault, 'Full Document Contents/Books/A Small Book of Reading.md');
+    const sections = [
+      ...fs.readFileSync(fullText, 'utf8').matchAll(/<!-- tabgent:section (\d+) -->/g),
+    ];
+    assert.deepEqual(
+      sections.map((m) => m[1]),
+      ['1', '2', '3'],
+    );
+    assert.deepEqual(
+      fs.readFileSync(path.join(vault, 'Attachments/Books/A Small Book of Reading.epub')),
+      fs.readFileSync(book),
+    );
+    console.log('PASS file import renders the book and saves it with its full text');
     if (shots) await page.screenshot({ path: path.join(shots, 'reader.png') });
 
     // Book scripts and remote resources are inert.
@@ -452,10 +461,8 @@ async function until(check, ms = 10000) {
     assert.equal(selection.locator.kind, 'epub');
     assert.equal(selection.locator.documentId, documentId);
     assert.equal(selection.locator.anchor.quote.exact, 'more persistent');
-    assert.equal(
-      selection.locator.chapterFile,
-      path.join(folder, 'chapters/01-chapter-one-beginnings.md'),
-    );
+    assert.equal(selection.locator.section, 1);
+    assert.equal(selection.locator.fullText, fullText);
     assert.equal(saved().highlights.length, 2);
     assert(await paintedIs(2));
     console.log('PASS Ask AI opens the side panel and hands off highlight, context and locator');
@@ -466,7 +473,7 @@ async function until(check, ms = 10000) {
     assert(await until(async () => (await chapterTitle()) === 'Chapter Two: Repetition'));
     await page.click('#contentsButton');
     await select('独立于他人');
-    // A plain selection already names the book and its chapter file, as Ask AI does.
+    // A plain selection already names the book and its chapter, as Ask AI does.
     const plain = await until(() =>
       worker.evaluate(async (tabId) => {
         const { conversations = [] } = await chrome.storage.session.get('conversations');
@@ -475,10 +482,8 @@ async function until(check, ms = 10000) {
       }, tabId),
     );
     assert.equal(plain.locator.documentId, documentId);
-    assert.equal(
-      plain.locator.chapterFile,
-      path.join(folder, 'chapters/02-chapter-two-repetition.md'),
-    );
+    assert.equal(plain.locator.section, 2);
+    assert.equal(plain.locator.fullText, fullText);
     await page.click('#highlightAdd');
     await until(() => saved().highlights.length === 3);
     assert.equal(saved().highlights[2].location, 'Chapter Two: Repetition');
@@ -557,7 +562,8 @@ async function until(check, ms = 10000) {
 
     // The user's own note: Add note in the highlight menu, saved to the vault files.
     const note = '我的看法: the repetition is deliberate.';
-    const noteFile = () => fs.readFileSync(path.join(folder, 'highlights.md'), 'utf8');
+    const noteFile = () =>
+      fs.readFileSync(path.join(vault, 'Books/A Small Book of Reading.md'), 'utf8');
     await page.mouse.click(repeated.x1 + 4, repeated.y1);
     await page.waitForSelector('#highlightMenu:popover-open');
     assert.equal(await page.isHidden('#menuNote'), true);
@@ -574,7 +580,7 @@ async function until(check, ms = 10000) {
     await page.waitForSelector('#noteEditor:not(:popover-open)', { state: 'attached' });
     assert.match(
       noteFile(),
-      /> Repeated line\. Shared ending two\n\n<!-- tabgent:note h004 start -->\n\n### 笔记\n\n我的看法: the repetition is deliberate\.\n/,
+      /- Repeated line\. Shared ending two \^h004\n    - 评论：我的看法: the repetition is deliberate\.\n/,
     );
     console.log('PASS an EPUB highlight note is saved from the highlight menu');
 
@@ -620,7 +626,7 @@ async function until(check, ms = 10000) {
     await page.waitForSelector('#viewer:not([hidden])');
     assert(await text('#status', 'epubSaved'), 'Dropped book import');
     assert.equal(new URL(page.url()).searchParams.get('book'), documentId);
-    assert.deepEqual(fs.readdirSync(path.join(vault, 'Books')), [documentId]);
+    assert.deepEqual(fs.readdirSync(records), [documentId]);
     assert.equal(
       JSON.parse(fs.readFileSync(path.join(folder, 'source.json'))).name,
       'small-book.epub',
@@ -655,7 +661,7 @@ async function until(check, ms = 10000) {
     await wait(3000); // Let a superseded open reach its next step.
     assert.equal(await page.title(), 'Second Book');
     assert.equal(await page.locator('#toc button').count(), 4);
-    const books = fs.readdirSync(path.join(vault, 'Books')).sort();
+    const books = fs.readdirSync(records).sort();
     assert.equal(books.length, 2, books.join());
     assert(books.includes(documentId) && books.some((name) => name.startsWith('book-second')));
     assert.match(page.url(), /\?book=book-second-book-/);
@@ -816,7 +822,7 @@ async function until(check, ms = 10000) {
     const linkFailure = await message('epubOpenFailed', 'The chapter document is not accessible');
     assert(await until(async () => (await page.textContent('#status')) === linkFailure));
     assert(await page.isVisible('#start'));
-    assert(fs.existsSync(path.join(vault, 'Books', navigationId, 'original.epub')));
+    assert(fs.existsSync(path.join(records, navigationId, 'original.epub')));
     await page.evaluate(() => globalThis.restoreFrames());
     console.log('PASS in-chapter link failures show the same recoverable error');
 
@@ -889,7 +895,7 @@ async function until(check, ms = 10000) {
     assert.equal(await page.title(), 'Fixed Layout Book');
     const fixedId = new URL(page.url()).searchParams.get('book');
     assert.deepEqual(
-      fs.readFileSync(path.join(vault, 'Books', fixedId, 'original.epub')),
+      fs.readFileSync(path.join(records, fixedId, 'original.epub')),
       fs.readFileSync(fixed),
     );
     assert(await hasChapter('Chapter One: Beginnings'));
@@ -919,7 +925,7 @@ async function until(check, ms = 10000) {
     assert(await until(async () => (await page.textContent('#status')) === inaccessible));
     assert(await page.isVisible('#start'));
     assert(await page.isHidden('#viewer'));
-    assert(fs.existsSync(path.join(vault, 'Books', fixedId, 'original.epub')));
+    assert(fs.existsSync(path.join(records, fixedId, 'original.epub')));
     await page.evaluate(() => globalThis.restoreFrames());
     await page.setInputFiles('#file', fixed);
     assert(await text('#status', 'epubSaved'), 'Reopen after a failed navigation');

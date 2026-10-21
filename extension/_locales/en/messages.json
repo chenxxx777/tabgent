@@ -959,7 +959,7 @@
     "message": "Change"
   },
   "readingFolderPlaceholder": {
-    "message": "Absolute path, for example ~/ReadingVault"
+    "message": "Absolute path, for example ~/Tabgent"
   },
   "readingFolderHint": {
     "message": "Existing notes are not moved."
@@ -1110,6 +1110,27 @@
   },
   "libraryKindEpub": {
     "message": "EPUB"
+  },
+  "libraryCategoryArticles": {
+    "message": "Article"
+  },
+  "libraryCategoryTweets": {
+    "message": "X post"
+  },
+  "libraryCategoryVideos": {
+    "message": "Video"
+  },
+  "libraryCategoryPodcasts": {
+    "message": "Podcast"
+  },
+  "libraryCategoryPdfs": {
+    "message": "PDF"
+  },
+  "libraryCategoryBooks": {
+    "message": "Book"
+  },
+  "libraryCategoryLocalFiles": {
+    "message": "Local file"
   },
   "libraryUpdated": {
     "message": "Updated $1"

@@ -1,4 +1,5 @@
-"""ReadingVault files, Markdown blocks, concurrency and the op=vault host route."""
+"""Vault files (one note per document, discussions apart), Markdown blocks, concurrency
+and the op=vault host route."""
 
 import datetime
 import json
@@ -48,8 +49,16 @@ def markdown_ids(text):
 
 
 def rendered(folder):
-    data = json.loads((folder / "anchors.json").read_text())
-    return "\n".join(vault._render(data))
+    """The note as Tabgent writes it from scratch, from the record in folder."""
+    root = folder.parents[2]
+    data = vault._load(root, folder.name)
+    return "\n".join(vault._render(data, vault._context(root, data)))
+
+
+def rendered_discussions(folder):
+    root = folder.parents[2]
+    data = vault._load(root, folder.name)
+    return "\n".join(vault._render_discussions(data, vault._context(root, data)))
 
 
 def local(iso):
@@ -60,7 +69,7 @@ def local(iso):
 with tempfile.TemporaryDirectory(prefix="tabgent-vault-") as directory:
     base = Path(directory)
     settings = base / "codex/projects/tabgent/vault.json"
-    default = base / "ReadingVault"
+    default = base / "Tabgent"
     with patch.object(vault, "default_path", lambda: default):
         # Defaults: nothing exists until the first write.
         assert call(settings, "vault/status", {}) == {
@@ -68,6 +77,7 @@ with tempfile.TemporaryDirectory(prefix="tabgent-vault-") as directory:
             "path": str(default),
             "defaultPath": str(default),
             "writable": True,
+            "layout": 2,
         }
         page = {
             "url": "https://example.com/essay?id=7#intro",
@@ -115,7 +125,8 @@ with tempfile.TemporaryDirectory(prefix="tabgent-vault-") as directory:
                 "location": "Introduction",
             },
         )
-        folder = default / "Articles" / document_id
+        folder = default / ".tabgent/documents" / document_id
+        notes = default / "Articles/On Reading Notes.md"
         document = first["document"]
         assert document == {
             **resolved["document"],
@@ -123,34 +134,51 @@ with tempfile.TemporaryDirectory(prefix="tabgent-vault-") as directory:
             "createdAt": document["createdAt"],
         }
         assert document["createdAt"] and document["folder"] == str(folder)
-        assert document["highlightsPath"] == str(folder / "highlights.md")
+        assert (
+            document["notesPath"] == str(notes) and document["category"] == "articles"
+        )
+        assert document["discussionsPath"] == str(
+            default / "Discussions/Articles/On Reading Notes.md"
+        )
         assert first["highlight"]["id"] == "h001"
         assert (
             first["highlight"]["threadIds"] == []
             and first["highlight"]["turnCount"] == 0
         )
         assert first["highlight"]["anchor"] == anchor("Reading is thinking", 10)
-        assert (default / "Articles").is_dir() and (default / "Books").is_dir()
+        # Only the category folder in use, no folder per document.
+        assert sorted(p.name for p in default.iterdir()) == [
+            ".tabgent",
+            "AGENTS.md",
+            "Articles",
+        ]
+        assert sorted(p.name for p in (default / "Articles").iterdir()) == [notes.name]
         agents = (default / "AGENTS.md").read_text()
         for expected in [
             "rg -n -i",
-            "highlights.md",
+            "Full Document Contents",
+            "- 评论：",
             "Distinguish the author",
             str(default),
         ]:
             assert expected in agents, expected
-        markdown = (folder / "highlights.md").read_text()
+        markdown = notes.read_text()
         assert markdown.startswith(
-            '---\ntitle: "On Reading: Notes"\ntype: article\n'
-            f'document_id: {document_id}\nsource: "https://example.com/essay?id=7"\n'
-            'author: "A. Writer"\nsite: "Example"\ncreated: '
+            f'---\ntabgent_id: {document_id}\ntitle: "On Reading: Notes"\n'
+            'aliases:\n  - "On Reading: Notes"\ncategory: articles\nkind: web\n'
+            'source: "https://example.com/essay?id=7"\nauthor: "[[A. Writer]]"\n'
+            'site: "Example"\nsaved: '
         ), markdown
         for expected in [
-            "\n# 阅读笔记：《On Reading: Notes》\n",
-            "\n## Highlight 001\n",
-            "\n- 位置：Introduction\n",
-            "\n- Anchor ID: h001\n",
-            "\n> Reading is thinking\n> with another mind.\n",
+            "\n# On Reading Notes\n",
+            "\n## 元数据\n",
+            "\n- 作者：[[A. Writer]]\n",
+            "\n- 类别：#articles\n",
+            "\n## 高亮\n",
+            "\n<!-- tabgent:highlight h001 start -->\n"
+            "- Reading is thinking\n  with another mind. ^h001\n"
+            "    - Introduction · ",
+            "[原文位置](https://example.com/essay?id=7#:~:text=Reading%20is%20thinking)",
         ]:
             assert expected in markdown, expected
         second_params = {
@@ -163,9 +191,8 @@ with tempfile.TemporaryDirectory(prefix="tabgent-vault-") as directory:
             second["highlight"]["id"] == "h002"
             and second["highlight"]["location"] == ""
         )
-        assert (
-            "\n> Second passage\n>\n> with a paragraph break\n"
-            in (folder / "highlights.md").read_text()
+        assert "\n- Second passage\n\n  with a paragraph break ^h002\n" in (
+            notes.read_text()
         )
         retry = call(settings, "vault/highlight/create", second_params)
         assert retry["highlight"]["id"] == "h002", "A retried create must not duplicate"
@@ -190,7 +217,7 @@ with tempfile.TemporaryDirectory(prefix="tabgent-vault-") as directory:
             other["document"]["id"] != document_id
             and other["document"]["createdAt"] is None
         )
-        assert (folder / "highlights.md").read_text() == rendered(folder)
+        assert notes.read_text() == rendered(folder)
         print(
             "PASS vault defaults, create/list/resolve, fragments, retries and Markdown shape"
         )
@@ -207,12 +234,13 @@ with tempfile.TemporaryDirectory(prefix="tabgent-vault-") as directory:
         }
         result = call(settings, "vault/discussion/append", turn)
         assert result == {"ok": True, "duplicate": False, "document": document}
-        before = (folder / "highlights.md").read_bytes()
+        discussions = Path(document["discussionsPath"])
+        before = (notes.read_bytes(), discussions.read_bytes())
         duplicate = call(
             settings, "vault/discussion/append", {**turn, "user": "changed"}
         )
         assert duplicate["duplicate"] is True
-        assert (folder / "highlights.md").read_bytes() == before
+        assert (notes.read_bytes(), discussions.read_bytes()) == before
         call(
             settings,
             "vault/discussion/append",
@@ -275,13 +303,32 @@ with tempfile.TemporaryDirectory(prefix="tabgent-vault-") as directory:
             {"documentId": document_id, "highlightId": None},
         )
         assert whole["threadIds"] == ["thread-doc"] and len(whole["turns"]) == 1
-        markdown = (folder / "highlights.md").read_text()
-        assert markdown.count("### 对话") == 1 and markdown.count("**Codex**") == 4
-        assert markdown.index("Why is reading thinking?") < markdown.index("Follow-up")
-        assert markdown.index("## Highlight 002") < markdown.index("## 文档对话")
+        talk = discussions.read_text()
+        assert talk.count("## 高亮 001") == 1 and talk.count("**Codex**") == 4
+        assert talk.index("Why is reading thinking?") < talk.index("Follow-up")
+        assert talk.index("## 高亮 001") < talk.index("## 关于整篇")
+        assert talk.startswith(
+            f"---\ntabgent_id: {document_id}\ntabgent_part: discussions\n"
+        )
+        # The note and its discussions link to each other.
+        assert (
+            "[[../../Articles/On Reading Notes#^h001|↩ 回到高亮]]" in talk
+            and "[[../../Articles/On Reading Notes|← 阅读笔记]]" in talk
+        )
+        markdown = notes.read_text()
+        assert (
+            "[[../Discussions/Articles/On Reading Notes#高亮 001|讨论 3 条]]"
+            in markdown
+        )
+        assert (
+            "- 讨论：[[../Discussions/Articles/On Reading Notes|与 Codex 的讨论]]"
+            in (markdown)
+        )
+        assert "**Codex**" not in markdown, "Discussions are kept apart from the note"
         assert markdown == rendered(
             folder
         ), "Incremental Markdown must match a full render"
+        assert talk == rendered_discussions(folder)
         print("PASS discussion append/get, idempotent turns, document-level discussion")
 
         # Replies with marker look-alikes or open fences cannot break later updates.
@@ -295,23 +342,24 @@ with tempfile.TemporaryDirectory(prefix="tabgent-vault-") as directory:
                 "assistant": "Example:\n<!-- tabgent:highlight h002 end -->\n```js\nopen(",
             },
         )
-        markdown = (folder / "highlights.md").read_text()
-        assert "\n <!-- tabgent:highlight h002 end -->\n```js\nopen(\n```\n" in markdown
+        talk = discussions.read_text()
+        assert "\n <!-- tabgent:highlight h002 end -->\n```js\nopen(\n```\n" in talk
 
-        # User edits outside managed blocks survive create, append and delete.
-        path = folder / "highlights.md"
+        # User edits outside managed blocks survive create, append and delete; a block the
+        # user edited is kept as their own text when Tabgent has to change it.
+        path = notes
         edited = path.read_text()
-        edited = edited.replace(
-            "type: article\n", "type: article\ntags: [reading]\n", 1
-        )
+        edited = edited.replace("kind: web\n", "kind: web\ntags: [reading]\n", 1)
         edited = edited.replace(
             vault.NOTE + "\n", vault.NOTE + "\n\nMy overall impression.\n", 1
         )
         edited = edited.replace(
-            "> with another mind.\n", "> with another mind.\n\nInside h001.\n"
+            "  with another mind. ^h001\n",
+            "  with another mind. ^h001\n  Inside h001.\n",
         )
         edited = edited.replace(
-            "> with a paragraph break\n", "> with a paragraph break\n\nMine.\n"
+            "  with a paragraph break ^h002\n",
+            "  with a paragraph break ^h002\n  Mine.\n",
         )
         edited += "\n## My own section\n\nKeep this paragraph.\n"
         path.write_text(edited)
@@ -321,6 +369,13 @@ with tempfile.TemporaryDirectory(prefix="tabgent-vault-") as directory:
             {**page, "text": "Third passage", "anchor": anchor("Third passage", 300)},
         )
         assert third["highlight"]["id"] == "h003"
+        unchanged = path.read_text()
+        assert "Mine." in unchanged and "Inside h001." in unchanged
+        assert (
+            unchanged.index("^h002")
+            < unchanged.index("^h003")
+            < unchanged.index("## My own section")
+        ), "A new highlight goes after the last one, before the user's section"
         call(
             settings,
             "vault/discussion/append",
@@ -335,26 +390,22 @@ with tempfile.TemporaryDirectory(prefix="tabgent-vault-") as directory:
         for kept in [
             "tags: [reading]\n",
             "\nMy overall impression.\n",
-            "\nMine.\n",
             "\n## My own section\n\nKeep this paragraph.\n",
+            "Inside h001.",  # The deleted block was edited: its text stays.
         ]:
             assert kept in markdown, kept
-        assert "Inside h001." not in markdown and "## Highlight 001" not in markdown
-        assert (
-            "Follow-up" not in markdown
-        ), "Deleted highlight discussions leave the file"
         assert markdown_ids(markdown) == ["h002", "h003"]
-        assert (
-            markdown.index("## Highlight 002")
-            < markdown.index("## Highlight 003")
-            < markdown.index("## 文档对话")
-            < markdown.index("## My own section")
-        )
+        assert "^h001" not in markdown and "tabgent:highlight h001" not in markdown
+        # h002 changed (its discussion count): the user's version is kept above it.
         start, end, _ = vault._blocks(markdown.split("\n"), "highlight", "h002")[0]
         block = "\n".join(markdown.split("\n")[start : end + 1])
-        assert block.count("**User**") == 2 and block.index("Mine.") < block.index(
-            "### 对话"
-        )
+        assert "Mine." not in block and "讨论 2 条" in block
+        assert markdown.index("Mine.") < markdown.index("<!-- tabgent:highlight h002")
+        assert markdown.count("Tabgent 更新下面这一块前") == 1
+        assert markdown.count("这一块已在 Tabgent 中删除") == 1
+        talk = discussions.read_text()
+        assert "Follow-up" not in talk, "Deleted highlight discussions leave the file"
+        assert "## 高亮 001" not in talk and talk.count("## 高亮 002") == 1
         assert markdown.endswith("Keep this paragraph.\n") and "\n\n\n" not in markdown
         data = json.loads((folder / "anchors.json").read_text())
         assert [h["id"] for h in data["highlights"]] == ["h002", "h003"]
@@ -389,6 +440,10 @@ with tempfile.TemporaryDirectory(prefix="tabgent-vault-") as directory:
             markdown_ids(markdown) == ["h002", "h003"]
             and "## My own section" in markdown
         )
+        # A turn the editor lost (Obsidian saving its open copy) comes back.
+        lines = discussions.read_text().split("\n")
+        start, end, _ = vault._blocks(lines, "discussion", "h003")[0]
+        discussions.write_text("\n".join(lines[:start] + lines[end + 1 :]))
         path.unlink()
         call(
             settings,
@@ -397,6 +452,10 @@ with tempfile.TemporaryDirectory(prefix="tabgent-vault-") as directory:
         )
         assert path.read_text() == rendered(folder)
         assert markdown_ids(path.read_text()) == ["h002", "h003"]
+        talk = discussions.read_text()
+        turns = json.loads((folder / "anchors.json").read_text())["turns"]
+        assert talk.count("## 高亮 003") == 1
+        assert talk.count("<!-- tabgent:turn ") == len(turns) == 5
 
         # A first document-level discussion can create the document from its URL.
         fresh_page = {
@@ -415,21 +474,22 @@ with tempfile.TemporaryDirectory(prefix="tabgent-vault-") as directory:
             "assistant": "It claims...",
         }
         assert code(settings, "vault/discussion/append", doc_turn) == "not_found"
-        index_text = (default / ".tabgent/index.json").read_text()
+        index_text = (default / ".tabgent/catalog.json").read_text()
         orphan = {**doc_turn, **fresh_page, "highlightId": "h001"}
         assert code(settings, "vault/discussion/append", orphan) == "not_found"
         assert not Path(fresh["folder"]).exists()
-        assert (default / ".tabgent/index.json").read_text() == index_text
+        assert (default / ".tabgent/catalog.json").read_text() == index_text
         created = call(settings, "vault/discussion/append", {**doc_turn, **fresh_page})
         assert (
             created["document"]["id"] == fresh["id"]
             and created["document"]["createdAt"]
         )
-        assert "## 文档对话" in Path(fresh["highlightsPath"]).read_text()
+        assert "## 关于整篇" in Path(fresh["discussionsPath"]).read_text()
+        assert Path(fresh["notesPath"]).is_file()
         assert call(settings, "vault/discussion/append", doc_turn)["duplicate"] is True
 
-        # The URL index is rebuilt from document folders when lost or unreadable.
-        index = default / ".tabgent/index.json"
+        # The catalog is rebuilt from the records when lost or unreadable.
+        index = default / ".tabgent/catalog.json"
         index.unlink()
         assert (
             call(settings, "vault/document/resolve", page)["document"]["id"]
@@ -536,15 +596,14 @@ with tempfile.TemporaryDirectory(prefix="tabgent-vault-") as directory:
         assert code(settings, "vault/highlight/create", blocked) == "io_error"
         assert code(settings, "vault/document/resolve", page) == "io_error"
         assert anchors.read_text() == "{not json"
-        # Without the URL index, the corrupt document is still reported, not forked.
-        folders = sorted(entry.name for entry in (default / "Articles").iterdir())
+        # Without the catalog, the corrupt document is still reported, not forked.
+        records = default / ".tabgent/documents"
+        folders = sorted(entry.name for entry in records.iterdir())
         index.unlink()
         assert code(settings, "vault/document/resolve", page) == "io_error"
         assert code(settings, "vault/highlight/create", blocked) == "io_error"
-        assert (
-            sorted(entry.name for entry in (default / "Articles").iterdir()) == folders
-        )
-        assert not index.exists() and anchors.read_text() == "{not json"
+        assert sorted(entry.name for entry in records.iterdir()) == folders
+        assert anchors.read_text() == "{not json"
         anchors.write_bytes(good)
         restored = call(settings, "vault/document/resolve", page)
         assert restored["document"]["id"] == document_id and restored["highlights"]
@@ -575,12 +634,14 @@ with tempfile.TemporaryDirectory(prefix="tabgent-vault-") as directory:
             "path": str(custom),
             "defaultPath": str(default),
             "writable": True,
+            "layout": 2,
         }
         assert call(settings, "vault/status", {}) == configured
         assert json.loads(settings.read_text())["path"] == str(custom)
         assert settings.stat().st_mode & 0o777 == 0o600
         assert (custom / "AGENTS.md").read_text() == "# My own rules\n"
-        assert (custom / "Articles").is_dir() and (custom / "Books").is_dir()
+        assert (custom / ".tabgent/catalog.json").is_file()
+        assert not (custom / "Articles").exists(), "Folders come with their notes"
         assert (
             call(settings, "vault/document/resolve", page)["document"]["createdAt"]
             is None
@@ -689,7 +750,7 @@ for i in range(12):
     for process in processes:
         assert process.wait(timeout=60) == 0
     assert not errors, errors
-    documents = list((shared / "Articles").iterdir())
+    documents = list((shared / ".tabgent/documents").iterdir())
     assert len(documents) == 1, documents
     data = json.loads((documents[0] / "anchors.json").read_text())
     ids = [h["id"] for h in data["highlights"]]
@@ -697,11 +758,14 @@ for i in range(12):
         len(ids) == 6 * 10 + 2 * 12 and len(set(ids)) == len(ids) and ids == sorted(ids)
     )
     assert len(data["turns"]) == len(ids) and data["nextHighlight"] == len(ids) + 1
-    markdown = (documents[0] / "highlights.md").read_text()
-    assert markdown_ids(markdown) == ids and markdown.count(
-        "<!-- tabgent:turn "
-    ) == len(ids)
+    assert sorted(p.name for p in (shared / "Articles").iterdir()) == ["Busy.md"]
+    markdown = (shared / "Articles/Busy.md").read_text()
+    talk = (shared / "Discussions/Articles/Busy.md").read_text()
+    assert markdown_ids(markdown) == ids and talk.count("<!-- tabgent:turn ") == len(
+        ids
+    )
     assert markdown == rendered(documents[0])
+    assert talk == rendered_discussions(documents[0])
     assert not list(shared.rglob("*.tmp")), "Temporary files must be renamed or removed"
     print(f"PASS {len(ids)} concurrent highlights from 6 threads and 2 processes")
 
@@ -710,7 +774,7 @@ with tempfile.TemporaryDirectory(prefix="tabgent-vault-host-") as directory:
     base = Path(directory)
     sent = []
     with patch.object(host, "HOME", base / "codex"), patch.object(
-        vault, "default_path", lambda: base / "ReadingVault"
+        vault, "default_path", lambda: base / "Tabgent"
     ), patch.object(host, "send", sent.append), patch.object(
         host, "executable", side_effect=AssertionError("Codex must not be discovered")
     ), patch.object(
@@ -767,9 +831,10 @@ with tempfile.TemporaryDirectory(prefix="tabgent-vault-host-") as directory:
             "id": "status",
             "result": {
                 "configured": False,
-                "path": str(base / "ReadingVault"),
-                "defaultPath": str(base / "ReadingVault"),
+                "path": str(base / "Tabgent"),
+                "defaultPath": str(base / "Tabgent"),
                 "writable": True,
+                "layout": 2,
             },
         }
         assert set(sent[1]) == {"op", "id", "result"} and sent[1]["result"][

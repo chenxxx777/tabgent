@@ -1,6 +1,6 @@
 // Clipping in real Chromium with the source extension and the real connector. A temporary
 // profile, HOME and CODEX_HOME isolate the browser, the vault and Codex state, and Codex is
-// the fixture app-server: no account, model or personal ReadingVault is used. Pages are
+// the fixture app-server: no account, model or personal vault is used. Pages are
 // generated and served from 127.0.0.1; any other address is refused.
 const assert = require('node:assert/strict'),
   crypto = require('node:crypto'),
@@ -8,6 +8,7 @@ const assert = require('node:assert/strict'),
   http = require('node:http'),
   os = require('node:os'),
   path = require('node:path'),
+  { vaultDocuments } = require('./vault-files.cjs'),
   zlib = require('node:zlib'),
   { execSync, spawnSync } = require('node:child_process');
 const root = path.resolve(__dirname, '..'),
@@ -123,10 +124,13 @@ const video = `<!doctype html><html><head><meta charset="utf-8"><title>Recorded 
   const profile = path.join(temp, 'profile'),
     home = path.join(temp, 'home'),
     codexHome = path.join(home, 'codex'),
-    vault = path.join(home, 'ReadingVault'),
-    articles = path.join(vault, 'Articles');
-  const personal = path.join(os.homedir(), 'ReadingVault');
-  const personalState = () => (fs.existsSync(personal) ? fs.statSync(personal).mtimeMs : null);
+    vault = path.join(home, 'Tabgent'),
+    // Documents' records by ID; their images are shared in Attachments/Images.
+    articles = path.join(vault, '.tabgent/documents'),
+    images = path.join(vault, 'Attachments/Images');
+  const personal = ['ReadingVault', 'Tabgent'].map((name) => path.join(os.homedir(), name));
+  const personalState = () =>
+    personal.map((dir) => (fs.existsSync(dir) ? fs.statSync(dir).mtimeMs : null)).join();
   const personalBefore = personalState();
   fs.mkdirSync(codexHome, { recursive: true });
   const requested = [],
@@ -370,7 +374,20 @@ const video = `<!doctype html><html><head><meta charset="utf-8"><title>Recorded 
       return evaluate;
     }
     const folders = () => (fs.existsSync(articles) ? fs.readdirSync(articles) : []);
-    const read = (folder, file) => fs.readFileSync(path.join(articles, folder, file), 'utf8');
+    // A document's files: its full text (the clip's Markdown), its note and discussions,
+    // or a file in its record folder.
+    const docOf = (id) => vaultDocuments(vault).find((doc) => doc.id === id);
+    const read = (folder, file) =>
+      file === 'article.md'
+        ? docOf(folder).fullText
+        : file === 'highlights.md'
+          ? docOf(folder).notes + docOf(folder).discussions
+          : fs.readFileSync(path.join(articles, folder, file), 'utf8');
+    const editedCopy = (folder) => {
+      const full = docOf(folder).fullTextPath;
+      const name = fs.readdirSync(path.dirname(full)).find((f) => f.includes('（编辑版 '));
+      return name && path.join(path.dirname(full), name);
+    };
     const record = (folder) => JSON.parse(read(folder, 'article.json'));
 
     // A highlight first: its page and the clip are one vault document.
@@ -406,12 +423,16 @@ const video = `<!doctype html><html><head><meta charset="utf-8"><title>Recorded 
       await until(() => fs.existsSync(path.join(articles, folder, 'article.json'))),
       'Clipped',
     );
-    assert.deepEqual(folders(), [folder], 'The clip goes into the page folder');
+    assert.deepEqual(folders(), [folder], 'The clip goes into the page document');
+    assert.equal(
+      docOf(folder).fullTextPath,
+      path.join(vault, 'Full Document Contents/Articles/On Autonomy.md'),
+    );
     const markdown = read(folder, 'article.md');
     assert.match(
       markdown,
       new RegExp(
-        `^---\\ntitle: "On Autonomy"\\ntype: article-text\\ndocument_id: ${folder}\\nsource: "${origin}/essays/autonomy\\?id=3"\\nauthor: "Fixture Author"\\nsite: "Fixture Essays"\\n`,
+        `^---\\ntabgent_id: ${folder}\\ntabgent_part: full\\ntitle: "On Autonomy"\\ncategory: articles\\nsource: "${origin}/essays/autonomy\\?id=3"\\nauthor: "\\[\\[Fixture Author\\]\\]"\\nsite: "Fixture Essays"\\n`,
       ),
     );
     assert.match(markdown, /Autonomy does not mean independence from others, but endorsement/);
@@ -422,14 +443,16 @@ const video = `<!doctype html><html><head><meta charset="utf-8"><title>Recorded 
     assert.match(
       markdown,
       new RegExp(
-        `\\nsite: "Fixture Essays"\\npublished: "2026-08-07"\\ncover: "assets/${coverFile}"\\n`,
+        `\\nsite: "Fixture Essays"\\npublished: "2026-08-07"\\ncover: "\\.\\./\\.\\./Attachments/Images/${coverFile}"\\n`,
       ),
     );
-    assert.deepEqual(fs.readFileSync(path.join(articles, folder, 'assets', coverFile)), COVER);
-    // The lazy image is saved in assets/; the forbidden and SVG images stay linked online.
+    assert.deepEqual(fs.readFileSync(path.join(images, coverFile)), COVER);
+    // The lazy image is saved in Attachments/Images; the forbidden and SVG images stay
+    // linked online.
     const picture = `${crypto.createHash('sha256').update(PICTURE).digest('hex').slice(0, 16)}.png`;
-    assert.match(markdown, new RegExp(`!\\[Lazy figure\\]\\(assets/${picture}\\)`));
-    assert.deepEqual(fs.readFileSync(path.join(articles, folder, 'assets', picture)), PICTURE);
+    const saved = '\\.\\./\\.\\./Attachments/Images/';
+    assert.match(markdown, new RegExp(`!\\[Lazy figure\\]\\(${saved}${picture}\\)`));
+    assert.deepEqual(fs.readFileSync(path.join(images, picture)), PICTURE);
     assert.match(markdown, new RegExp(`!\\[Forbidden\\]\\(${origin}/img/forbidden\\.png\\)`));
     assert.match(markdown, new RegExp(`!\\[Vector\\]\\(${origin}/img/vector\\.svg\\)`));
     assert.match(markdown, new RegExp(`\\[notes\\]\\(${origin}/notes\\)`));
@@ -478,7 +501,7 @@ const video = `<!doctype html><html><head><meta charset="utf-8"><title>Recorded 
         [`assets/${coverFile}`, 'image/png'],
       ].sort(),
     );
-    assert.match(markdown, new RegExp(`!\\[Protected figure\\]\\(assets/${protectedFile}\\)`));
+    assert.match(markdown, new RegExp(`!\\[Protected figure\\]\\(${saved}${protectedFile}\\)`));
     const workerReferers = referers
       .slice(before)
       .filter(([url]) => url === '/img/hotlinked.png')
@@ -501,7 +524,7 @@ const video = `<!doctype html><html><head><meta charset="utf-8"><title>Recorded 
       first.assets.find((asset) => asset.file === `assets/${picture}`).sources.sort(),
       [`${origin}/img/lazy.png`, `${origin}/img/lazy.png?v=2`],
     );
-    assert.match(markdown, new RegExp(`!\\[Same figure\\]\\(assets/${picture}\\)`));
+    assert.match(markdown, new RegExp(`!\\[Same figure\\]\\(${saved}${picture}\\)`));
     const anchors = JSON.parse(read(folder, 'anchors.json'));
     assert.equal(anchors.highlights.length, 1, 'The highlight is kept');
     const savedText = [
@@ -553,13 +576,13 @@ read = vault.tool(settings, {"action": "read", "path": sys.argv[3]})
 print(json.dumps([m["path"] for m in found["matches"]][:3] + [read["text"][:2000]]))`,
         path.join(extension, 'native'),
         path.join(codexHome, 'projects/tabgent/vault.json'),
-        `Articles/${folder}/article.md`,
+        'Full Document Contents/Articles/On Autonomy.md',
       ],
       { env: { ...process.env, HOME: home } },
     );
     assert.equal(tool.status, 0, String(tool.stderr));
     const [hit, , , readText] = JSON.parse(tool.stdout);
-    assert.equal(hit, `Articles/${folder}/article.md`);
+    assert.equal(hit, 'Full Document Contents/Articles/On Autonomy.md');
     assert.match(readText, /Body paragraph 1: careful readers/);
     console.log('PASS reading_vault searches and reads the clipped text');
 
@@ -580,14 +603,14 @@ print(json.dumps([m["path"] for m in found["matches"]][:3] + [read["text"][:2000
     const store = path.join(codexHome, 'fixture-threads.json');
     const sentContext = await until(() => {
       const raw = fs.existsSync(store) ? fs.readFileSync(store, 'utf8') : '';
-      return raw.includes(question) && raw.includes('article.md') && raw;
+      return raw.includes(question) && raw.includes('Full Document Contents') && raw;
     }, 15000);
     assert(sentContext, 'Codex receives the article path');
-    assert(sentContext.includes(path.join(articles, folder, 'article.md')));
+    assert(sentContext.includes(docOf(folder).fullTextPath));
     console.log('PASS questions about the page name the clipped article for Codex');
 
-    // Clipping again asks in the page; Replace keeps an article.md the user edited.
-    fs.appendFileSync(path.join(articles, folder, 'article.md'), '\nMy own addition.\n');
+    // Clipping again asks in the page; Replace keeps a full text the user edited.
+    fs.appendFileSync(docOf(folder).fullTextPath, '\nMy own addition.\n');
     await panel(`(() => {
       document.getElementById('readingButton').click();
       document.getElementById('readingClip').click();
@@ -604,18 +627,14 @@ print(json.dumps([m["path"] for m in found["matches"]][:3] + [read["text"][:2000
     await clickIn(page, 'tabgent-clip', button(replaceLabel));
     assert(
       await until(
-        () =>
-          record(folder).origin.clippedAt !== first.origin.clippedAt ||
-          fs.readdirSync(path.join(articles, folder)).some((f) => f.startsWith('article-edited-')),
+        () => record(folder).origin.clippedAt !== first.origin.clippedAt || editedCopy(folder),
       ),
     );
-    const edited = await until(() =>
-      fs.readdirSync(path.join(articles, folder)).find((f) => f.startsWith('article-edited-')),
-    );
+    const edited = await until(() => editedCopy(folder));
     assert(edited, 'The edited copy is kept');
-    assert.match(read(folder, edited), /My own addition\./);
+    assert.match(fs.readFileSync(edited, 'utf8'), /My own addition\./);
     assert.doesNotMatch(read(folder, 'article.md'), /My own addition\./);
-    console.log('PASS clipping again asks first and keeps an edited article.md');
+    console.log('PASS clipping again asks first and keeps an edited full text');
 
     // The page's prompt opens the clipped copy in Tabgent's reader, next to the page.
     const readerPrefix = `chrome-extension://${id}/clip/reader.html?url=`;
@@ -755,7 +774,7 @@ print(json.dumps([m["path"] for m in found["matches"]][:3] + [read["text"][:2000
     );
     assert.match(
       read(folder, 'highlights.md'),
-      /## Highlight 003[\s\S]*What does the clipped passage mean\?/,
+      /## 高亮 003[\s\S]*What does the clipped passage mean\?/,
     );
     readerPanel.close();
     console.log('PASS Ask AI in the reader saves the discussion under the page highlight');
@@ -959,6 +978,9 @@ print(json.dumps([m["path"] for m in found["matches"]][:3] + [read["text"][:2000
       file: `assets/${talkCover}`,
     });
     const talkMarkdown = read(talk, 'article.md');
+    // A YouTube clip is filed under Videos.
+    assert.equal(docOf(talk).category, 'videos');
+    assert.match(docOf(talk).notesPath, /\/Videos\/[^/]+\.md$/);
     const moment = (at) => `https://www.youtube.com/watch?v=FIXTUREvid1&t=${at}s`;
     assert(talkMarkdown.includes(`## ${await message('clipTranscriptOf', 'English')}`));
     assert(
@@ -993,6 +1015,7 @@ print(json.dumps([m["path"] for m in found["matches"]][:3] + [read["text"][:2000
     assert.equal(record(episodeFolder).contentStatus, 'notesOnly');
     assert.equal(record(episodeFolder).transcript.reason, 'empty');
     assert.match(read(episodeFolder, 'article.md'), /Show notes of the fixture episode/);
+    assert.equal(docOf(episodeFolder).category, 'videos');
     const notesText = [
       await message('clipNotesOnly', 'Fixture video 4'),
       await message('clipTranscriptEmpty'),
@@ -1047,7 +1070,11 @@ print(json.dumps([m["path"] for m in found["matches"]][:3] + [read["text"][:2000
     );
     assert(heavyFolder, 'The heavy page is clipped');
     assert.equal(record(heavyFolder).assets.length, 4);
-    assert.equal(fs.readdirSync(path.join(articles, heavyFolder, 'assets')).length, 4);
+    assert(
+      record(heavyFolder).assets.every((asset) =>
+        fs.existsSync(path.join(images, asset.file.slice('assets/'.length))),
+      ),
+    );
     console.log(`PASS a highlight saves in ${latency} ms while a clip saves large images`);
 
     // Offline after a restart: the library opens the clipped copy from the vault.
@@ -1148,7 +1175,7 @@ print(json.dumps([m["path"] for m in found["matches"]][:3] + [read["text"][:2000
     console.log('PASS deleting the clipped copy keeps the highlights');
 
     assert.deepEqual(outside, [], 'No request left the machine');
-    assert.equal(personalState(), personalBefore, 'The personal ReadingVault is untouched');
+    assert.equal(personalState(), personalBefore, 'The personal vault is untouched');
     passed = true;
   } finally {
     await context?.close().catch(() => {});
