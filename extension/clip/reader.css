@@ -97,6 +97,13 @@ main {
   margin: 0 0 32px;
   color: var(--muted);
 }
+/* The user's comment on the page and its tags, between the byline and the text. */
+#byline:has(+ #documentNotes:not([hidden])) {
+  margin-bottom: 12px;
+}
+#documentNotes {
+  margin: 0 0 32px;
+}
 #status {
   color: var(--muted);
 }

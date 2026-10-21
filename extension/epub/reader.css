@@ -290,6 +290,100 @@ body.dragging #drop {
 #books .item[data-content] .meta {
   color: #a15c00;
 }
+/* The user's comment on a document and its tags, under its row. */
+#books li:has(> .document-notes) .item {
+  border-bottom: 0;
+}
+#books li > .document-notes {
+  padding: 0 12px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+#documentsHeading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 32px 0 8px;
+}
+#documentsHeading h2 {
+  flex: 1;
+  margin: 0;
+}
+#documentsHeading button {
+  color: var(--muted);
+  font-size: 12px;
+}
+#tagFilter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: var(--hover);
+}
+#tagFilterLabel {
+  flex: 1;
+  font-weight: 600;
+}
+/* Tags: rename, merge and delete. */
+#tagManager {
+  width: min(520px, calc(100vw - 32px));
+  max-height: 80vh;
+  padding: 16px 20px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg);
+  color: var(--ink);
+}
+#tagManager::backdrop {
+  background: rgb(0 0 0 / 25%);
+}
+#tagManager .dialog-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+#tagManager h2 {
+  flex: 1;
+  margin: 0;
+  font-size: 16px;
+}
+#tagManagerList {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+#tagManagerList li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+#tagManagerList .name {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#tagManagerList .count {
+  flex: 1;
+  color: var(--muted);
+  font-size: 12px;
+}
+#tagManagerList .rename {
+  display: flex;
+  flex: 1;
+  gap: 6px;
+}
+#tagManagerList .rename input {
+  flex: 1;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+}
 footer {
   display: flex;
   align-items: center;

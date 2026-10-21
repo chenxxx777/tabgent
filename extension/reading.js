@@ -10,6 +10,7 @@ export const documentKinds = ['web', 'pdf', 'epub'];
 export const limits = {
   highlight: 1500,
   userNote: 2000,
+  userComment: 4000,
   noteUser: 600,
   noteAssistant: 1500,
   notes: 6000,
@@ -84,6 +85,13 @@ export function readingContext({ document, highlight, notes, vault, saving }) {
       // clipped page, an imported EPUB or PDF), read by section with reading_vault.
       ...(document.notes ? { notes: document.notes } : {}),
       ...(document.fullText ? { fullText: document.fullText } : {}),
+      // The user's own comment on the whole document and their tags for it: their view.
+      ...(string(document.userComment).trim()
+        ? { userComment: clip(string(document.userComment).trim(), limits.userComment) }
+        : {}),
+      ...(Array.isArray(document.userTags) && document.userTags.length
+        ? { userTags: document.userTags.filter((t) => typeof t === 'string').slice(0, 30) }
+        : {}),
     };
   if (highlight)
     value.highlight = {

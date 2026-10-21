@@ -109,6 +109,7 @@ LABELS = {
     "discussionsLink": "与 Codex 的讨论",
     "highlights": "高亮",
     "comment": "评论",
+    "documentComment": "全文评论",
     "turns": "讨论 {n} 条",
     "source": "原文位置",
     "inFull": "在全文中查看",
@@ -145,6 +146,17 @@ LABELS = {
 TEXT_LIMIT = 200_000
 NOTE_LIMIT = 20_000
 BODY_LIMIT = 2_000_000
+# The user's comment on a whole document, in the note's <!-- tabgent:comment document -->
+# block, and the document's tags, in the note's front matter (tags:). The note is their
+# source: Tabgent reads them back from it, and anchors.json keeps a copy for a note that is
+# missing.
+COMMENT_LIMIT = 20_000
+TAG_CHARS = 100
+TAGS_MAX = 100
+# A tag written as a plain YAML scalar: a letter first, then letters, digits, _ - /. Others
+# are written as JSON strings.
+TAG_PLAIN = re.compile(r"[^\W\d_][\w/-]*")
+YAML_WORDS = {"true", "false", "yes", "no", "on", "off", "null", "y", "n"}
 # Imported originals: uploaded in chunks, verified by SHA-256 and never changed after.
 SOURCE_FILES = {"epub": "original.epub", "pdf": "original.pdf"}
 SOURCE_EXTENSIONS = {"epub": ".epub", "pdf": ".pdf"}
@@ -264,8 +276,11 @@ the user read, highlighted, commented on or discussed before. Vault path: {vault
   HTML files the user opened from their computer in Chrome). The file name is the
   document's title. The user may rename notes or move them to other folders here.
 - A note starts with YAML front matter (`tabgent_id` is the document ID; `title`,
-  `category`, `kind`, `source` URL, `author`, `saved`) and a `## 元数据` (metadata)
-  block with links to the document's full text and discussions. Under `## 高亮` each
+  `category`, `kind`, `source` URL, `author`, `saved`, and `tags`: the user's own tags
+  for the document) and a `## 元数据` (metadata) block with links to the document's full
+  text and discussions. `## 全文评论`, when present, is the user's own comment on the whole
+  document (why they saved it, what they think of it): their view, not the author's text.
+  Under `## 高亮` each
   highlight is a list item: the quoted source text, ending with its block ID such as
   `^h001`; under it, `- 评论：` is the user's own comment on that passage (their view,
   not the author's), then its location, time and a link to its discussion.
@@ -293,7 +308,7 @@ the `reading_vault` tool lists, searches and reads this folder without running
 commands; it reads a book's or PDF's full text by section. From a shell:
 
 - `rg -n -i "<keywords>" -g '!Full Document Contents/**' -g '!Attachments/**' {vault}`
-  finds highlights, comments and discussions.
+  finds highlights, comments and discussions (`reading_vault` search also matches tags).
 - `rg -n "^tabgent_id:|^title:|^source:" -g '!Full Document Contents/**'
   -g '!Discussions/**' -g '!Attachments/**' {vault}` lists documents.
 - `rg -n -i "<keywords>" {vault}/"Full Document Contents"` searches full texts.
@@ -307,8 +322,8 @@ Cite sources with the document title, highlight number and file path, for exampl
 - Stay close to the source text and explain it in its context instead of drifting
   into generic explanations.
 - Distinguish the author's views, the user's views and your own inferences. A
-  `- 评论：` line is the user's own comment on a highlight: their view, not the
-  author's text.
+  `- 评论：` line is the user's own comment on a highlight, and `## 全文评论` their
+  comment on the whole document: their views, not the author's text.
 - When unsure, say so. Never invent or misquote source text.
 - Point to specific passages, sections or page numbers when you can.
 - Help clarify concepts and arguments; do not compress long texts into summaries
@@ -402,6 +417,8 @@ def resolve(settings, params):
             "document": _public_document(root, document, None),
             "highlights": [],
             "clip": None,
+            "comment": "",
+            "tags": [],
         }
     data = _followed(root, data)
     return {
@@ -410,6 +427,7 @@ def resolve(settings, params):
         ),
         "highlights": [_public_highlight(data, item) for item in data["highlights"]],
         "clip": _clip_summary(root, data),
+        **document_annotations(root, data, data["document"]["files"]),
     }
 
 
@@ -822,6 +840,8 @@ def list_documents(settings, params):
                 "updatedAt": document.get("updatedAt"),
                 "highlightCount": len(data["highlights"]),
                 "clip": _clip_summary(root, data),
+                # The user's comment on the document and its tags, read from its note.
+                **document_annotations(root, data),
                 # The stored original, for documents that open from the vault.
                 "source": record
                 and {
@@ -1202,11 +1222,247 @@ def document_state(settings, params):
     return {"document": _public_document(root, document, document["createdAt"])}
 
 
+def _annotation_target(params):
+    """(document ID or None, source or None) of a comment or tags request: documentId for
+    a saved document, or url, title and kind for a page, which a first comment or tag
+    creates."""
+    ident = params.get("documentId")
+    ident = None if ident is None else _document_id(ident)
+    source = None if params.get("url") is None else _source(params)
+    if ident is None and source is None:
+        raise VaultError("invalid_params", "documentId or url is required")
+    return ident, source
+
+
+def _annotation_result(root, data, **extra):
+    if data is None:
+        return {"document": None, "comment": "", "tags": [], **extra}
+    document = data["document"]
+    return {
+        "document": _public_document(root, document, document["createdAt"]),
+        **document_annotations(root, data, document["files"]),
+        **extra,
+    }
+
+
+def set_comment(settings, params):
+    """Sets the user's comment on the whole document; an empty comment removes it.
+
+    The note's <!-- tabgent:comment document --> block holds it, under ## 全文评论, between
+    the metadata block and ## 高亮. base is the comment the editor started from: when the
+    note's comment is no longer that one (it was edited elsewhere since), the note's
+    version is kept as the user's own text above the new block, and kept is true. A page
+    without a document gets one, without highlights, for its first comment."""
+    if "comment" not in params:
+        raise VaultError("invalid_params", "comment is required; use '' to remove it")
+    comment = _comment_text(_string(params, "comment", COMMENT_LIMIT))
+    base = params.get("base")
+    base = None if base is None else _comment_text(_string(params, "base", BODY_LIMIT))
+    ident, source = _annotation_target(params)
+    root = _root(settings)
+    # Nothing to remove from a page that is not saved: nothing is written, not even the
+    # vault folder.
+    if _find(root, ident, source) is None and (source is None or not comment):
+        if source is None:
+            raise VaultError("not_found", f"Document {ident} does not exist")
+        return _annotation_result(root, None, kept=False)
+    with _locked(root):
+        data = _find(root, ident, source)
+        if data is None:
+            if source is None:
+                raise VaultError("not_found", f"Document {ident} does not exist")
+            if not comment:
+                return _annotation_result(root, None, kept=False)
+            _scaffold(root)
+            data = _ensure_document(root, *source)
+        document = data["document"]
+        context = _context(root, data)
+        lines, _ = _read_lines(root / context.files["notes"])
+        hashes = document.setdefault("blocks", {}).setdefault("notes", {})
+        recorded = _record_comment(document)
+        current = note_comment(lines) if lines is not None else None
+        seen = (current or "") if lines is not None else recorded
+        base = seen if base is None else base
+        kept = False
+        if current is not None:
+            start, end = _block_index(lines)[("comment", "document")]
+            if _comment_text(current) == base:
+                # The comment the editor showed: replaced as Tabgent's own block.
+                hashes["comment document"] = _hash(lines[start : end + 1])
+            elif _comment_text(current) != comment:
+                hashes["comment document"] = None  # Kept as the user's text.
+                kept = True
+        if comment == seen and recorded == comment:
+            return _annotation_result(root, data, kept=False)
+        now = _now()
+        if comment:
+            document["comment"] = {"text": comment, "updatedAt": now}
+        else:
+            document.pop("comment", None)
+            if current is None:
+                hashes.pop("comment document", None)
+        document["updatedAt"] = now
+        context.comment = True
+        _commit(root, data, context)
+    return _annotation_result(root, data, kept=kept)
+
+
+def set_tags(settings, params):
+    """Adds and removes tags of a document (front matter tags). Tags match by tag_key:
+    Unicode NFC, trimmed, without a leading #, ignoring case; an added tag keeps its
+    spelling. The note's other front matter keys are left as they are. A page without a
+    document gets one for its first tag."""
+    add = [_clean_tag(tag) for tag in _strings(params, "add")]
+    remove = {tag_key(tag) for tag in _strings(params, "remove")}
+    if not add and not remove:
+        raise VaultError("invalid_params", "add or remove a tag")
+    ident, source = _annotation_target(params)
+    root = _root(settings)
+    if _find(root, ident, source) is None and (source is None or not add):
+        if source is None:
+            raise VaultError("not_found", f"Document {ident} does not exist")
+        return _annotation_result(root, None)
+    with _locked(root):
+        data = _find(root, ident, source)
+        if data is None:
+            if source is None:
+                raise VaultError("not_found", f"Document {ident} does not exist")
+            if not add:
+                return _annotation_result(root, None)
+            _scaffold(root)
+            data = _ensure_document(root, *source)
+        context = _context(root, data)
+        before = _note_tags(root, data, context)
+        tags = [tag for tag in before if tag_key(tag) not in remove]
+        present = {tag_key(tag) for tag in tags}
+        for tag in add:
+            if tag_key(tag) not in present:
+                tags.append(tag)
+                present.add(tag_key(tag))
+        if len(tags) > TAGS_MAX:
+            raise VaultError(
+                "invalid_params", f"A document has at most {TAGS_MAX} tags"
+            )
+        _write_tags(root, data, context, tags, before)
+    return _annotation_result(root, data)
+
+
+def list_tags(settings, params):
+    """Every tag in the vault with the number of documents that have it, most used first.
+    Spellings that differ only in case are one tag, named by its most used spelling."""
+    root = _root(settings)
+    found = {}
+    for _, data, tags in _tagged(root):
+        for tag in tags:
+            entry = found.setdefault(tag_key(tag), {"count": 0, "spellings": {}})
+            entry["count"] += 1
+            entry["spellings"][tag] = entry["spellings"].get(tag, 0) + 1
+    tags = []
+    for entry in found.values():
+        spellings = sorted(entry["spellings"].items(), key=lambda s: (-s[1], s[0]))
+        tags.append(
+            {
+                "name": spellings[0][0],
+                "count": entry["count"],
+                "spellings": [name for name, _ in spellings],
+            }
+        )
+    tags.sort(key=lambda tag: (-tag["count"], tag_key(tag["name"])))
+    return {"tags": tags}
+
+
+def rename_tag(settings, params):
+    """Renames a tag in every document that has it (from, matched by tag_key) to to. When
+    to is another existing tag, the two are merged: a document with both keeps one."""
+    old = tag_key(_string(params, "from", TAG_CHARS * 4, required=True))
+    new = _clean_tag(params.get("to"))
+    return _retag(settings, old, new)
+
+
+def delete_tag(settings, params):
+    """Removes a tag from every document that has it. The documents stay."""
+    return _retag(settings, tag_key(_string(params, "tag", TAG_CHARS * 4, True)), None)
+
+
+def _retag(settings, old, new):
+    """Replaces (or with new None removes) the tag old in every document. Each document is
+    written on its own, so a failure leaves the others done; running it again finishes.
+    """
+    if not old:
+        raise VaultError("invalid_params", "tag must not be empty")
+    root = _root(settings)
+    merged = bool(new) and any(
+        tag_key(tag) == tag_key(new) and tag_key(new) != old
+        for _, _, tags in _tagged(root)
+        for tag in tags
+    )
+    changed, failed = 0, 0
+    if not any(tag_key(t) == old for _, _, tags in _tagged(root) for t in tags):
+        return {"changed": 0, "failed": 0, "merged": False}
+    with _locked(root):
+        for ident in _record_ids(root):
+            try:
+                data = _load(root, ident)
+                if data is None:
+                    continue
+                context = _context(root, data)
+                before = _note_tags(root, data, context)
+                if not any(tag_key(tag) == old for tag in before):
+                    continue
+                tags, present = [], set()
+                for tag in before:
+                    if tag_key(tag) == old:
+                        tag = new
+                    if tag and tag_key(tag) not in present:
+                        tags.append(tag)
+                        present.add(tag_key(tag))
+                _write_tags(root, data, context, tags, before)
+                changed += 1
+            except (VaultError, OSError):
+                failed += 1
+    return {"changed": changed, "failed": failed, "merged": merged}
+
+
+def _tagged(root):
+    """(document ID, record, tags) of every readable document, read without the lock."""
+    for ident in _record_ids(root):
+        try:
+            data = _load(root, ident)
+        except (VaultError, OSError):
+            continue
+        if data:
+            yield ident, data, document_annotations(root, data)["tags"]
+
+
+def _note_tags(root, data, context):
+    """The document's tags before a change: its note's, or the record's when the note is
+    missing. A note that is not UTF-8 fails the request."""
+    lines, _ = _read_lines(root / context.files["notes"])
+    return _record_tags(data["document"]) if lines is None else note_tags(lines)
+
+
+def _write_tags(root, data, context, tags, before):
+    document = data["document"]
+    if tags == before and _record_tags(document) == tags:
+        return
+    if tags:
+        document["tags"] = tags
+    else:
+        document.pop("tags", None)
+    context.tags = tags
+    _commit(root, data, context)
+
+
 METHODS = {
     "vault/status": status,
     "vault/configure": configure,
     "vault/document/resolve": resolve,
     "vault/document/state": document_state,
+    "vault/document/comment": set_comment,
+    "vault/document/tags": set_tags,
+    "vault/tags/list": list_tags,
+    "vault/tags/rename": rename_tag,
+    "vault/tags/delete": delete_tag,
     "vault/highlight/create": create_highlight,
     "vault/highlight/delete": delete_highlight,
     "vault/highlight/update": update_highlight,
@@ -1300,6 +1556,42 @@ def _string(params, name, limit, required=False):
     if required and not value.strip():
         raise VaultError("invalid_params", f"{name} must not be empty")
     return value
+
+
+def _strings(params, name):
+    value = params.get(name, [])
+    if not isinstance(value, list) or len(value) > TAGS_MAX:
+        raise VaultError("invalid_params", f"{name} must be a list of tags")
+    for item in value:
+        if not isinstance(item, str) or len(item) > TAG_CHARS * 4:
+            raise VaultError("invalid_params", f"{name} must be a list of tags")
+    return value
+
+
+def _comment_text(value):
+    return value.replace("\r\n", "\n").replace("\r", "\n").strip()
+
+
+def tag_key(tag):
+    """What tags are matched by: Unicode NFC, trimmed, without a leading #, ignoring case
+    (AI学习 and ai学习 are one tag). Shown tags keep the user's spelling."""
+    text = unicodedata.normalize("NFC", str(tag)).strip()
+    return text.lstrip("#").strip().casefold()
+
+
+def _clean_tag(value):
+    """A tag the user entered: Unicode NFC, without invisible and control characters or a
+    leading #, with spaces written as - (Obsidian tags have no spaces)."""
+    if not isinstance(value, str):
+        raise VaultError("invalid_params", "A tag must be a string")
+    text = INVISIBLE.sub("", unicodedata.normalize("NFC", value))
+    text = "".join(" " if unicodedata.category(c) == "Cc" else c for c in text)
+    text = "-".join(text.strip().lstrip("#").split())
+    if not text:
+        raise VaultError("invalid_params", "A tag must not be empty")
+    if len(text) > TAG_CHARS:
+        raise VaultError("invalid_params", f"A tag is at most {TAG_CHARS} characters")
+    return text
 
 
 def _integer(params, name, low, high, default=None):
@@ -2210,6 +2502,10 @@ class _Context:
         self.files = files
         self.clip = clip
         self.source = source
+        # Set by a write of the document's comment (True) or tags (the new list): the note's
+        # own comment and tags are then not read back into the record first.
+        self.comment = False
+        self.tags = None
 
 
 def _context(root, data, fresh=True):
@@ -3601,6 +3897,219 @@ def _drop(lines, kind, ident, recorded):
             lines[start : end + 1] = _kept(block, ident, deleted=True)
 
 
+# The user's comment on the document and its tags
+
+
+def note_comment(lines):
+    """The user's comment on the whole document in a note's lines: the text of its
+    <!-- tabgent:comment document --> block without the ## 全文评论 heading, or None when
+    the note has no such block."""
+    place = _block_index(lines).get(("comment", "document"))
+    if place is None:
+        return None
+    inner = lines[place[0] + 1 : place[1]]
+    for number, line in enumerate(inner):
+        if line.strip():
+            if line.strip() == f"## {LABELS['documentComment']}":
+                inner = inner[number + 1 :]
+            break
+    return _comment_text("\n".join(inner))
+
+
+def _yaml_scalar(text):
+    """A YAML scalar as front matter writes it: without its quotes, or without a trailing
+    comment when it is plain."""
+    text = text.strip()
+    if text[:1] == '"':
+        try:
+            value = json.JSONDecoder().raw_decode(text)[0]
+            return value if isinstance(value, str) else ""
+        except ValueError:
+            return text.strip('"')
+    if text[:1] == "'":
+        match = re.match(r"'((?:[^']|'')*)'", text)
+        return match[1].replace("''", "'") if match else text.strip("'")
+    return re.split(r"\s+#", text, maxsplit=1)[0].strip()
+
+
+def _flow_items(text):
+    """The items of a YAML flow sequence (the text inside [ ]), split at commas outside
+    quotes."""
+    items, current, quote, index = [], "", None, 0
+    while index < len(text):
+        char = text[index]
+        if quote:
+            current += char
+            if quote == '"' and char == "\\" and index + 1 < len(text):
+                current += text[index + 1]
+                index += 1
+            elif char == quote:
+                if quote == "'" and text[index + 1 : index + 2] == "'":
+                    current += "'"
+                    index += 1
+                else:
+                    quote = None
+        elif char in "\"'" and not current.strip():
+            quote = char
+            current += char
+        elif char == ",":
+            items.append(current)
+            current = ""
+        else:
+            current += char
+        index += 1
+    items.append(current)
+    return [_yaml_scalar(item) for item in items if item.strip()]
+
+
+def _front_tags_span(lines, span):
+    """(first, after last) line of the tags key in the front matter at span, or None."""
+    for number in range(span[0] + 1, span[1]):
+        if re.match(r"tags[ \t]*:", lines[number]):
+            stop = number + 1
+            while stop < span[1] and lines[stop][:1] in (" ", "\t", "-"):
+                stop += 1
+            return number, stop
+    return None
+
+
+def note_tags(lines):
+    """The document's tags in a note's front matter, as written (a YAML list, a flow list
+    [a, b] or a string a, b), without a leading # and without repeats by tag_key."""
+    span = _front_span(lines)
+    found = span and _front_tags_span(lines, span)
+    if not found:
+        return []
+    start, stop = found
+    rest = lines[start].split(":", 1)[1].strip()
+    if rest.startswith("["):
+        text = " ".join([rest[1:], *[line.strip() for line in lines[start + 1 : stop]]])
+        values = _flow_items(text[: text.rfind("]")] if "]" in text else text)
+    elif rest and not rest.startswith("#"):
+        value = _yaml_scalar(rest)
+        values = [value] if rest[:1] in "\"'" else re.split(r"[,\s]+", value)
+    else:
+        values = [
+            _yaml_scalar(match[1])
+            for line in lines[start + 1 : stop]
+            if (match := re.match(r"\s*-[ \t]+(.+)$", line))
+        ]
+    tags, seen = [], set()
+    for value in values:
+        text = unicodedata.normalize("NFC", value).strip().lstrip("#").strip()
+        if text and tag_key(text) not in seen:
+            seen.add(tag_key(text))
+            tags.append(text)
+    return tags
+
+
+def _tag_lines(tags):
+    def scalar(tag):
+        plain = TAG_PLAIN.fullmatch(tag) and tag.casefold() not in YAML_WORDS
+        return tag if plain else _yaml(tag)
+
+    return ["tags:", *[f"  - {scalar(tag)}" for tag in tags]]
+
+
+def _set_note_tags(lines, tags):
+    """Writes the tags key of the note's front matter (removed when there are none),
+    leaving every other key as it is."""
+    span = _front_span(lines)
+    if span is None:
+        return
+    block = _tag_lines(tags) if tags else []
+    found = _front_tags_span(lines, span)
+    if found:
+        lines[found[0] : found[1]] = block
+    else:
+        lines[span[1] : span[1]] = block
+
+
+def _record_comment(document):
+    comment = document.get("comment")
+    text = comment.get("text") if isinstance(comment, dict) else None
+    return text if isinstance(text, str) else ""
+
+
+def _record_tags(document):
+    tags = document.get("tags")
+    return (
+        [t for t in tags if isinstance(t, str) and t] if isinstance(tags, list) else []
+    )
+
+
+_ANNOTATIONS = {}
+
+
+def document_annotations(root, data, files=None):
+    """{"comment", "tags"} of a document: read from its note, which is their source (the
+    user may edit both in Obsidian), or from the record when the note is missing or not
+    UTF-8. Reads without the lock; a note's results are reused until it changes."""
+    document = data["document"]
+    files = files or _locate(root, data, max_age=SCAN_TTL)
+    path = root / files["notes"]
+    try:
+        info = path.stat()
+        key = (info.st_mtime_ns, info.st_size)
+    except OSError:
+        key = None
+    cached = _ANNOTATIONS.get(str(path))
+    if key is not None and cached and cached[0] == key:
+        return {"comment": cached[1], "tags": list(cached[2])}
+    try:
+        lines = _read_lines(path)[0] if key is not None else None
+    except VaultError:
+        lines = None
+    if lines is None:
+        return {"comment": _record_comment(document), "tags": _record_tags(document)}
+    comment, tags = note_comment(lines) or "", note_tags(lines)
+    if len(_ANNOTATIONS) > 2048:
+        _ANNOTATIONS.clear()
+    _ANNOTATIONS[str(path)] = (key, comment, tuple(tags))
+    return {"comment": comment, "tags": tags}
+
+
+def _comment_lines(text):
+    return [
+        _marker("comment", "document", "start"),
+        f"## {LABELS['documentComment']}",
+        "",
+        *_content(text),
+        _marker("comment", "document", "end"),
+    ]
+
+
+def _read_back(lines, data, context):
+    """Takes the user's edits of the comment and tags in the note into the record, before
+    a write that does not change them: the note is their source, and the record keeps a
+    copy for a note that goes missing. A comment block the user edited stays as it is.
+    """
+    document = data["document"]
+    hashes = document["blocks"]["notes"]
+    if context.tags is None:
+        tags = note_tags(lines)
+        if tags:
+            document["tags"] = tags
+        else:
+            document.pop("tags", None)
+    if context.comment:
+        return
+    current = note_comment(lines)
+    if current is None:
+        if "comment document" in hashes:
+            # The user removed the block Tabgent wrote: there is no comment any more.
+            document.pop("comment", None)
+            hashes.pop("comment document")
+        return
+    if current != _record_comment(document):
+        if current:
+            document["comment"] = {"text": current, "updatedAt": _now()}
+            hashes["comment document"] = _hash(_comment_lines(current))
+        else:
+            document.pop("comment", None)
+            hashes.pop("comment document", None)
+
+
 # The note
 
 
@@ -3791,8 +4300,10 @@ def _highlight_lines(data, item, context):
 
 
 def _notes_wanted(data, context):
+    comment = _record_comment(data["document"])
     return [
         ("metadata", "document", _metadata_lines(data, context)),
+        *([("comment", "document", _comment_lines(comment))] if comment else []),
         *[
             ("highlight", item["id"], _highlight_lines(data, item, context))
             for item in data["highlights"]
@@ -3808,9 +4319,18 @@ def _render(data, context):
 
 def _notes_lines(data, context, wanted):
     pairs = _notes_front(data, context)
-    lines = [*_front_lines(pairs), "", f"# {_heading(data['document'])}", ""]
-    lines += [*wanted[0][2], "", NOTE, "", f"## {LABELS['highlights']}"]
-    for _, _, block in wanted[1:]:
+    front = _front_lines(pairs)
+    tags = _record_tags(data["document"])
+    if tags:
+        front[-1:-1] = _tag_lines(tags)
+    lines = [*front, "", f"# {_heading(data['document'])}", ""]
+    lines += [*wanted[0][2], ""]
+    rest = wanted[1:]
+    if rest and rest[0][0] == "comment":
+        lines += [*rest[0][2], ""]
+        rest = rest[1:]
+    lines += [NOTE, "", f"## {LABELS['highlights']}"]
+    for _, _, block in rest:
         _insert(lines, _eof(lines), block)
     _eof(lines)
     return lines, [key for key, _ in pairs]
@@ -3828,6 +4348,14 @@ def _notes_position(lines, wanted):
                 if lines[number].startswith("# "):
                     return number + 1
             return start
+        if kind == "comment":
+            # After the metadata block, before the highlights.
+            if ("metadata", "document") in found:
+                return found[("metadata", "document")][1] + 1
+            for number, line in enumerate(lines):
+                if line.rstrip() == heading:
+                    return number
+            return _eof(lines)
         for other, ident, _ in reversed(wanted[:index]):
             if other == "highlight" and (other, ident) in found:
                 return found[(other, ident)][1] + 1
@@ -3844,13 +4372,16 @@ def _notes_position(lines, wanted):
 
 def _sync_notes(root, data, context):
     """Brings the note up to date with the record: its front matter keys, the metadata
-    block and a block per highlight. Missing blocks are written again; Tabgent changes
-    nothing else in the file."""
+    block, the user's comment on the document and a block per highlight. Missing blocks
+    are written again; Tabgent changes nothing else in the file, except the tags key of
+    the front matter when it changes the document's tags."""
     document = data["document"]
     path = root / context.files["notes"]
     lines, crlf = _read_lines(path)
     hashes = document.setdefault("blocks", {}).setdefault("notes", {})
     written = document.setdefault("frontMatter", {}).setdefault("notes", [])
+    if lines is not None:
+        _read_back(lines, data, context)
     wanted = _notes_wanted(data, context)
     if lines is None:
         lines, keys = _notes_lines(data, context, wanted)
@@ -3862,6 +4393,11 @@ def _sync_notes(root, data, context):
         return
     before = list(lines)
     _fill_front(lines, _notes_front(data, context), written)
+    if context.tags is not None:
+        _set_note_tags(lines, context.tags)
+    if not _record_comment(document) and "comment document" in hashes:
+        # The user removed the comment in Tabgent.
+        _drop(lines, "comment", "document", hashes.pop("comment document"))
     ids = {item["id"] for item in data["highlights"]}
     for _, _, ident in reversed(_blocks(lines, "highlight")):
         if ident not in ids:
@@ -4056,7 +4592,8 @@ TOOL = {
     "name": "reading_vault",
     "description": (
         "Search and read the user's reading vault: one local Markdown note per document "
-        "(its highlights, the user's own comments on them and their locations), the "
+        "(its tags, the user's own comment on the whole document, its highlights, the "
+        "user's own comments on them and their locations), the "
         "user's earlier discussions with Codex, and documents' full text (clipped "
         "webpages, imported EPUB books and PDFs). Read-only and limited to the files "
         "Tabgent wrote in the vault; it needs no command approval. Use list for the "
@@ -4152,15 +4689,24 @@ def tool(settings, args):
                 continue
             rank = min(rank, 2)
             relative = path.relative_to(root).as_posix()
-            section, front = None, False
+            section, front, tags = None, False, False
             for number, line in _tool_iterate(path):
-                # Front matter repeats the title and IDs: it is not searched.
+                # Front matter repeats the title and IDs: only a note's tags are searched.
                 if number == 1 and line.strip() == "---":
                     front = True
                     continue
                 if front:
                     front = line.strip() != "---"
-                    continue
+                    tags = (
+                        front
+                        and part == "notes"
+                        and (
+                            bool(re.match(r"tags[ \t]*:", line))
+                            or (tags and line[:1] in (" ", "\t", "-"))
+                        )
+                    )
+                    if not tags:
+                        continue
                 marker = SECTION.fullmatch(line.strip())
                 if marker:
                     section = {"section": int(marker[2]), "sectionTitle": ""}

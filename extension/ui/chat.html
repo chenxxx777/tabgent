@@ -12,6 +12,7 @@
       media="(prefers-color-scheme: dark)"
     />
     <link rel="stylesheet" href="chat.css" />
+    <link rel="stylesheet" href="document-notes.css" />
   </head>
   <body class="empty" style="visibility: hidden">
     <aside id="historyPanel" hidden aria-label="$i18n{pageHistory}">
@@ -38,6 +39,11 @@
         </button>
       </div>
       <button id="historyUrl" type="button" popovertarget="historyUrlDetails"></button>
+      <section id="documentNotesSection" hidden aria-labelledby="documentNotesHeading">
+        <h3 id="documentNotesHeading">$i18n{docNotesHeading}</h3>
+        <div id="documentNotesDraft" role="status" hidden></div>
+        <div id="documentNotes"></div>
+      </section>
       <section id="highlightSection" hidden aria-labelledby="highlightHeading">
         <h3 id="highlightHeading">$i18n{highlightsHeading}</h3>
         <div id="highlightList"></div>

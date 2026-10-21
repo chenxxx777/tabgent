@@ -86,6 +86,7 @@ These are deliberately excluded from `npm test`:
 | `npm run test:local-files`                   | Same isolation, fixture app-server for Codex; files opened from the computer (`file://`).    |
 | `npm run test:agent-tab`                     | Same isolation, fixture app-server for Codex; an Agent tab after its source page closes.     |
 | `npm run test:feeds`                         | Same isolation; subscriptions with generated feeds served from `127.0.0.1`.                  |
+| `npm run test:notes`                         | Same isolation, fixture app-server for Codex; document comments and tags in three places.    |
 
 `npm run test:epub` imports a generated book into a temporary vault, checks highlights,
 Ask AI, reopening, a browser restart and blocked book scripts. Codex discovery is
@@ -95,6 +96,14 @@ disabled, so no app-server or account is used.
 generated PDF and EPUB from the library, highlights and asks about the PDF (saving a turn
 from the fixture app-server), opens the library from the side panel, opens every kind of
 document from it, restarts the browser and checks drag and drop.
+
+`npm run test:notes` seeds tagged, clipped and highlighted pages, then writes a comment on
+a document without highlights in the library and checks its note after a reload, adds tags
+with suggestions and removes one, filters the library by a tag, checks that opening another
+document's comment asks before a draft is dropped, renames, merges and deletes tags in the
+tag manager, edits the same comment and tags in the clipped-page reader and in the side
+panel beside it (each view following the others), keeps a side panel draft when its page
+changes, and writes a first comment on a page that is not saved.
 
 `npm run test:clip` highlights a generated article and clips it from the side panel. It checks
 the page's full text in `Full Document Contents/`, `article.html` and `article.json` in its

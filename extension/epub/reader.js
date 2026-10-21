@@ -9,6 +9,7 @@ import { initFeeds } from './feeds-ui.js';
 import { pdfViewerUrl } from '../pdf-routing.js';
 import { isLocalFileUrl } from '../local-files.js';
 import { clipViewerUrl } from '../clip-routing.js';
+import { createDocumentNotes, tagKey, cleanTag } from '../ui/document-notes.js';
 
 const $ = (selector) => document.querySelector(selector);
 const COLOR = 'rgb(255 200 60)';
@@ -95,6 +96,11 @@ $('#libraryTabs').addEventListener('keydown', (event) => {
 });
 function showTab(name) {
   const isFeeds = name === 'feeds';
+  // Leaving the documents drops their comment drafts: asked first.
+  if (isFeeds && !$('#documentsPanel').hidden && !closeEditors()) {
+    $('#documentsTab').focus();
+    return;
+  }
   $('#documentsTab').setAttribute('aria-selected', String(!isFeeds));
   $('#feedsTab').setAttribute('aria-selected', String(isFeeds));
   $('#documentsTab').tabIndex = isFeeds ? -1 : 0;
@@ -120,6 +126,7 @@ async function showLibrary() {
 async function showDocuments() {
   const list = $('#books');
   list.replaceChildren();
+  rows.clear();
   for (const url of coverUrls.splice(0)) URL.revokeObjectURL(url);
   $('#booksStatus').textContent = t('epubLoading');
   try {
@@ -129,6 +136,7 @@ async function showDocuments() {
     ]);
     $('#booksStatus').textContent = documents.length ? '' : t('libraryEmpty');
     for (const item of documents) list.append(libraryItem(item, seen));
+    applyTagFilter();
   } catch (error) {
     $('#booksStatus').textContent = loadTimeData.getStringF('epubBooksUnavailable', shown(error));
   }
@@ -284,7 +292,183 @@ function libraryItem(item, seen) {
     link.textContent = `${t('clipOriginal')} ↗`;
     li.append(link);
   }
+  // The user's comment on the document and its tags, edited in place; a tag filters the list.
+  const notes = createDocumentNotes({
+    t: format,
+    compact: true,
+    save: ({ comment, base }) =>
+      library.send({ type: 'libraryComment', documentId: item.id, comment, base }),
+    tags: (change) => library.send({ type: 'libraryTags', documentId: item.id, ...change }),
+    tagList: async () => (await library.send({ type: 'tagsList' })).tags,
+    onTag: (tag) => filterByTag(tag),
+    onError: (message) => toast(message),
+    beforeEdit: () => closeEditors(item.id),
+  });
+  notes.set(item);
+  li.append(notes.element);
+  rows.set(item.id, { li, notes, item });
   return li;
+}
+
+// The library's rows by document ID, for comment drafts, tag changes and the tag filter.
+const rows = new Map();
+const format = (key, ...args) => (args.length ? loadTimeData.getStringF(key, ...args) : t(key));
+// Closes the comment editors other than the one for keep, asking before a draft is dropped.
+// False when the user keeps a draft.
+function closeEditors(keep = null) {
+  for (const [id, row] of rows) {
+    if (id === keep || !row.notes.draft()) continue;
+    const title = row.item.title || t('epubUntitled');
+    if (row.notes.dirty() && !confirm(loadTimeData.getStringF('docNotesDiscardConfirm', title)))
+      return false;
+    row.notes.discard();
+  }
+  return true;
+}
+addEventListener('beforeunload', (event) => {
+  if ([...rows.values()].some((row) => row.notes.dirty())) event.preventDefault();
+});
+// Changed in the side panel, a reader or another library tab.
+chrome.runtime.onMessage.addListener((message, sender) => {
+  if (sender.id !== chrome.runtime.id || message?.type !== 'tabgentNotesChanged') return;
+  if (message.all) return void refreshNotes();
+  const row = rows.get(message.documentId);
+  if (!row) return;
+  Object.assign(row.item, { comment: message.comment, tags: message.tags });
+  row.notes.set(row.item);
+  applyTagFilter();
+});
+async function refreshNotes() {
+  if ($('#start').hidden || $('#documentsPanel').hidden) return;
+  try {
+    const { documents } = await library.send({ type: 'libraryDocuments' });
+    for (const item of documents) {
+      const row = rows.get(item.id);
+      if (!row) continue;
+      Object.assign(row.item, { comment: item.comment, tags: item.tags });
+      row.notes.set(row.item);
+    }
+    applyTagFilter();
+  } catch {}
+}
+
+// The simplest filter: the documents with one tag.
+let tagFilter = '';
+function filterByTag(tag) {
+  tagFilter = tag;
+  applyTagFilter();
+  $('#tagFilterClear').focus();
+}
+$('#tagFilterClear').onclick = () => {
+  tagFilter = '';
+  applyTagFilter();
+};
+function applyTagFilter() {
+  const key = tagFilter ? tagKey(tagFilter) : '';
+  let shown = 0;
+  for (const row of rows.values()) {
+    row.li.hidden = !!key && !(row.item.tags || []).some((tag) => tagKey(tag) === key);
+    if (!row.li.hidden) shown++;
+  }
+  $('#tagFilter').hidden = !key;
+  $('#tagFilterLabel').textContent = key
+    ? loadTimeData.getStringF('libraryTagFilter', tagFilter)
+    : '';
+  if (rows.size) $('#booksStatus').textContent = key && !shown ? t('libraryTagFilterEmpty') : '';
+}
+
+// Tags: each with the number of documents that have it; rename (to an existing tag merges
+// the two) and delete, which keeps the documents.
+$('#tagsManage').onclick = () => {
+  $('#tagManager').showModal();
+  void showTagManager();
+};
+$('#tagManagerClose').onclick = () => $('#tagManager').close();
+async function showTagManager() {
+  const list = $('#tagManagerList');
+  $('#tagManagerStatus').textContent = t('epubLoading');
+  let tags;
+  try {
+    ({ tags } = await library.send({ type: 'tagsList' }));
+  } catch (error) {
+    $('#tagManagerStatus').textContent = shown(error);
+    return;
+  }
+  list.replaceChildren();
+  $('#tagManagerStatus').textContent = tags.length ? '' : t('tagsManageEmpty');
+  for (const tag of tags) list.append(tagManagerRow(tag, tags));
+}
+function tagButton(label, type = 'button') {
+  const button = document.createElement('button');
+  button.type = type;
+  button.textContent = label;
+  return button;
+}
+function tagManagerRow(tag, all) {
+  const li = document.createElement('li'),
+    name = document.createElement('span'),
+    count = document.createElement('span');
+  li.dataset.tag = tag.name;
+  name.className = 'name';
+  name.textContent = tag.name;
+  count.className = 'count';
+  count.textContent = loadTimeData.getStringF('tagsManageCount', String(tag.count));
+  // Spellings that differ only in case are one tag.
+  if (tag.spellings?.length > 1)
+    count.textContent += ' · ' + loadTimeData.getStringF('tagsSpellings', tag.spellings.join(', '));
+  const rename = tagButton(t('tagsRename')),
+    remove = tagButton(t('tagsDelete'));
+  rename.onclick = () => {
+    const form = document.createElement('form'),
+      input = document.createElement('input');
+    form.className = 'rename';
+    input.value = tag.name;
+    input.maxLength = 100;
+    input.setAttribute('aria-label', loadTimeData.getStringF('tagsRenameLabel', tag.name));
+    const cancel = tagButton(t('highlightNoteCancel'));
+    cancel.onclick = () => void showTagManager();
+    form.onsubmit = async (event) => {
+      event.preventDefault();
+      const to = cleanTag(input.value);
+      if (!to || to === tag.name) return void showTagManager();
+      const other = all.find((o) => o !== tag && tagKey(o.name) === tagKey(to));
+      const question = other
+        ? loadTimeData.getStringF('tagsMergeConfirm', tag.name, other.name, String(tag.count))
+        : loadTimeData.getStringF('tagsRenameConfirm', tag.name, to, String(tag.count));
+      if (!confirm(question)) return;
+      // Merged into an existing tag, the documents take its spelling.
+      const name = other?.name || to;
+      await changeTags({ type: 'tagsRename', from: tag.name, to: name }, tag.name, name);
+    };
+    form.append(input, tagButton(t('tagsRenameSave'), 'submit'), cancel);
+    li.replaceChildren(form);
+    input.focus();
+    input.select();
+  };
+  remove.onclick = async () => {
+    if (!confirm(loadTimeData.getStringF('tagsDeleteConfirm', tag.name, String(tag.count)))) return;
+    await changeTags({ type: 'tagsDelete', tag: tag.name }, tag.name, '');
+  };
+  li.append(name, count, rename, remove);
+  return li;
+}
+async function changeTags(message, from, to) {
+  try {
+    const result = await library.send(message);
+    toast(
+      [
+        loadTimeData.getStringF('tagsDone', String(result.changed)),
+        result.failed ? loadTimeData.getStringF('tagsFailed', String(result.failed)) : '',
+      ]
+        .filter(Boolean)
+        .join(' '),
+    );
+    if (tagFilter && tagKey(tagFilter) === tagKey(from)) tagFilter = to;
+  } catch (error) {
+    toast(loadTimeData.getStringF('docNotesTagFailed', shown(error)));
+  }
+  await showTagManager();
+  await refreshNotes();
 }
 
 // Each open (or a return to the library) supersedes the ones still loading, which stop

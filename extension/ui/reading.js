@@ -1,10 +1,33 @@
 // Reading notes in the side panel: the save toggle and vault folder in a composer menu,
 // and this page's highlights in the page drawer. Saving itself runs in the service worker.
 import '../user-error.js';
+import { createDocumentNotes } from './document-notes.js';
 
 export function createReading({ i18n, request, showError, selection, reload }) {
   const $ = (id) => document.getElementById(id);
   const shown = (error) => globalThis.tabgentExplainError?.(error, i18n) || i18n('errorGeneric');
+  // The user's comment on the page's document and its tags. A draft written for a document
+  // the page has since left stays offered (draft) until it is saved there or discarded.
+  const notes = createDocumentNotes({
+    t: i18n,
+    // Each change names the document it was made for, in case the page changed meanwhile.
+    save: async ({ comment, base }) =>
+      (await change('readingComment', { comment, base, page: shownPage })).result,
+    tags: async (tags) => (await change('readingTags', { ...tags, page: shownPage })).result,
+    tagList: async () => (await request('readingTagList')).tags,
+    onError: (message) => showError(message),
+  });
+  $('documentNotes').append(notes.element);
+  let shownPage = null,
+    draft = null;
+  const pageKey = (page) => (page ? `${page.kind}\n${page.url}` : '');
+  async function change(type, params) {
+    const value = await request(type, params);
+    revision++;
+    state = value;
+    render();
+    return value;
+  }
   let state = null,
     revision = 0,
     // The highlight whose note is being edited: { documentId, id, draft, error, busy }.
@@ -46,6 +69,8 @@ export function createReading({ i18n, request, showError, selection, reload }) {
     button.hidden = !state;
     if (!state) {
       $('highlightSection').hidden = true;
+      $('documentNotesSection').hidden = !draft;
+      notes.element.hidden = true;
       return;
     }
     const on = target();
@@ -79,7 +104,61 @@ export function createReading({ i18n, request, showError, selection, reload }) {
       : i18n('readingClipped', new Date(clipped).toLocaleString());
     $('readingClipSelection').hidden = !clippable || !selection()?.text;
     $('readingClipOpen').hidden = !clippable || !state.clip?.complete;
+    renderNotes();
     renderHighlights();
+  }
+
+  function renderNotes() {
+    const page = state.page;
+    if (shownPage && pageKey(page) !== pageKey(shownPage) && notes.draft()) {
+      // The page changed while the comment was being edited: a changed draft is kept.
+      if (notes.dirty()) draft = { page: shownPage, ...notes.draft() };
+      notes.discard();
+    }
+    if (page) shownPage = { url: page.url, title: page.title, kind: page.kind };
+    if (draft && pageKey(draft.page) === pageKey(page)) {
+      notes.edit(draft);
+      draft = null;
+    }
+    $('documentNotesSection').hidden = !page && !draft;
+    notes.element.hidden = !page;
+    if (page) notes.set({ comment: state.comment, tags: state.tags }, { editable: !!state.vault });
+    const box = $('documentNotesDraft');
+    box.hidden = !draft;
+    box.replaceChildren();
+    if (!draft) return;
+    const text = document.createElement('span');
+    text.textContent = i18n('docNotesUnsaved', draft.page.title || draft.page.url);
+    const actions = document.createElement('span');
+    actions.className = 'actions';
+    const save = document.createElement('button');
+    save.type = 'button';
+    save.textContent = i18n('docNotesDraftSave');
+    save.onclick = async () => {
+      const target = draft;
+      save.disabled = true;
+      try {
+        await change('readingComment', {
+          target: target.page,
+          comment: target.text.trim(),
+          base: target.base,
+        });
+        if (draft === target) draft = null;
+        render();
+      } catch (error) {
+        save.disabled = false;
+        showError(i18n('docNotesCommentFailed', shown(error)));
+      }
+    };
+    const discard = document.createElement('button');
+    discard.type = 'button';
+    discard.textContent = i18n('docNotesDraftDiscard');
+    discard.onclick = () => {
+      draft = null;
+      render();
+    };
+    actions.append(save, discard);
+    box.append(text, actions);
   }
 
   function renderHighlights() {
