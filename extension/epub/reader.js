@@ -120,6 +120,7 @@ async function showLibrary() {
 async function showDocuments() {
   const list = $('#books');
   list.replaceChildren();
+  for (const url of coverUrls.splice(0)) URL.revokeObjectURL(url);
   $('#booksStatus').textContent = t('epubLoading');
   try {
     const [{ documents }, seen] = await Promise.all([
@@ -163,6 +164,45 @@ function destination(item) {
 }
 const dates = new Intl.DateTimeFormat(chrome.i18n.getUILanguage(), { dateStyle: 'medium' });
 
+// A clipped page's cover, read from the vault when its entry comes into view.
+const COVER = /^assets\/[0-9a-f]{16}\.(?:jpg|png|gif|webp|avif)$/;
+const coverUrls = [];
+const covers = new IntersectionObserver(
+  (entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      covers.unobserve(entry.target);
+      void loadCover(entry.target);
+    }
+  },
+  { rootMargin: '400px 0px' },
+);
+async function loadCover(img) {
+  const parts = [];
+  let offset = 0,
+    reply;
+  try {
+    do {
+      reply = await library.send({
+        type: 'libraryCover',
+        documentId: img.dataset.document,
+        file: img.dataset.cover,
+        offset,
+      });
+      const bytes = Uint8Array.fromBase64(reply.data);
+      if (!bytes.length && !reply.eof) throw Error('The vault returned no data');
+      parts.push(bytes);
+      offset += bytes.length;
+    } while (!reply.eof);
+  } catch {
+    img.remove();
+    return;
+  }
+  const url = URL.createObjectURL(new Blob(parts, { type: reply.mime }));
+  coverUrls.push(url);
+  img.src = url;
+}
+
 function libraryItem(item, seen) {
   const { label, href, original } = destination(item);
   const li = document.createElement('li'),
@@ -191,11 +231,24 @@ function libraryItem(item, seen) {
   }
   title.className = 'title';
   title.textContent = item.title || t('epubUntitled');
+  if (item.clip?.complete && COVER.test(item.clip.cover || '')) {
+    const cover = document.createElement('img');
+    cover.className = 'cover';
+    cover.alt = '';
+    cover.dataset.document = item.id;
+    cover.dataset.cover = item.clip.cover;
+    entry.append(cover);
+    covers.observe(cover);
+  }
   meta.className = 'meta';
   const updated = Date.parse(item.updatedAt);
   const read = item.kind === 'epub' && seen[item.source?.sha256]?.fraction;
+  // A clip of only links (an embedded video, a page whose text did not load) says so.
+  const linksOnly = item.clip?.complete && item.clip.contentStatus === 'linksOnly';
+  if (linksOnly) entry.dataset.content = 'linksOnly';
   meta.textContent = [
     t(label),
+    linksOnly ? t('libraryLinksOnly') : '',
     item.author,
     host(item.url),
     loadTimeData.getStringF('epubHighlightCount', item.highlightCount),

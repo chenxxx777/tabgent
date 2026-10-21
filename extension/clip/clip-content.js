@@ -161,6 +161,144 @@
     return label(element?.getAttribute('content'));
   }
 
+  // Author, date and cover where Defuddle does not find them. Defuddle reads meta tags,
+  // JSON-LD, <time> elements and English bylines ('metadata'); after it come a date or an
+  // author line next to the title ('title-line'), and the layouts of a few sites
+  // ('site:<host>'). Each value records its source. A date keeps the site's own time zone: a
+  // date alone stays a date, and WeChat's publish time, a Unix time, is written in China
+  // time, as WeChat shows it.
+  const SITES = {
+    'tech.meituan.com': {
+      author: ['.vp-post-meta .vp-post-department'],
+      published: '.vp-post-meta .vp-post-date',
+      cover: '.vp-post-header .vp-post-cover img',
+    },
+    'mp.weixin.qq.com': {
+      // The article's author, else the account that published it.
+      author: ['#js_author_name_text', '#js_author_name', '#js_name'],
+      cover: '',
+      wechat: true,
+    },
+  };
+  // 2026-08-07, 2026/8/7, 2026.08.07 or 2026年8月7日 as a date: YYYY-MM-DD.
+  function dateText(text) {
+    const match = /(\d{4})\s*[-/.年]\s*(\d{1,2})\s*[-/.月]\s*(\d{1,2})(?!\d)/.exec(text || '');
+    if (!match) return '';
+    const [year, month, day] = match.slice(1).map(Number);
+    if (year < 1990 || year > 2100 || month < 1 || month > 12 || day < 1 || day > 31) return '';
+    return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  }
+  // A Unix time as China time, with its offset: 2026-10-18T21:00:00+08:00.
+  const chinaTime = (seconds) =>
+    new Date((seconds + 8 * 3600) * 1000).toISOString().slice(0, 19) + '+08:00';
+  // Defuddle writes a date it read as text at midnight UTC; that is a date, not an instant.
+  const dateOnly = (value) =>
+    String(value || '').replace(
+      /^(\d{4}-\d{2}-\d{2})T00:00(?::00(?:\.0+)?)?(?:Z|[+-]00:?00)$/,
+      '$1',
+    );
+  // The few blocks before and after the page's first heading: its meta line.
+  function titleLine(doc) {
+    const h1 = doc.querySelector('h1');
+    if (!h1) return [];
+    const blocks = [];
+    for (let el = h1.nextElementSibling, i = 0; el && i < 3; el = el.nextElementSibling, i++)
+      blocks.push(el);
+    for (
+      let el = h1.previousElementSibling, i = 0;
+      el && i < 2;
+      el = el.previousElementSibling, i++
+    )
+      blocks.push(el);
+    // Innermost elements first: "作者：…" is read from its own span, not with the date
+    // next to it.
+    const all = blocks.flatMap((block) => [block, ...block.querySelectorAll('*')].slice(0, 200));
+    return [
+      ...all.filter((el) => !el.childElementCount),
+      ...all.filter((el) => el.childElementCount),
+    ];
+  }
+  const hint = (el) => `${el.id || ''} ${el.getAttribute('class') || ''}`;
+  const short = (el, limit) => {
+    const text = label(el?.textContent || '');
+    return text.length <= limit ? text : '';
+  };
+  function pageDetails(doc, url, found) {
+    let host = '';
+    try {
+      host = new URL(url).hostname;
+    } catch {}
+    const site = SITES[host];
+    const sources = {};
+    const pick = (key, candidates) => {
+      for (const [value, source] of candidates) {
+        const text = label(typeof value === 'function' ? value() : value);
+        if (text) {
+          sources[key] = source;
+          return text;
+        }
+      }
+      return '';
+    };
+    const wechat = { seconds: 0, cover: '' };
+    if (site?.wechat)
+      for (const script of [...doc.querySelectorAll('script:not([src])')].slice(0, 300)) {
+        const text = script.textContent;
+        wechat.seconds ||= Number(
+          /\b(?:create_time|ct)\s*=\s*["'](\d{9,11})["']/.exec(text)?.[1] || 0,
+        );
+        wechat.cover ||= /\bmsg_cdn_url\s*=\s*["']([^"']+)["']/.exec(text)?.[1] || '';
+        if (wechat.seconds && wechat.cover) break;
+      }
+    const line = titleLine(doc);
+    const siteSource = `site:${host}`;
+    const author = pick('author', [
+      [found.author, 'metadata'],
+      [
+        () => site?.author?.map((selector) => short(doc.querySelector(selector), 80)).find(Boolean),
+        siteSource,
+      ],
+      [
+        () =>
+          line
+            .map((el) => /^(?:作者|文|撰文|By)\s*[:：|｜/]\s*(.{1,60})$/i.exec(short(el, 70))?.[1])
+            .find(Boolean),
+        'title-line',
+      ],
+    ]);
+    const published = pick('publishedAt', [
+      [dateOnly(found.published), 'metadata'],
+      [() => wechat.seconds && chinaTime(wechat.seconds), siteSource],
+      [() => site?.published && dateText(short(doc.querySelector(site.published), 60)), siteSource],
+      [
+        () =>
+          line
+            .filter((el) => /date|time|publish/i.test(hint(el)))
+            .map((el) => dateText(short(el, 60)))
+            .find(Boolean),
+        'title-line',
+      ],
+    ]);
+    if (found.site) sources.siteName = 'metadata';
+    const image = (value) => {
+      const address = absolute(value, url);
+      return remote(address) ? address : '';
+    };
+    const cover = pick('cover', [
+      [image(found.image), 'metadata'],
+      [() => image(doc.querySelector('link[rel="image_src"]')?.getAttribute('href')), 'metadata'],
+      [
+        () => {
+          const img = site?.cover && doc.querySelector(site.cover);
+          return img && image(img.getAttribute('data-src') || img.getAttribute('src'));
+        },
+        siteSource,
+      ],
+      [() => image(wechat.cover), siteSource],
+    ]);
+    return { author, published, cover, sources };
+  }
+
   // Defuddle normalizes some attributes in the document it is given, so it reads a copy:
   // the page the user is reading is never changed. A copy has no layout, so elements the
   // page does not display are marked hidden (Defuddle drops [hidden]) and images keep
@@ -412,6 +550,38 @@
         return src ? `![${alt}](${destination(src)})` : alt;
       },
     });
+    // A figure of images keeps its caption beside them: on the next line (or the line before,
+    // where the page puts the caption first), in italics, with no blank line between. Other
+    // figures (a quote, a list) keep the caption as its own paragraph: a line right after a
+    // quote would join it.
+    const pictures = (el) =>
+      el.localName === 'img' ||
+      (!el.textContent.trim() &&
+        !!el.querySelector('img') &&
+        !el.querySelector('table, pre, ul, ol, blockquote'));
+    service.addRule('figure', {
+      filter: (node) =>
+        node.localName === 'figure' &&
+        !!node.querySelector(':scope > figcaption') &&
+        !!node.querySelector('img') &&
+        [...node.childNodes].every(
+          (child) =>
+            (child.nodeType === 3 && !child.data.trim()) ||
+            (child.nodeType === 1 && (child.localName === 'figcaption' || pictures(child))),
+        ),
+      replacement(content, node) {
+        const lines = [];
+        for (const child of node.children) {
+          const caption = child.localName === 'figcaption';
+          const text = service
+            .turndown(caption ? child.innerHTML : child.outerHTML)
+            .replace(/\s*\n+\s*/g, ' ')
+            .trim();
+          if (text) lines.push(caption && !/[*_]/.test(text) ? `*${text}*` : text);
+        }
+        return lines.length ? `\n\n${lines.join('\n')}\n\n` : '';
+      },
+    });
     service.addRule('fencedCode', {
       filter: (node) => node.nodeName === 'PRE',
       replacement(content, node) {
@@ -550,6 +720,16 @@
     } catch (error) {
       return { ok: false, reason: 'error', message: String(error?.message || error).slice(0, 300) };
     }
+    // Not for X posts: their author is the post's, and the page's image is no cover. A page
+    // these rules cannot read is clipped with Defuddle's metadata alone.
+    if (found && !found.unknownX && found.extractor !== 'x') {
+      try {
+        const { author, published, cover, sources } = pageDetails(document, url, found);
+        // A selection is a quote: it has the page's author and date, not a cover.
+        if (mode === 'selection') delete sources.cover;
+        found = { ...found, author, published, cover: mode === 'selection' ? '' : cover, sources };
+      } catch {}
+    }
     if (!found) return { ok: false, reason: 'no-selection' };
     if (found.unknownX) return { ok: false, reason: 'x-layout' };
     const selection = getSelection();
@@ -610,6 +790,23 @@
       if (found.extractor === 'x' && /\/status\/\d+/.test(new URL(url).pathname))
         posts = article.querySelectorAll('hr').length + 1;
     } catch {}
+    // Links and a few words around them, no image: an embedded video or player, or a page
+    // whose text did not load. It is saved, but not as a clip of the page's text. A
+    // selection is what the user chose, and an X post's words are the post.
+    const unlinked = article.cloneNode(true);
+    for (const link of unlinked.querySelectorAll('a')) link.remove();
+    const linksOnly =
+      mode !== 'selection' &&
+      found.extractor !== 'x' &&
+      !shown.size &&
+      !!article.querySelector('a[href]') &&
+      count(unlinked.textContent).words <= 12;
+    const sources = {};
+    for (const key of ['author', 'publishedAt', 'siteName', 'cover'])
+      if (/^[a-z][a-z0-9.:-]{0,59}$/.test(found.sources?.[key] || ''))
+        sources[key] = found.sources[key];
+    const cover = remote(found.cover) ? found.cover : '';
+    if (!cover) delete sources.cover;
     return {
       ok: true,
       mode,
@@ -629,6 +826,9 @@
       chars,
       truncated,
       posts,
+      cover,
+      metaSources: sources,
+      contentStatus: linksOnly ? 'linksOnly' : 'text',
       // How much of the text the page showed the clip kept, and what was put back.
       coverage: found.coverage
         ? {
@@ -700,6 +900,7 @@
       0 0 0 1px rgb(255 255 255 / 0.08); }
     .box[hidden] { display: none; }
     .box[data-tone='error'] { box-shadow: 0 6px 20px rgb(0 0 0 / 0.25), 0 0 0 1px #f28b82; }
+    .box[data-tone='warning'] { box-shadow: 0 6px 20px rgb(0 0 0 / 0.25), 0 0 0 1px #fdd663; }
     .actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; justify-content: flex-end; }
     button { all: unset; box-sizing: border-box; padding: 6px 12px; border-radius: 7px; cursor: pointer;
       background: rgb(255 255 255 / 0.1); white-space: nowrap; }

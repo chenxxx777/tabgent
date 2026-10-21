@@ -29,6 +29,7 @@ const paragraphs = (n, word) =>
   ).join('');
 const article = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>On Autonomy</title>
   <meta name="author" content="Fixture Author"><meta property="og:site_name" content="Fixture Essays">
+  <meta property="article:published_time" content="2026-08-07"><meta property="og:image" content="/img/cover.png">
   <style>body { font: 20px/1.6 Georgia, serif; max-width: 680px; margin: 40px auto }</style></head><body>
   <nav><a href="/">Home</a> <a href="/archive">Archive</a></nav>
   <main><article><h1>On Autonomy</h1>
@@ -92,6 +93,11 @@ const compare = `<!doctype html><html lang="en"><head><meta charset="utf-8"><tit
   ${paragraphs(3, 'After')}</article></main></body></html>`;
 const short = `<!doctype html><html><head><meta charset="utf-8"><title>Short note</title></head><body>
   <main><p>Only a few words on this page.</p></main><aside>${paragraphs(1, 'Aside')}</aside></body></html>`;
+// The page's cover (og:image), served only with a Referer like the protected image.
+const COVER = png(40, 24);
+// Only an embedded player: saving the whole page keeps a link, not the page's text.
+const video = `<!doctype html><html><head><meta charset="utf-8"><title>Recorded talk</title></head><body>
+  <main><h1>Recorded talk</h1><iframe src="/embed/talk" title="Talk"></iframe></main></body></html>`;
 
 (async () => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'tabgent-clip-'));
@@ -118,6 +124,14 @@ const short = `<!doctype html><html><head><meta charset="utf-8"><title>Short not
       }
       response.setHeader('content-type', 'image/png');
       return void response.end(PROTECTED);
+    }
+    if (pathname === '/img/cover.png') {
+      if (!request.headers.referer) {
+        response.statusCode = 403;
+        return void response.end();
+      }
+      response.setHeader('content-type', 'image/png');
+      return void response.end(COVER);
     }
     if (pathname === '/img/lazy.png') {
       response.setHeader('content-type', 'image/png');
@@ -147,7 +161,11 @@ const short = `<!doctype html><html><head><meta charset="utf-8"><title>Short not
             ? heavy
             : pathname === '/compare'
               ? compare
-              : article,
+              : pathname === '/video'
+                ? video
+                : pathname === '/embed/talk'
+                  ? '<!doctype html><title>Player</title><p>Player</p>'
+                  : article,
     );
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -351,6 +369,16 @@ const short = `<!doctype html><html><head><meta charset="utf-8"><title>Short not
     );
     assert.match(markdown, /Autonomy does not mean independence from others, but endorsement/);
     assert.match(markdown, /Body paragraph 8: careful readers/);
+    // The page's cover is saved with its images (with the page's Referer) and named in the
+    // front matter; the date is the date the page states.
+    const coverFile = `${crypto.createHash('sha256').update(COVER).digest('hex').slice(0, 16)}.png`;
+    assert.match(
+      markdown,
+      new RegExp(
+        `\\nsite: "Fixture Essays"\\npublished: "2026-08-07"\\ncover: "assets/${coverFile}"\\n`,
+      ),
+    );
+    assert.deepEqual(fs.readFileSync(path.join(articles, folder, 'assets', coverFile)), COVER);
     // The lazy image is saved in assets/; the forbidden and SVG images stay linked online.
     const picture = `${crypto.createHash('sha256').update(PICTURE).digest('hex').slice(0, 16)}.png`;
     assert.match(markdown, new RegExp(`!\\[Lazy figure\\]\\(assets/${picture}\\)`));
@@ -368,6 +396,18 @@ const short = `<!doctype html><html><head><meta charset="utf-8"><title>Short not
     assert(first.coverage.ratio >= 0.95, JSON.stringify(first.coverage));
     assert.equal(first.origin.pageUrl, origin + '/essays/autonomy?id=3#intro');
     assert.equal(first.origin.method, 'article');
+    assert.deepEqual(first.cover, {
+      source: `${origin}/img/cover.png`,
+      file: `assets/${coverFile}`,
+    });
+    assert.deepEqual(first.metaSources, {
+      author: 'metadata',
+      publishedAt: 'metadata',
+      siteName: 'metadata',
+      cover: 'metadata',
+    });
+    assert.equal(first.contentStatus, 'text');
+    assert.equal(first.publishedAt, '2026-08-07');
     assert.deepEqual(first.images, {
       found: 5,
       saved: 3,
@@ -388,6 +428,7 @@ const short = `<!doctype html><html><head><meta charset="utf-8"><title>Short not
       [
         [`assets/${picture}`, 'image/png'],
         [`assets/${protectedFile}`, 'image/png'],
+        [`assets/${coverFile}`, 'image/png'],
       ].sort(),
     );
     assert.match(markdown, new RegExp(`!\\[Protected figure\\]\\(assets/${protectedFile}\\)`));
@@ -397,6 +438,17 @@ const short = `<!doctype html><html><head><meta charset="utf-8"><title>Short not
       .map(([, referer]) => referer);
     // Same origin as the page: the page's address without its fragment, as Chrome sends it.
     assert.deepEqual([...new Set(workerReferers)], [origin + '/essays/autonomy?id=3']);
+    assert.deepEqual(
+      [
+        ...new Set(
+          referers
+            .slice(before)
+            .filter(([url]) => url === '/img/cover.png')
+            .map(([, referer]) => referer),
+        ),
+      ],
+      [origin + '/essays/autonomy?id=3'],
+    );
     // One file, saved from two addresses: both are recorded.
     assert.deepEqual(
       first.assets.find((asset) => asset.file === `assets/${picture}`).sources.sort(),
@@ -416,6 +468,7 @@ const short = `<!doctype html><html><head><meta charset="utf-8"><title>Short not
     );
     // Only the images are fetched, by the worker; the page itself is not loaded again.
     assert.deepEqual([...new Set(requested.slice(before))].sort(), [
+      '/img/cover.png',
       '/img/forbidden.png',
       '/img/hotlinked.png',
       '/img/lazy.png',
@@ -527,6 +580,30 @@ print(json.dumps([m["path"] for m in found["matches"]][:3] + [read["text"][:2000
     await reader.waitForSelector('#content p');
     assert.equal(await reader.textContent('#pageTitle'), 'On Autonomy');
     assert.match(await reader.textContent('#byline'), /Fixture Author · Fixture Essays/);
+    // The published date as the page states it (not moved to this computer's time zone).
+    const publishedText = await reader.evaluate(() =>
+      new Intl.DateTimeFormat(chrome.i18n.getUILanguage(), {
+        dateStyle: 'medium',
+        timeZone: 'UTC',
+      }).format(Date.UTC(2026, 7, 7)),
+    );
+    assert(
+      (await reader.textContent('#byline')).includes(
+        await message('readingPublished', publishedText),
+      ),
+      await reader.textContent('#byline'),
+    );
+    // The cover shows above the text, from the vault.
+    assert(
+      await until(() =>
+        reader.evaluate(() => {
+          const cover = document.getElementById('cover');
+          return !cover.hidden && cover.src.startsWith('blob:') && cover.naturalWidth === 40;
+        }),
+      ),
+      'The cover is shown',
+    );
+    assert.equal(await reader.isVisible('#notice'), false);
     // The live page's highlight is painted on the clipped copy.
     const painted = (target) =>
       target.evaluate(() => CSS.highlights.get('tabgent-highlight')?.size ?? 0);
@@ -767,7 +844,36 @@ print(json.dumps([m["path"] for m in found["matches"]][:3] + [read["text"][:2000
     assert(shortFolder);
     assert.equal(record(shortFolder).origin.method, 'page');
     assert.match(read(shortFolder, 'article.md'), /Only a few words on this page\./);
+    assert.equal(record(shortFolder).contentStatus, 'text');
     console.log('PASS a page with little text can be saved whole');
+
+    // Only an embedded player: saved whole, the clip holds only its link, and the page says
+    // so instead of reporting a normal clip.
+    await page.goto(origin + '/video');
+    await wait(800);
+    await panel(`(() => {
+      document.getElementById('readingButton').click();
+      document.getElementById('readingClip').click();
+    })()`);
+    assert(await until(async () => (await promptText(page)).startsWith(little)));
+    await clickIn(page, 'tabgent-clip', button(await message('clipWholePage')));
+    const videoFolder = await until(() =>
+      folders().find(
+        (name) =>
+          name.startsWith('article-recorded-talk-') &&
+          fs.existsSync(path.join(articles, name, 'article.json')),
+      ),
+    );
+    assert(videoFolder, 'The page with only a player is saved');
+    assert.equal(record(videoFolder).contentStatus, 'linksOnly');
+    assert.match(read(videoFolder, 'article.md'), new RegExp(`\\(${origin}/embed/talk\\)`));
+    const linksOnlyText = await message('clipLinksOnly', 'Recorded talk');
+    assert(
+      await until(async () => (await promptText(page)).startsWith(linksOnlyText)),
+      'The page says only links were saved',
+    );
+    assert(!(await promptText(page)).includes(await message('clipSaved', 'Recorded talk', '1')));
+    console.log('PASS a page with only an embedded player is saved as links only, and says so');
 
     // Large images download and upload while the clip runs, one vault request at a time: a
     // highlight made meanwhile in another tab saves within two seconds.
@@ -844,6 +950,36 @@ print(json.dumps([m["path"] for m in found["matches"]][:3] + [read["text"][:2000
     assert(entry, 'The library lists the clipped page');
     assert.equal(entry.original, origin + '/essays/autonomy?id=3');
     assert(entry.meta.includes(await message('libraryKindClipped')), entry.meta);
+    // The clipped page shows its cover from the vault; the player page says it holds links.
+    assert(
+      await until(() =>
+        library.evaluate(
+          (url) =>
+            [...document.querySelectorAll('#books li')]
+              .find((li) => li.querySelector('.item')?.getAttribute('href')?.endsWith(url))
+              ?.querySelector('img.cover')?.naturalWidth === 40,
+          '?url=' + origin + '/essays/autonomy?id=3',
+        ),
+      ),
+      'The library shows the cover',
+    );
+    const linksOnlyLabel = await message('libraryLinksOnly');
+    const videoMeta = await library.evaluate(
+      (url) =>
+        [...document.querySelectorAll('#books li')]
+          .find((li) => li.querySelector('.item')?.getAttribute('href')?.endsWith(url))
+          ?.querySelector('.meta').textContent,
+      '?url=' + origin + '/video',
+    );
+    assert(videoMeta?.includes(linksOnlyLabel), videoMeta);
+    assert(!entry.meta.includes(linksOnlyLabel), entry.meta);
+    // Its clipped copy says it holds only links.
+    const videoReader = await context.newPage();
+    await videoReader.goto(readerPrefix + origin + '/video');
+    await videoReader.waitForSelector('#content a');
+    assert.equal(await videoReader.textContent('#notice'), await message('clipLinksOnlyNotice'));
+    assert.equal(await videoReader.isVisible('#notice'), true);
+    await videoReader.close();
     await library.click(`#books a.item[href="${entry.href}"]`);
     await library.waitForURL(readerPrefix + '**');
     await library.waitForSelector('#content p');

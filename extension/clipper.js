@@ -69,6 +69,14 @@ export function cleanClip(result) {
     .slice(0, CLIP_LIMIT.images)
     .map((image) => ({ url: text(image?.url, 4096) }))
     .map((image) => (/^https?:\/\//i.test(image.url) ? image : { url: '' }));
+  const cover = text(result.cover, 4097);
+  // Where each value came from: a short name such as metadata or site:<host>.
+  const metaSources = {};
+  for (const key of ['author', 'publishedAt', 'siteName', 'cover']) {
+    const source = result.metaSources?.[key];
+    if (typeof source === 'string' && /^[a-z][a-z0-9.:-]{0,59}$/.test(source))
+      metaSources[key] = source;
+  }
   return {
     title: text(result.title, 500),
     meta: cleanPageMeta({
@@ -89,6 +97,11 @@ export function cleanClip(result) {
     images,
     imageToken: /^[0-9a-f]{32}$/.test(result.imageToken || '') ? result.imageToken : '',
     posts: count(result.posts),
+    // The page's cover image (og:image and the like), saved with the clip's images.
+    cover: /^https?:\/\//i.test(cover) && cover.length <= 4096 ? cover : '',
+    metaSources,
+    // linksOnly: only links were found (an embedded video, a page whose text did not load).
+    contentStatus: result.contentStatus === 'linksOnly' ? 'linksOnly' : 'text',
     coverage: cleanCoverage(result.coverage),
   };
 }
@@ -102,24 +115,38 @@ export async function storeClip(
   { url, title, clip, imagesFrom = '', referer = '', origin, existing = null, fetch, onProgress },
 ) {
   const images = clip.images.filter((image) => image.url);
-  const downloaded = images.length
-    ? await fetchImages(clip.images, imagesFrom, {
-        fetch: referer ? refererFetch(referer, fetch) : fetch,
-        onProgress,
-      })
-    : { assets: [], files: new Map(), failed: [] };
+  const cover = clip.cover || '';
+  // The cover comes first, so the count limit never leaves it out; it has the same limits,
+  // cookies and Referer as the page's images, and is not counted as one of them.
+  const list = cover ? [{ url: cover }, ...clip.images] : clip.images;
+  const downloaded =
+    images.length || cover
+      ? await fetchImages(list, imagesFrom, {
+          fetch: referer ? refererFetch(referer, fetch) : fetch,
+          onProgress,
+        })
+      : { assets: [], files: new Map(), failed: [] };
+  const shift = cover ? 1 : 0;
+  const files = new Map(
+    [...downloaded.files]
+      .filter(([index]) => index >= shift)
+      .map(([index, file]) => [index - shift, file]),
+  );
+  const coverFile = (cover && downloaded.files.get(0)) || '';
   await uploadImages(vault, downloaded.assets);
   // Web addresses replace the placeholders of unsaved images, unless that makes the
   // Markdown too long: then those images keep only their description.
-  let markdown = localizeMarkdown(clip.markdown, clip.imageToken, clip.images, downloaded.files);
+  let markdown = localizeMarkdown(clip.markdown, clip.imageToken, clip.images, files);
   if (bytes(markdown) > CLIP_LIMIT.markdown)
-    markdown = localizeMarkdown(clip.markdown, clip.imageToken, clip.images, downloaded.files, {
+    markdown = localizeMarkdown(clip.markdown, clip.imageToken, clip.images, files, {
       remote: false,
     });
   if (bytes(markdown) > CLIP_LIMIT.markdown) return { ok: false };
   // Counted by address: an image the page shows at two addresses is one file.
-  const found = new Set(images.map((image) => image.url)).size;
-  const kept = found - downloaded.failed.length;
+  const addresses = new Set(images.map((image) => image.url));
+  const failed = downloaded.failed.filter((entry) => addresses.has(entry.source));
+  const found = addresses.size;
+  const kept = found - failed.length;
   const saved = await vault.request(
     'vault/clip/save',
     {
@@ -147,14 +174,17 @@ export async function storeClip(
       images: {
         found,
         saved: kept,
-        remote: downloaded.failed.length,
-        failed: downloaded.failed.slice(0, 200),
+        remote: failed.length,
+        failed: failed.slice(0, 200),
       },
+      cover: cover ? { source: cover, file: coverFile && `assets/${coverFile}` } : null,
+      metaSources: clip.metaSources || {},
+      contentStatus: clip.contentStatus === 'linksOnly' ? 'linksOnly' : 'text',
       ...(existing ? { replace: true, expected: existing.clippedAt } : {}),
     },
     { timeout: 60000 },
   );
-  return { ok: true, saved, kept, failed: downloaded.failed.length };
+  return { ok: true, saved, kept, failed: failed.length };
 }
 
 export function createClipper({ vault, changed = () => {}, fetch = globalThis.fetch }) {
@@ -267,9 +297,12 @@ export function createClipper({ vault, changed = () => {}, fetch = globalThis.fe
       return { ok: false, reason: 'conflict' };
     }
     const title = clip.title || saved.document?.title || '';
+    // Only links were found (an embedded video, a page whose text did not load): the clip is
+    // kept, but not reported as the page's text.
+    const linksOnly = clip.contentStatus === 'linksOnly';
     await say(tabId, {
       text: [
-        t('clipSaved', title, clip.words),
+        linksOnly ? t('clipLinksOnly', title) : t('clipSaved', title, clip.words),
         kept ? t('clipImagesSaved', kept) : '',
         failed ? t('clipImagesFailed', failed) : '',
         clip.posts ? t('clipXPartial', clip.posts) : '',
@@ -279,10 +312,17 @@ export function createClipper({ vault, changed = () => {}, fetch = globalThis.fe
       ]
         .filter(Boolean)
         .join(' '),
+      tone: linksOnly ? 'warning' : 'info',
       open: true,
     });
     changed(tabId);
-    return { ok: true, document: saved.document, clip: saved.clip, backup: saved.backup || null };
+    return {
+      ok: true,
+      document: saved.document,
+      clip: saved.clip,
+      backup: saved.backup || null,
+      contentStatus: clip.contentStatus,
+    };
   }
 
   // One clip at a time per tab; a repeated shortcut while one runs does nothing.
