@@ -7,6 +7,7 @@
 import DOMPurify from '../vendor/dompurify/purify.js';
 import { localize, t, loadTimeData } from '../i18n.js';
 import '../user-error.js';
+import { createDocumentNotes } from '../ui/document-notes.js';
 
 const { config, remote } = globalThis.tabgentClipSanitize;
 const $ = (id) => document.getElementById(id);
@@ -306,6 +307,7 @@ async function present({ html, title, byline, language, direction, meta, images:
   $('pageTitle').textContent = title;
   $('byline').textContent = byline.filter(Boolean).join(' · ');
   $('status').hidden = true;
+  void showNotes();
   globalThis.tabgentReadingView = { name: 'clip', url: page, root: content, title, meta };
   await import('../selection-content.js');
   await import('../highlight-content.js');
@@ -320,6 +322,35 @@ async function present({ html, title, byline, language, direction, meta, images:
     { passive: true },
   );
 }
+
+// The user's comment on the whole page and its tags, under the title. Saving one on a feed
+// item that is not saved yet saves the item first (the worker does).
+const notes = createDocumentNotes({
+  t: (key, ...args) => (args.length ? loadTimeData.getStringF(key, ...args) : t(key)),
+  save: ({ comment, base }) => send({ type: 'clipComment', title: document.title, comment, base }),
+  tags: (change) => send({ type: 'clipTags', title: document.title, ...change }),
+  tagList: async () => (await send({ type: 'tagsList' })).tags,
+  onError: (message) => notice(message),
+});
+$('documentNotes').append(notes.element);
+async function showNotes() {
+  try {
+    notes.set(await send({ type: 'clipNotes', title: document.title }));
+  } catch {
+    notes.set({}, { editable: false });
+  }
+  $('documentNotes').hidden = false;
+}
+// Changed in the side panel or the library.
+chrome.runtime.onMessage.addListener((message, sender) => {
+  if (sender.id !== chrome.runtime.id || message?.type !== 'tabgentNotesChanged') return;
+  if (message.all) void showNotes();
+  else if (message.url === page) notes.set(message);
+});
+// A draft is not lost by leaving the page.
+addEventListener('beforeunload', (event) => {
+  if (notes.dirty()) event.preventDefault();
+});
 
 async function showClip() {
   let loaded;

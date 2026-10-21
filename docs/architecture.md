@@ -40,6 +40,7 @@ flowchart LR
 | `extension/reading.js`            | Reading context parts, turn records, and vault append parameters.           |
 | `extension/session-config.js`     | Browser tool schema and agent instructions.                                 |
 | `extension/ui/`                   | Chat rendering, composer, attachments, previews, approvals, and onboarding. |
+| `extension/ui/document-notes.js`  | A document's comment and tags: one control for readers, panel and library.  |
 | `extension/_locales/en/`          | English UI strings; i18n structure is retained.                             |
 | `extension/native/host.py`        | App-server discovery, sessions, authentication events, and RPC transport.   |
 | `extension/native/attachments.py` | Bounded uploads and text/PDF/DOCX reading.                                  |
@@ -180,6 +181,8 @@ kind: web
 source: "https://x.com/adalin/status/1"
 author: "[[Ada Lin]]"
 saved: 2026-10-19T21:03:00+08:00
+tags:
+  - 阅读方法
 ---
 
 # Ada Lin：Reading is a loop, not a line
@@ -196,6 +199,12 @@ saved: 2026-10-19T21:03:00+08:00
 - 讨论：[[../Discussions/Tweets/Ada Lin：Reading is a loop, not a line|与 Codex 的讨论]]
 <!-- tabgent:metadata document end -->
 
+<!-- tabgent:comment document start -->
+## 全文评论
+
+想用它说明"精读"和"泛读"的区别。
+<!-- tabgent:comment document end -->
+
 <!-- Tabgent 只在带 tabgent 标记的块里插入、更新或删除内容，其余内容都是你的。 -->
 
 ## 高亮
@@ -209,7 +218,7 @@ saved: 2026-10-19T21:03:00+08:00
 
 Front matter keys are written when the note is created; later Tabgent adds only keys it
 never wrote to the file (and `tabgent_id` whenever it is missing), and never changes or
-removes a key, so the user's own keys such as `tags` stay. The metadata block holds the
+removes a key, except `tags` when the user changes the document's tags in Tabgent. The metadata block holds the
 cover, author, title, category tag, address, dates, the feed a saved item came from,
 the clip's summary and transcript status, page or chapter counts, and links to the full
 text, the visible original and the discussions. Each highlight is a list item: its
@@ -218,9 +227,10 @@ its location, time, a link to its place (the text fragment on the web page, the 
 the visible PDF copy, or the chapter in a book's full text) and to its discussion.
 Links between the vault's notes are Obsidian links relative to the file
 (`[[../Discussions/…#高亮 001|…]]`), so they resolve wherever the vault is, also inside a
-larger Obsidian vault; images are relative Markdown links. The place between the
-metadata block and `## 高亮` is kept for a document-level comment block, and `tags` in
-the front matter for document tags.
+larger Obsidian vault; images are relative Markdown links. Between the metadata
+block and `## 高亮`, the `comment document` block holds the user's comment on the whole
+document, and the front matter's `tags` its tags (see [Document comments and
+tags](#document-comments-and-tags)).
 
 `Discussions/<category>/<name>.md` has a `## 高亮 NNN` block per highlight with turns
 (the quoted text, linking back to `^hNNN` in the note, then each turn's
@@ -247,6 +257,75 @@ there is none). An empty note removes it, and an unchanged note writes nothing. 
 deleted highlight takes its comment with it, and a deleted or unknown highlight returns
 `not_found`. `anchors.json` is the source: editing the comment in the note does not
 change the saved comment.
+
+### Document comments and tags
+
+A document has one comment of the user's on the whole of it (Markdown, at most 20,000
+characters) and a list of tags. Unlike a highlight's comment, the note is their source:
+the user may edit both in Obsidian.
+
+- **Comment:** the note's `<!-- tabgent:comment document start -->` …
+  `<!-- tabgent:comment document end -->` block, after the metadata block and before
+  `## 高亮`. Its first line is the heading `## 全文评论`; the comment is the rest, trimmed.
+  There is no block without a comment. Lines of the comment that start with
+  `<!-- tabgent:` are written with a space before them.
+- **Tags:** the front matter's `tags` key, written as a YAML list, one value per line,
+  without `#`: a plain scalar when it is safe (a letter first, then letters, digits,
+  `_ - /`), else a JSON string. Tabgent removes the key when there are no tags. It reads
+  the forms users write by hand too: a list, a flow list `tags: [a, "b"]` and a string
+  `tags: a, b`, each value without a leading `#`. Tags match by `tag_key`: Unicode NFC,
+  trimmed, without a leading `#`, ignoring case (`AI学习` and `ai学习` are one tag); a
+  document keeps the first spelling of a key, and a tag shows as written. A tag entered
+  in Tabgent also loses invisible and control characters and has its spaces written as
+  `-` (Obsidian tags have no spaces); it is at most 100 characters, with at most 100 tags
+  per document.
+
+`vault.py` reads them with `note_comment(lines)` (the comment, or `None` without a
+block), `note_tags(lines)` and `tag_key(tag)`; `document_annotations(root, data)` returns
+`{comment, tags}` for a document from its note, or from the copy in `anchors.json`
+(`document.comment` `{text, updatedAt}` and `document.tags`) when the note is missing or
+not UTF-8, and reuses a note's result until the file changes. `vault/document/resolve`
+and every `vault/documents/list` entry carry `comment` and `tags`.
+
+`vault/document/comment` (`{ documentId | url, title, kind, comment, base? }`) sets the
+comment; `''` removes it and its block. `base` is the comment the editor showed: when
+the note's comment is still that one, the block is replaced; when it was changed
+elsewhere since, that version is kept as the user's own text above the new block and the
+result says `kept: true`. `vault/document/tags` (`{ documentId | url, title, kind,
+add?, remove? }`) adds tags (an existing key is not added twice) and removes them by key,
+changing only the `tags` key of the front matter. A page without a document gets a
+minimal one (no highlights, no clip) for its first comment or tag; removing from a page
+that has none writes nothing. Both return `{document, comment, tags}`. A clip saved
+again, a deleted clip and a removed subscription leave the note's comment and tags.
+
+`vault/tags/list` returns every tag with the number of documents that have it, most used
+first: `{name, count, spellings}`, named by its most used spelling. `vault/tags/rename`
+(`{from, to}`) renames a tag in every document that has it; when `to` is another existing
+tag, the two merge (a document with both keeps one). `vault/tags/delete` (`{tag}`)
+removes a tag from every document; the documents stay. Each document is written on its
+own: the result is `{changed, failed, merged}`, and running a rename or delete again
+completes it.
+
+Every other write first reads the note's comment and tags back into the record (the copy
+a missing note is written again from). A comment block the user edited is left as they
+wrote it; one they removed stays removed. `reading_vault` search matches comment lines
+like any note text, and a note's `tags` lines in its front matter.
+
+The extension shows both in three places, with `extension/ui/document-notes.js`: under
+the title in the clipped-page reader (`clipNotes`, `clipComment`, `clipTags`, for the
+reader's own page; a feed item not saved yet is saved first), in the side panel's page
+drawer (`readingComment`, `readingTags`, `readingTagList`, for the companion tab's
+document) and under each document in the library (`libraryComment`, `libraryTags`,
+`tagsList`, `tagsRename`, `tagsDelete`); clicking a tag dispatches `library-filter-tag`, which adds it to
+the search filters). After a change the worker sends
+`tabgentNotesChanged` with the document's new comment and tags (`all: true` after a
+rename or delete) to extension pages and refreshes side panels, so every view of the
+document follows. A comment is a draft until saved: the reader and the library ask
+before leaving the page with one, the library before another document's editor opens
+(a row with an open editor keeps it across searches, and returning to the window does not
+search again while one is open),
+and the side panel keeps a draft for the document it showed when its page changes, with
+**Save it there** and **Discard**.
 
 Writes hold a process lock plus an advisory lock on `.tabgent/lock`, and replace
 files through a temporary file and rename, so concurrent requests and a second
@@ -1070,7 +1149,9 @@ survives list refreshes.
 The worker adds a hidden reading-context part after the browser context of each
 message. It names the document (title, URL, kind and notes file), the bound
 highlight (its text unless the quote is attached, and the user's note on it as
-`userNote`, read fresh for each message and cut to 2,000 characters), up to five
+`userNote`, read fresh for each message and cut to 2,000 characters), the user's comment
+on the whole document (`userComment`, cut to 4,000 characters) and its tags
+(`userTags`), up to five
 earlier turns on it
 from other threads (about 6,000 characters, sent once per thread), the vault folder
 with its `AGENTS.md`, and the save target. The part is also the turn's durable

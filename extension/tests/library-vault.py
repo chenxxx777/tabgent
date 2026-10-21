@@ -484,8 +484,11 @@ with tempfile.TemporaryDirectory(prefix="tabgent-library-vault-") as directory:
             "author",
             "highlightCount",
             "clip",
+            "comment",
+            "tags",
             "source",
         }
+        assert local["comment"] == "" and local["tags"] == []
         # Only a clipped webpage has a clip.
         assert all(entry["clip"] is None for entry in listed)
         print(

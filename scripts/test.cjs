@@ -27,6 +27,7 @@ for (const file of [
   'vault-layout.py',
   'document-id.py',
   'vault-notes.py',
+  'vault-annotations.py',
   'epub-vault.py',
   'library-vault.py',
   'library-search.py',

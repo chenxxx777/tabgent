@@ -126,6 +126,7 @@ const reading = createReadingCompanion({
   pdfSource,
   clipSource,
   commitItem: (tabId, url) => feeds.commit(tabId, url),
+  notesChanged: (result) => notesChanged(result),
   filePdfDocument,
   epubDocument,
   isEpubReaderUrl,
@@ -153,6 +154,9 @@ const readingMessages = new Set([
   'readingJump',
   'readingOpen',
   'readingNote',
+  'readingComment',
+  'readingTags',
+  'readingTagList',
   'vaultConfigure',
 ]);
 async function getSession(tabId) {
@@ -1281,6 +1285,105 @@ async function clipMessage(msg, sender) {
     if (showing.has(s.tabId)) for (const p of s.ports) event(p, 'codex-reading-changed');
   return result;
 }
+// The user's comment on a whole document and its tags, from the library (any document) and
+// the clipped-page reader (its own page only); the side panel's are in reading-companion.js.
+// Every view of the document then shows the change.
+const noteMessages = new Set([
+  'libraryComment',
+  'libraryTags',
+  'tagsList',
+  'tagsRename',
+  'tagsDelete',
+  'clipNotes',
+  'clipComment',
+  'clipTags',
+]);
+const tagNames = (value) =>
+  (Array.isArray(value) ? value : [])
+    .slice(0, 100)
+    .map((tag) => pageText(tag, 400))
+    .filter((tag) => tag.trim());
+function noteChange(msg, params) {
+  if (msg.type.endsWith('Comment'))
+    return [
+      'vault/document/comment',
+      {
+        ...params,
+        comment: pageText(msg.comment, 20000),
+        ...(typeof msg.base === 'string' ? { base: pageText(msg.base, 2000000) } : {}),
+      },
+    ];
+  return [
+    'vault/document/tags',
+    { ...params, add: tagNames(msg.add), remove: tagNames(msg.remove) },
+  ];
+}
+async function notesChanged(result, all = false) {
+  await loaded;
+  for (const s of sessions.values()) for (const p of s.ports) event(p, 'codex-reading-changed');
+  const document = result?.document;
+  if (!document && !all) return;
+  chrome.runtime
+    .sendMessage({
+      type: 'tabgentNotesChanged',
+      ...(all
+        ? { all: true }
+        : {
+            documentId: document.id,
+            url: document.url,
+            comment: result.comment || '',
+            tags: result.tags || [],
+          }),
+    })
+    .catch(() => {});
+}
+async function noteMessage(msg, sender) {
+  const library = isCurrentEpubSender(sender);
+  const page = !library && clipSource(sender.url);
+  // The errors the library and the reader answer by registering their port again (after the
+  // worker restarted).
+  if (!library && !page) throw Error('Invalid EPUB reader sender');
+  if (page && !(await isCurrentClipSender(sender))) throw Error('Invalid clipped page reader');
+  if (msg.type === 'tagsList') return vaultRequest('vault/tags/list', {});
+  if (library) {
+    if (msg.type === 'tagsRename' || msg.type === 'tagsDelete') {
+      const result =
+        msg.type === 'tagsRename'
+          ? await vaultRequest('vault/tags/rename', {
+              from: pageText(msg.from, 400),
+              to: pageText(msg.to, 400),
+            })
+          : await vaultRequest('vault/tags/delete', { tag: pageText(msg.tag, 400) });
+      if (result.changed) void notesChanged(null, true);
+      return result;
+    }
+    if (msg.type !== 'libraryComment' && msg.type !== 'libraryTags')
+      throw Error('Invalid EPUB reader sender');
+    const result = await vaultRequest(
+      ...noteChange(msg, { documentId: pageText(msg.documentId, 300) }),
+    );
+    void notesChanged(result);
+    return result;
+  }
+  if (!['clipNotes', 'clipComment', 'clipTags'].includes(msg.type))
+    throw Error('Invalid clipped page reader');
+  const source = { url: page, title: pageText(msg.title, 500), kind: 'web' };
+  if (msg.type === 'clipNotes') {
+    const resolved = await vaultRequest('vault/document/resolve', source);
+    return {
+      document: resolved.document?.createdAt ? resolved.document : null,
+      comment: resolved.comment || '',
+      tags: resolved.tags || [],
+    };
+  }
+  // A feed item not saved yet becomes a vault document first, with the reader's text, so
+  // its comment and tags stay after the subscription goes. If it cannot be saved, the
+  // comment still is, on a document of its own.
+  await feeds.commit(sender.tab.id, page).catch(() => null);
+  const result = await vaultRequest(...noteChange(msg, source));
+  void notesChanged(result);
+  return result;
+}
 // The clipped copy of a page opens in a tab next to the page.
 function openClip(tab, url) {
   return chrome.tabs.create({
@@ -1343,6 +1446,10 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     (msg.type === 'pdfLocalRead' ? pdfLocalRead : pdfFileSave)(msg, sender).then(reply, (e) =>
       reply(reportedError(e)),
     );
+    return true;
+  }
+  if (noteMessages.has(msg.type)) {
+    noteMessage(msg, sender).then(reply, (e) => reply(reportedError(e)));
     return true;
   }
   if (clipMessages.has(msg.type)) {

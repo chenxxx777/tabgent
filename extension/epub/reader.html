@@ -13,6 +13,7 @@
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='none' stroke='%23858585' stroke-width='1.8' stroke-linejoin='round' d='M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5zm0 15A2.5 2.5 0 0 0 6.5 23H20v-5'/%3E%3C/svg%3E"
     />
     <link rel="stylesheet" href="reader.css" />
+    <link rel="stylesheet" href="../ui/document-notes.css" />
     <script src="../web-anchor.js"></script>
     <script type="module" src="reader.js"></script>
   </head>
@@ -136,7 +137,10 @@
               hidden
             />
           </div>
-          <h2>$i18n{libraryDocuments}</h2>
+          <div id="documentsHeading">
+            <h2>$i18n{libraryDocuments}</h2>
+            <button id="tagsManage" type="button">$i18n{tagsManage}</button>
+          </div>
           <p id="booksStatus" class="muted" role="status" aria-live="polite"></p>
           <ul id="books"></ul>
           <button id="libraryMore" hidden>$i18n{feedsMore}</button>
@@ -248,6 +252,14 @@
         ><button id="noteSave" class="primary">$i18n{highlightNoteSave}</button>
       </div>
     </div>
+    <dialog id="tagManager" aria-labelledby="tagManagerTitle">
+      <div class="dialog-heading">
+        <h2 id="tagManagerTitle">$i18n{tagsManageTitle}</h2>
+        <button id="tagManagerClose" type="button">$i18n{tagsClose}</button>
+      </div>
+      <p id="tagManagerStatus" class="muted" role="status"></p>
+      <ul id="tagManagerList"></ul>
+    </dialog>
     <div id="toast" popover="manual" role="alert"></div>
   </body>
 </html>

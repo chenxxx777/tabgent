@@ -20,7 +20,17 @@ const fields = [
 ];
 const key = (tag) => tag.normalize('NFC').trim().replace(/^#+/, '').toLowerCase();
 
-export function initLibrarySearch({ send, positions, renderItem, explain, beforeRender }) {
+export function initLibrarySearch({
+  send,
+  positions,
+  renderItem,
+  explain,
+  beforeRender,
+  afterRender = () => {},
+  // True while the list holds something a search would disturb (a comment being edited):
+  // returning to the window does not search again then.
+  busy = () => false,
+}) {
   let version = 0,
     timer,
     tags = [],
@@ -68,10 +78,10 @@ export function initLibrarySearch({ send, positions, renderItem, explain, before
   });
   // Returning from Obsidian updates the same query, including edits to tags and comments.
   addEventListener('focus', () => {
-    if (visible) schedule();
+    if (visible && !busy()) schedule();
   });
   document.addEventListener('visibilitychange', () => {
-    if (visible && !document.hidden) schedule();
+    if (visible && !document.hidden && !busy()) schedule();
   });
 
   function renderTags() {
@@ -190,6 +200,7 @@ export function initLibrarySearch({ send, positions, renderItem, explain, before
         ? loadTimeData.getStringF('libraryResultCount', items.length, total)
         : t($('libraryActiveFilters').childElementCount ? 'libraryNoResults' : 'libraryEmpty');
       $('libraryMore').hidden = items.length >= total;
+      afterRender();
     } catch (error) {
       if (current !== version || !visible) return;
       $('books').replaceChildren();

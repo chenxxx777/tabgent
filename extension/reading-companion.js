@@ -41,6 +41,8 @@ export function createReadingCompanion({
   clipSource = () => null,
   // A feed item shown in the reader and not saved yet becomes a vault document first.
   commitItem = async () => null,
+  // A document's comment or tags changed: the library and readers of it show the change.
+  notesChanged = () => {},
   filePdfDocument = () => undefined,
   epubDocument = () => undefined,
   isEpubReaderUrl = () => false,
@@ -244,6 +246,9 @@ export function createReadingCompanion({
         ...document,
         id: bound?.highlightId ? bound.documentId : existing?.id,
         notes: clip(existing?.notesPath, 4096),
+        // The user's own comment on the whole document and their tags for it.
+        userComment: existing ? resolved?.comment : '',
+        userTags: existing ? resolved?.tags : [],
         // The full text in the vault: an imported EPUB's or PDF's (a section per chapter
         // or page), or a clipped webpage's, whichever view the user reads.
         fullText:
@@ -484,6 +489,37 @@ export function createReadingCompanion({
         if (s.tabId === tabId) for (const port of s.ports) event(port, 'codex-reading-changed');
       return state(source, tabId);
     }
+    if (msg.type === 'readingTagList') return vault.request('vault/tags/list', {});
+    if (msg.type === 'readingComment' || msg.type === 'readingTags') {
+      // The page's document, or the one a draft was written for before the page changed.
+      const current = msg.target ? null : await pageDocument(tabId, {}, source);
+      const earlier = msg.target || (current?.url !== msg.page?.url && msg.page);
+      const target = earlier ? draftTarget(earlier) : current;
+      if (!target) throw Error('This page has no reading notes');
+      // A feed item shown in the reader and not saved yet is saved first, as for a highlight.
+      if (!earlier && target.view === 'clip' && !target.closed)
+        await commitItem(tabId, target.url).catch(() => null);
+      const params = { url: target.url, title: target.title, kind: target.kind };
+      const strings = (value) =>
+        (Array.isArray(value) ? value : [])
+          .slice(0, 100)
+          .filter((tag) => typeof tag === 'string')
+          .map((tag) => tag.slice(0, 400));
+      const result =
+        msg.type === 'readingComment'
+          ? await vault.request('vault/document/comment', {
+              ...params,
+              comment: String(msg.comment ?? '').slice(0, 20000),
+              ...(typeof msg.base === 'string' ? { base: msg.base.slice(0, 2000000) } : {}),
+            })
+          : await vault.request('vault/document/tags', {
+              ...params,
+              add: strings(msg.add),
+              remove: strings(msg.remove),
+            });
+      await notesChanged(result);
+      return { ...(await state(source, tabId)), result };
+    }
     if (msg.type === 'readingOpen') {
       const { document, resolved, highlight } = await pageHighlight(source, tabId, msg);
       const [frame, context] = await Promise.all([
@@ -536,6 +572,13 @@ export function createReadingCompanion({
     return state(source, tabId);
   }
 
+  // The document a side panel draft belongs to: one the panel showed before its page changed.
+  function draftTarget(value) {
+    const url = typeof value?.url === 'string' ? documentUrl(value.url) : '';
+    if (!url || url.length > 16384 || !['web', 'pdf', 'epub'].includes(value.kind)) return null;
+    return { url, title: clip(value.title, 500), kind: value.kind };
+  }
+
   // A saved highlight of the document the tab shows, checked against the vault record.
   async function pageHighlight(source, tabId, msg) {
     const document = await pageDocument(tabId, {}, source);
@@ -576,6 +619,9 @@ export function createReadingCompanion({
       vault: vaultValue,
       page: document,
       document: existing && { id: existing.id, notesPath: existing.notesPath },
+      // The user's comment on the whole document and its tags, read from its note.
+      comment: existing && typeof resolved.comment === 'string' ? resolved.comment : '',
+      tags: existing && Array.isArray(resolved.tags) ? resolved.tags : [],
       // The page's clipped text in the vault, for the reading notes menu.
       clip:
         existing && resolved?.clip?.clippedAt

@@ -274,3 +274,48 @@ for (const rule of [
 ])
   assert(instructions.includes(rule), rule);
 console.log('PASS agent instructions include reading rules and vault retrieval');
+
+// The user's own comment on the whole document and their tags go with the document.
+{
+  const { document } = JSON.parse(
+    readingContext({
+      document: {
+        title: 'Essay',
+        url: 'https://example.com/essay',
+        kind: 'web',
+        userComment: '  Saved to compare two methods.  ',
+        userTags: ['AI学习', 7, '重要'],
+      },
+    }).text.slice(readingContextPrefix.length),
+  );
+  assert.equal(document.userComment, 'Saved to compare two methods.');
+  assert.deepEqual(document.userTags, ['AI学习', '重要']);
+  const bare = readingContext({
+    document: { title: 'Essay', url: 'https://example.com/essay', kind: 'web', userComment: ' ' },
+  });
+  assert(!bare.text.includes('userComment') && !bare.text.includes('userTags'));
+  assert(instructions.includes("userComment is the user's own comment on the whole document"));
+  const { tagKey, cleanTag, suggestTags } = await import('../ui/document-notes.js');
+  assert.equal(tagKey(' #AI学习 '), tagKey('ai学习'));
+  assert.equal(tagKey('Ａ'.normalize('NFC')), tagKey('Ａ'));
+  assert.equal(cleanTag('  #2026 计划 '), '2026-计划');
+  const all = [
+    { name: '学习方法', count: 1 },
+    { name: 'AI学习', count: 5 },
+    { name: '重要', count: 11 },
+  ];
+  assert.deepEqual(
+    suggestTags(all, 'ai', []).map((t) => t.name),
+    ['AI学习'],
+  );
+  // Starting with what was typed first, then by use count; the document's own tags left out.
+  assert.deepEqual(
+    suggestTags(all, '学习', []).map((t) => t.name),
+    ['学习方法', 'AI学习'],
+  );
+  assert.deepEqual(
+    suggestTags(all, '', ['重要']).map((t) => t.name),
+    ['AI学习', '学习方法'],
+  );
+  console.log('PASS document comments and tags in the reading context, and tag suggestions');
+}

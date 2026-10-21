@@ -1,0 +1,189 @@
+/* The document's comment and tags (document-notes.js), in the reader, the side panel and
+   the library. Colors come from each page's own variables. */
+.document-notes {
+  display: grid;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.document-notes button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.dn-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+.dn-chips {
+  display: contents;
+}
+.dn-tag {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--hover);
+}
+.dn-tag-name {
+  overflow: hidden;
+  max-width: 16em;
+  padding: 1px 4px 1px 9px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+span.dn-tag-name {
+  padding-right: 9px;
+}
+button.dn-tag-name:hover {
+  text-decoration: underline;
+}
+.dn-tag-remove {
+  padding: 0 7px 0 2px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted) !important;
+}
+.dn-tag-remove:hover {
+  color: var(--ink) !important;
+}
+.dn-tag-add,
+.dn-comment-open {
+  padding: 1px 9px;
+  border: 1px dashed var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted) !important;
+}
+.dn-tag-add:hover,
+.dn-comment-open:hover {
+  border-style: solid;
+  color: var(--ink) !important;
+}
+.dn-tag-field {
+  position: relative;
+}
+.dn-tag-input {
+  width: 11em;
+  padding: 2px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+}
+.dn-options {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 14em;
+  max-height: 16em;
+  overflow: auto;
+  margin: 0;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 12%);
+  list-style: none;
+}
+.dn-option {
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.dn-option[aria-selected='true'],
+.dn-option:hover {
+  background: var(--hover);
+}
+.dn-comment {
+  display: grid;
+  justify-items: start;
+  gap: 6px;
+}
+.dn-comment-text {
+  margin: 0;
+  padding: 6px 10px;
+  border-left: 3px solid var(--border);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* In a list (the library), tags and the comment button share a line; the comment and its
+   editor go below them. */
+.document-notes.compact {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+.document-notes.compact .dn-comment {
+  display: contents;
+}
+.document-notes.compact .dn-comment-text,
+.document-notes.compact .dn-comment-form {
+  flex-basis: 100%;
+  order: 1;
+}
+.document-notes.compact .dn-comment-text {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+.dn-comment-form {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+}
+.dn-comment-label {
+  color: var(--muted);
+  font-size: 12px;
+}
+.dn-comment-form textarea {
+  width: 100%;
+  min-height: 5em;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  resize: vertical;
+}
+.dn-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.dn-row small {
+  flex: 1;
+  color: var(--muted);
+}
+.dn-row button {
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+}
+.dn-row .dn-save {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--bg);
+}
+.document-notes button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.dn-error {
+  margin: 0;
+  color: #b7392b;
+}

@@ -1606,6 +1606,108 @@
   "errorGeneric": {
     "message": "Something went wrong"
   },
+  "docNotesHeading": {
+    "message": "Comment and tags"
+  },
+  "docNotesTags": {
+    "message": "Tags"
+  },
+  "docNotesTagAdd": {
+    "message": "+ Tag"
+  },
+  "docNotesTagInput": {
+    "message": "Add a tag"
+  },
+  "docNotesTagRemove": {
+    "message": "Remove the tag “$1”"
+  },
+  "docNotesTagCreate": {
+    "message": "Create “$1”"
+  },
+  "docNotesTagCount": {
+    "message": "$1 ($2)"
+  },
+  "docNotesTagFilter": {
+    "message": "Show the documents tagged “$1”"
+  },
+  "docNotesTagFailed": {
+    "message": "The tag could not be saved: $1"
+  },
+  "docNotesComment": {
+    "message": "Comment on the whole document"
+  },
+  "docNotesCommentAdd": {
+    "message": "Comment on the document"
+  },
+  "docNotesCommentEdit": {
+    "message": "Edit the document comment"
+  },
+  "docNotesCommentPlaceholder": {
+    "message": "In Markdown: why you saved it, what you think, what to check next…"
+  },
+  "docNotesCommentFailed": {
+    "message": "The comment could not be saved: $1"
+  },
+  "docNotesKept": {
+    "message": "This comment was changed elsewhere after you started editing. That version is kept in the note, above the new one."
+  },
+  "docNotesUnsaved": {
+    "message": "Your comment on “$1” is not saved yet."
+  },
+  "docNotesDraftSave": {
+    "message": "Save it there"
+  },
+  "docNotesDraftDiscard": {
+    "message": "Discard"
+  },
+  "docNotesDiscardConfirm": {
+    "message": "Discard your unsaved comment on “$1”?"
+  },
+  "tagsManage": {
+    "message": "Manage tags"
+  },
+  "tagsManageTitle": {
+    "message": "Tags"
+  },
+  "tagsManageEmpty": {
+    "message": "No tags yet. Add one under a document with + Tag."
+  },
+  "tagsManageCount": {
+    "message": "$1 documents"
+  },
+  "tagsSpellings": {
+    "message": "written $1"
+  },
+  "tagsRename": {
+    "message": "Rename"
+  },
+  "tagsRenameLabel": {
+    "message": "New name for “$1”"
+  },
+  "tagsRenameSave": {
+    "message": "Save"
+  },
+  "tagsRenameConfirm": {
+    "message": "Rename “$1” to “$2”? $3 documents change."
+  },
+  "tagsMergeConfirm": {
+    "message": "Merge “$1” into the existing tag “$2”? $3 documents change."
+  },
+  "tagsDelete": {
+    "message": "Delete"
+  },
+  "tagsDeleteConfirm": {
+    "message": "Remove the tag “$1” from $2 documents? The documents stay."
+  },
+  "tagsDone": {
+    "message": "Updated $1 documents."
+  },
+  "tagsFailed": {
+    "message": "$1 could not be changed: a note that is not UTF-8 text, or a folder that cannot be written."
+  },
+  "tagsClose": {
+    "message": "Close"
+  },
   "librarySearchPlaceholder": {
     "message": "Search titles, authors, URLs, comments, highlights and text…"
   },
@@ -1683,5 +1785,8 @@
   },
   "libraryMarkdownUnavailable": {
     "message": "Some note files are missing or unreadable"
+  },
+  "docNotesHiddenDraft": {
+    "message": "Your unsaved comment on “$1” is kept, but the current search does not show that document. Clear the search to go on editing it."
   }
 }

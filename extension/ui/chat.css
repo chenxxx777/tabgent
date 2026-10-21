@@ -1585,6 +1585,7 @@ select option {
   border-radius: 3px;
 }
 .history-date,
+#documentNotesHeading,
 #highlightHeading {
   color: var(--muted);
   font-size: 11px;
@@ -2205,5 +2206,35 @@ body.history-open {
 .highlight-note-error {
   margin: 4px 0 0;
   color: var(--error);
+  font-size: 11px;
+}
+/* The page's document: the user's comment on it and its tags (document-notes.js). */
+#documentNotesSection {
+  margin-bottom: 8px;
+}
+#documentNotes,
+#documentNotesDraft {
+  padding: 0 8px;
+}
+#documentNotes .document-notes {
+  font-size: 12px;
+}
+#documentNotesDraft {
+  gap: 4px;
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+#documentNotesDraft:not([hidden]) {
+  display: grid;
+}
+#documentNotesDraft .actions {
+  display: flex;
+  gap: 4px;
+}
+#documentNotesDraft button {
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
   font-size: 11px;
 }

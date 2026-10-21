@@ -10,6 +10,7 @@ import { initLibrarySearch } from './library-search.js';
 import { pdfViewerUrl } from '../pdf-routing.js';
 import { isLocalFileUrl } from '../local-files.js';
 import { clipViewerUrl } from '../clip-routing.js';
+import { createDocumentNotes, tagKey, cleanTag } from '../ui/document-notes.js';
 
 const $ = (selector) => document.querySelector(selector);
 const COLOR = 'rgb(255 200 60)';
@@ -284,9 +285,156 @@ function libraryItem(item, seen) {
     link.textContent = `${t('clipOriginal')} ↗`;
     li.append(link);
   }
+  // The user's comment on the document and its tags, edited in place. A tag filters the list
+  // through the search's filter bar, which listens for library-filter-tag.
+  const kept = rows.get(item.id)?.notes;
+  const notes = kept?.draft()
+    ? kept
+    : createDocumentNotes({
+        t: format,
+        compact: true,
+        save: ({ comment, base }) =>
+          library.send({ type: 'libraryComment', documentId: item.id, comment, base }),
+        tags: (change) => library.send({ type: 'libraryTags', documentId: item.id, ...change }),
+        tagList: async () => (await library.send({ type: 'tagsList' })).tags,
+        onTag: (tag) =>
+          document.dispatchEvent(new CustomEvent('library-filter-tag', { detail: tag })),
+        onError: (message) => toast(message),
+        beforeEdit: () => closeEditors(item.id),
+      });
+  notes.set(item);
+  li.append(notes.element);
+  rows.set(item.id, { li, notes, item });
   return li;
 }
 
+// The library's rows by document ID, for comment drafts and tag changes. A row with an open
+// comment editor keeps it when the search shows its document again (a new query, a filter,
+// a return to the library); while an editor is open, returning to the window does not
+// search again.
+const rows = new Map();
+const format = (key, ...args) => (args.length ? loadTimeData.getStringF(key, ...args) : t(key));
+// Closes the comment editors other than the one for keep, asking before a draft is dropped.
+// False when the user keeps a draft.
+function closeEditors(keep = null) {
+  for (const [id, row] of rows) {
+    if (id === keep || !row.notes.draft()) continue;
+    const title = row.item.title || t('epubUntitled');
+    if (row.notes.dirty() && !confirm(loadTimeData.getStringF('docNotesDiscardConfirm', title)))
+      return false;
+    row.notes.discard();
+  }
+  return true;
+}
+addEventListener('beforeunload', (event) => {
+  if ([...rows.values()].some((row) => row.notes.dirty())) event.preventDefault();
+});
+// Changed in the side panel, a reader or another library tab.
+chrome.runtime.onMessage.addListener((message, sender) => {
+  if (sender.id !== chrome.runtime.id || message?.type !== 'tabgentNotesChanged') return;
+  if (message.all) return void refreshNotes();
+  const row = rows.get(message.documentId);
+  if (!row) return;
+  Object.assign(row.item, { comment: message.comment, tags: message.tags });
+  row.notes.set(row.item);
+});
+// Tags renamed or deleted: the search runs again (rows with a draft keep it).
+function refreshNotes() {
+  if (!$('#start').hidden && !$('#documentsPanel').hidden) void librarySearch.show();
+}
+
+// Tags: each with the number of documents that have it; rename (to an existing tag merges
+// the two) and delete, which keeps the documents.
+$('#tagsManage').onclick = () => {
+  $('#tagManager').showModal();
+  void showTagManager();
+};
+$('#tagManagerClose').onclick = () => $('#tagManager').close();
+async function showTagManager() {
+  const list = $('#tagManagerList');
+  $('#tagManagerStatus').textContent = t('epubLoading');
+  let tags;
+  try {
+    ({ tags } = await library.send({ type: 'tagsList' }));
+  } catch (error) {
+    $('#tagManagerStatus').textContent = shown(error);
+    return;
+  }
+  list.replaceChildren();
+  $('#tagManagerStatus').textContent = tags.length ? '' : t('tagsManageEmpty');
+  for (const tag of tags) list.append(tagManagerRow(tag, tags));
+}
+function tagButton(label, type = 'button') {
+  const button = document.createElement('button');
+  button.type = type;
+  button.textContent = label;
+  return button;
+}
+function tagManagerRow(tag, all) {
+  const li = document.createElement('li'),
+    name = document.createElement('span'),
+    count = document.createElement('span');
+  li.dataset.tag = tag.name;
+  name.className = 'name';
+  name.textContent = tag.name;
+  count.className = 'count';
+  count.textContent = loadTimeData.getStringF('tagsManageCount', String(tag.count));
+  // Spellings that differ only in case are one tag.
+  if (tag.spellings?.length > 1)
+    count.textContent += ' · ' + loadTimeData.getStringF('tagsSpellings', tag.spellings.join(', '));
+  const rename = tagButton(t('tagsRename')),
+    remove = tagButton(t('tagsDelete'));
+  rename.onclick = () => {
+    const form = document.createElement('form'),
+      input = document.createElement('input');
+    form.className = 'rename';
+    input.value = tag.name;
+    input.maxLength = 100;
+    input.setAttribute('aria-label', loadTimeData.getStringF('tagsRenameLabel', tag.name));
+    const cancel = tagButton(t('highlightNoteCancel'));
+    cancel.onclick = () => void showTagManager();
+    form.onsubmit = async (event) => {
+      event.preventDefault();
+      const to = cleanTag(input.value);
+      if (!to || to === tag.name) return void showTagManager();
+      const other = all.find((o) => o !== tag && tagKey(o.name) === tagKey(to));
+      const question = other
+        ? loadTimeData.getStringF('tagsMergeConfirm', tag.name, other.name, String(tag.count))
+        : loadTimeData.getStringF('tagsRenameConfirm', tag.name, to, String(tag.count));
+      if (!confirm(question)) return;
+      // Merged into an existing tag, the documents take its spelling.
+      const name = other?.name || to;
+      await changeTags({ type: 'tagsRename', from: tag.name, to: name }, tag.name, name);
+    };
+    form.append(input, tagButton(t('tagsRenameSave'), 'submit'), cancel);
+    li.replaceChildren(form);
+    input.focus();
+    input.select();
+  };
+  remove.onclick = async () => {
+    if (!confirm(loadTimeData.getStringF('tagsDeleteConfirm', tag.name, String(tag.count)))) return;
+    await changeTags({ type: 'tagsDelete', tag: tag.name }, tag.name, '');
+  };
+  li.append(name, count, rename, remove);
+  return li;
+}
+async function changeTags(message, from, to) {
+  try {
+    const result = await library.send(message);
+    toast(
+      [
+        loadTimeData.getStringF('tagsDone', String(result.changed)),
+        result.failed ? loadTimeData.getStringF('tagsFailed', String(result.failed)) : '',
+      ]
+        .filter(Boolean)
+        .join(' '),
+    );
+  } catch (error) {
+    toast(loadTimeData.getStringF('docNotesTagFailed', shown(error)));
+  }
+  await showTagManager();
+  await refreshNotes();
+}
 const librarySearch = initLibrarySearch({
   send: library.send,
   positions: library.positions,
@@ -295,7 +443,17 @@ const librarySearch = initLibrarySearch({
   beforeRender() {
     covers.disconnect();
     for (const url of coverUrls.splice(0)) URL.revokeObjectURL(url);
+    for (const [id, row] of rows) if (!row.notes.draft()) rows.delete(id);
   },
+  afterRender() {
+    // A draft whose document the search no longer shows is kept, and said so.
+    const hidden = [...rows.values()].find(
+      (row) => row.notes.dirty() && !row.notes.element.isConnected,
+    );
+    if (hidden)
+      toast(loadTimeData.getStringF('docNotesHiddenDraft', hidden.item.title || t('epubUntitled')));
+  },
+  busy: () => [...rows.values()].some((row) => row.notes.draft()),
 });
 
 // Each open (or a return to the library) supersedes the ones still loading, which stop
