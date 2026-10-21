@@ -1605,5 +1605,83 @@
   },
   "errorGeneric": {
     "message": "出了点问题"
+  },
+  "librarySearchPlaceholder": {
+    "message": "搜索标题、作者、网址、评论、高亮和正文…"
+  },
+  "libraryFilterCategory": {
+    "message": "类别"
+  },
+  "libraryAllCategories": {
+    "message": "全部类别"
+  },
+  "libraryFilterState": {
+    "message": "阅读状态"
+  },
+  "libraryAllStates": {
+    "message": "全部阅读状态"
+  },
+  "libraryStateInbox": {
+    "message": "收件箱"
+  },
+  "libraryHasComments": {
+    "message": "有评论"
+  },
+  "libraryHasHighlights": {
+    "message": "有高亮"
+  },
+  "libraryFilterTags": {
+    "message": "标签（全部匹配）"
+  },
+  "libraryNoTags": {
+    "message": "暂无文档标签"
+  },
+  "libraryIncludeDiscussions": {
+    "message": "纳入讨论"
+  },
+  "libraryCurrentFilters": {
+    "message": "当前搜索和筛选条件"
+  },
+  "libraryClearFilters": {
+    "message": "清除全部"
+  },
+  "libraryRemoveFilter": {
+    "message": "移除筛选：$1"
+  },
+  "libraryResultCount": {
+    "message": "$1 / $2 篇文档"
+  },
+  "libraryNoResults": {
+    "message": "没有匹配的文档，可更换搜索词或清除筛选。"
+  },
+  "librarySearchScope": {
+    "message": "搜索已保存的文档及已有全文（含 PDF 页和书籍章节）；未保存的订阅条目请在订阅页查看。默认不搜索长讨论。"
+  },
+  "libraryMatchTitle": {
+    "message": "标题"
+  },
+  "libraryMatchAuthor": {
+    "message": "作者"
+  },
+  "libraryMatchUrl": {
+    "message": "网址"
+  },
+  "libraryMatchComment": {
+    "message": "评论"
+  },
+  "libraryMatchHighlight": {
+    "message": "高亮"
+  },
+  "libraryMatchBody": {
+    "message": "正文"
+  },
+  "libraryMatchDiscussion": {
+    "message": "讨论"
+  },
+  "libraryNoFullText": {
+    "message": "尚未保存全文"
+  },
+  "libraryMarkdownUnavailable": {
+    "message": "部分笔记文件缺失或无法读取"
   }
 }

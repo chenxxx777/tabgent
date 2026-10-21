@@ -1193,6 +1193,7 @@ print(json.dumps([m["path"] for m in found["matches"]][:3] + [read["text"][:2000
     assert.equal(entry.original, origin + '/essays/autonomy?id=3');
     assert(entry.meta.includes(await message('libraryKindClipped')), entry.meta);
     // The clipped page shows its cover from the vault; the player page says it holds links.
+    await library.locator(`#books .item[href="${entry.href}"]`).scrollIntoViewIfNeeded();
     assert(
       await until(() =>
         library.evaluate(

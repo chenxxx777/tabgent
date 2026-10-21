@@ -183,11 +183,14 @@ for method, params in json.loads(sys.argv[3]):
       context = await chromium.launchPersistentContext(profile, {
         headless: true,
         channel: 'chromium',
+        env: { ...process.env, HOME: home, CODEX_HOME: codexHome },
         viewport: { width: 1100, height: 900 },
         args: [
           `--disable-extensions-except=${extension}`,
           `--load-extension=${extension}`,
           '--remote-debugging-port=0',
+          '--headless=new',
+          '--use-mock-keychain',
         ],
       });
       context.on('page', (opened) => {
@@ -365,6 +368,103 @@ for method, params in json.loads(sys.argv[3]):
     assert(onlineItem.meta.includes(await message('libraryCategoryPdfs')));
     console.log('PASS the library lists vault documents with category, highlights and date');
     if (shots) await page.screenshot({ path: path.join(shots, 'library-seeded.png') });
+
+    // Search reads edits made outside Tabgent, with typed snippets and intersecting tags.
+    const webNotes = path.join(vault, 'Articles/On Autonomy.md');
+    const originalNotes = fs.readFileSync(webNotes, 'utf8');
+    fs.writeFileSync(
+      webNotes,
+      originalNotes
+        .replace('\n---\n', '\ntags: [研究, Important]\n---\n')
+        .replace(
+          '## 高亮',
+          '<!-- tabgent:comment document start -->\n## 全文评论\n\n中文连续评论中的观点\n<!-- tabgent:comment document end -->\n\n## 高亮',
+        ),
+    );
+    await page.fill('#libraryQuery', '续评论');
+    assert(
+      await until(async () =>
+        (await page.textContent('.libraryMatches').catch(() => ''))?.includes('连续评论'),
+      ),
+      'Chinese substring snippet',
+    );
+    assert.equal((await items()).length, 1);
+    assert.equal(await page.textContent('.matchType'), await message('libraryMatchComment'));
+    await page.selectOption('#libraryCategory', 'articles');
+    await page.check('#libraryHasComments');
+    await page.click('#libraryTags summary');
+    await page
+      .locator('#libraryTagChoices label')
+      .filter({ hasText: '研究' })
+      .locator('input')
+      .check();
+    await page
+      .locator('#libraryTagChoices label')
+      .filter({ hasText: 'Important' })
+      .locator('input')
+      .check();
+    assert(
+      await until(
+        async () => (await items()).length === 1 && !(await page.isHidden('#libraryClear')),
+      ),
+    );
+    await page.selectOption('#libraryCategory', 'pdfs');
+    assert(await until(async () => (await items()).length === 0));
+    await page.click('#libraryClear');
+    assert(await listed(2));
+    await page.fill('#libraryQuery', 'AUTONOMY');
+    assert(
+      await until(
+        async () =>
+          (await page.textContent('.matchType').catch(() => '')) ===
+          (await message('libraryMatchTitle')),
+      ),
+    );
+    // The same query observes a changed md, even though anchors.json still has old text.
+    await page.fill('#libraryQuery', '续评论');
+    assert(
+      await until(async () =>
+        (await page.textContent('.libraryMatches').catch(() => ''))?.includes('连续评论'),
+      ),
+    );
+    fs.writeFileSync(webNotes, fs.readFileSync(webNotes, 'utf8').replace('连续评论', '最新判断'));
+    await page.fill('#libraryQuery', '新判断');
+    assert(
+      await until(async () =>
+        (await page.textContent('.libraryMatches').catch(() => ''))?.includes('最新判断'),
+      ),
+    );
+    await page.click('#libraryClear');
+    await page.fill('#libraryQuery', 'endorsement');
+    assert(
+      await until(
+        async () =>
+          (await page.textContent('.matchType').catch(() => '')) ===
+          (await message('libraryMatchHighlight')),
+      ),
+    );
+    const jump = page.locator('.libraryMatch');
+    assert.equal(await jump.getAttribute('href'), articleUrl + '#tabgent-highlight=h001');
+    await jump.click();
+    await page.waitForURL(articleUrl + '#tabgent-highlight=h001');
+    assert(await until(() => page.evaluate(() => !!CSS.highlights.get('tabgent-highlight')?.size)));
+    fs.writeFileSync(webNotes, originalNotes);
+    await page.goto(libraryUrl);
+    assert(await listed(2));
+    console.log(
+      'PASS library search: Chinese/English, typed snippets, combined filters, md refresh, clear and highlight open',
+    );
+
+    // A missing primary note keeps its record visible, with an explanation.
+    fs.unlinkSync(webNotes);
+    await page.reload();
+    const missingNote = byTitle(await listed(2), 'On Autonomy');
+    assert.equal(missingNote.href, articleUrl);
+    assert(missingNote.meta.includes(await message('libraryMarkdownUnavailable')));
+    fs.writeFileSync(webNotes, originalNotes);
+    await page.reload();
+    assert(await listed(2));
+    console.log('PASS a missing note stays in the library with an unavailable-file warning');
 
     // Choose a local PDF: it is copied into the vault, then opens in PDF.js from that copy.
     await page.setInputFiles('#file', files.local);
