@@ -96,8 +96,8 @@ $('#libraryTabs').addEventListener('keydown', (event) => {
 });
 function showTab(name) {
   const isFeeds = name === 'feeds';
-  // Leaving the documents drops their comment drafts: asked first.
-  if (isFeeds && !$('#documentsPanel').hidden && !closeEditors()) {
+  // Leaving or reloading the documents drops their comment drafts: asked first.
+  if (!$('#documentsPanel').hidden && !closeEditors()) {
     $('#documentsTab').focus();
     return;
   }
