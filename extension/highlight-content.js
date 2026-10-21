@@ -454,20 +454,28 @@
         code: response.code,
         ...(response.folder ? { folder: response.folder } : {}),
       });
-    if (response.document?.id) page.documentId = response.document.id;
     if (page?.url === url) {
+      // A write returns the saved document; its ID replaces any provisional one.
+      // Only this page may receive it: a navigation during the save replaced `page`.
+      if (response.document?.id) page.documentId = response.document.id;
       const id = response.highlight.id;
       const current = records.get(id);
       if (current?.highlight) current.highlight = response.highlight;
-      else
+      else {
+        // The passage may have been re-rendered while the comment was typed.
+        const textIndex = index();
+        const match = anchors.resolve(response.highlight.anchor, textIndex, {
+          view: view?.name || 'page',
+        });
         records.set(id, {
           highlight: response.highlight,
-          range: pending.range,
-          start: pending.start,
-          end: pending.end,
-          text: pending.indexText,
-          live: liveText(pending.range),
+          range: match?.range || null,
+          start: match?.start,
+          end: match?.end,
+          text: match ? textIndex.text.slice(match.start, match.end) : undefined,
+          live: liveText(match?.range),
         });
+      }
       observe();
       repaint();
       report();
