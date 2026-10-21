@@ -32,6 +32,13 @@
   const isGrid = (node) =>
     node.nodeType === 1 && (node.localName === 'table' || GRID.has(role(node)));
 
+  // The source element's attributes (class, id, test ids, hidden...) on the new table, row or
+  // cell, except its role: Defuddle reads them to drop noise such as a grid of related posts.
+  const keep = (from, to) => {
+    for (const { name, value } of from.attributes)
+      if (!/^(?:role|aria-colspan|aria-rowspan)$/.test(name)) to.setAttribute(name, value);
+  };
+
   // A table drawn with role="table" (or grid) on other elements becomes a real table, so its
   // rows and columns reach the Markdown. Content of the element outside its rows stays
   // before or after the table, as on the page. Inner tables are converted first.
@@ -71,6 +78,7 @@
       const matrix = rows.map(cellsOf);
       if (!matrix.some((cells) => cells.length)) continue;
       const table = doc.createElement('table');
+      keep(grid, table);
       let heading = 0;
       while (
         heading < matrix.length - 1 &&
@@ -82,12 +90,13 @@
         body = doc.createElement('tbody');
       matrix.forEach((cells, index) => {
         const tr = doc.createElement('tr');
-        if (rows[index].hasAttribute('hidden')) tr.setAttribute('hidden', '');
+        keep(rows[index], tr);
         for (const cell of cells) {
           const kind = role(cell);
           const td = doc.createElement(
             kind === 'columnheader' || kind === 'rowheader' ? 'th' : 'td',
           );
+          keep(cell, td);
           if (kind === 'columnheader') td.setAttribute('scope', 'col');
           if (kind === 'rowheader') td.setAttribute('scope', 'row');
           for (const [aria, name] of [
@@ -97,7 +106,6 @@
             const span = Number.parseInt(cell.getAttribute(aria), 10);
             if (span > 1 && span < 1000) td.setAttribute(name, String(span));
           }
-          if (cell.hasAttribute('hidden')) td.setAttribute('hidden', '');
           td.append(...cell.childNodes);
           tr.append(td);
         }
@@ -350,6 +358,7 @@
   function kindOf(node, region, memo) {
     let strong = false,
       weak = null,
+      header = false,
       card = null;
     const parent = node.parentElement;
     // Inside a table, "header" names its header row, not the page's header.
@@ -360,6 +369,7 @@
         kind = role(element),
         names = words(element, memo.words);
       if (noisy(element, memo.words)) strong = true;
+      if (tag === 'header' || kind === 'banner') header = true;
       if (
         !weak &&
         (WEAK_TAGS.has(tag) ||
@@ -383,17 +393,17 @@
         if (CARD_TEXT.test(start)) card = block;
       }
     }
-    // A card inside a header is the byline: metadata, kept in the front matter.
-    if (card && !(weak && (weak.localName === 'header' || role(weak) === 'banner'))) {
-      if (!weak || weak.contains(card)) return 'card';
-    }
-    if (weak) return 'noise';
-    if (/^[\d\s.,:;%+#·•|/()\-–—kKmMwW万亿千]*$/.test(text)) return 'noise';
     const block = parent.closest(CONTENT_BLOCKS);
-    if (!block && text.length <= 20) return 'noise';
-    // Link lists (more posts, tags, menus) are not the text.
-    const container = block || parent.closest('div, section, article, li, p') || parent;
-    if (!container.closest('td, th, [role="cell"], [role="gridcell"]')) {
+    const cell = parent.closest(
+      'td, th, [role="cell"], [role="gridcell"], [role="columnheader"], [role="rowheader"]',
+    );
+    // Link lists (more posts, tags, menus) are not the text; nor is a card that is one
+    // ("More from this author").
+    const links = (
+      container = block || parent.closest('div, section, article, li, p') || parent,
+    ) => {
+      // Links in a table's cells are the table's content.
+      if (cell && (cell.contains(container) || container.contains(cell))) return false;
       let share = memo.links.get(container);
       if (share === undefined) {
         const all = squash(container.textContent).length || 1;
@@ -404,9 +414,16 @@
         share = linked / all;
         memo.links.set(container, share);
       }
-      if (share > 0.6) return 'noise';
-    }
-    return 'text';
+      return share > 0.6;
+    };
+    // A card in a header, however deep, is the byline: metadata, kept in the front matter.
+    if (card && !header && (!weak || weak.contains(card)))
+      return links() || links(card) ? 'noise' : 'card';
+    if (weak) return 'noise';
+    // Counts and dates are noise, except in a table's cells.
+    if (!cell && /^[\d\s.,:;%+#·•|/()\-–—kKmMwW万亿千]*$/.test(text)) return 'noise';
+    if (!block && text.length <= 20) return 'noise';
+    return links() ? 'noise' : 'text';
   }
 
   // Compares the page's visible text with the extracted content. doc is the copy Defuddle
@@ -430,26 +447,24 @@
         return node.data.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
       },
     });
-    // Extraction may change spacing ("team :)" becomes "team:)"): text not found as it is
-    // is looked for again without spaces.
-    const tight = output.replace(/\s+/g, '');
-    const cursors = [0, 0];
-    const search = (haystack, needle, which) => {
-      // The extracted text keeps the page's order: search on from the last match first.
-      let at = haystack.indexOf(needle, cursors[which]);
-      if (at < 0) at = haystack.indexOf(needle);
-      if (at >= cursors[which]) cursors[which] = at + needle.length;
-      return at >= 0;
+    // The extracted text keeps the page's order: a search goes on from the last match, then
+    // back from it, so text not found costs one pass over the extracted text.
+    const searcher = (haystack) => {
+      let cursor = 0;
+      return (needle) => {
+        let at = haystack.indexOf(needle, cursor);
+        if (at < 0 && cursor > 0) at = haystack.lastIndexOf(needle, cursor - 1);
+        if (at >= cursor) cursor = at + needle.length;
+        return at >= 0;
+      };
     };
+    // Longer text is searched now, to find the region; the rest only inside it, below.
+    const exact = searcher(output);
     for (let node; (node = walker.nextNode());) {
       if (nodes.length >= maxNodes) return null;
       const text = squash(node.data);
       if (!text) continue;
-      const found =
-        search(output, text, 0) ||
-        (text.length >= 20 && search(tight, text.replace(/\s+/g, ''), 1)) ||
-        (!!heading && heading.includes(text));
-      nodes.push({ node, text, found });
+      nodes.push({ node, text, found: text.length >= 20 ? exact(text) : null });
     }
     // The content region: the deepest element holding nearly all the extracted text the page
     // shows, widened to its article when that is not much larger.
@@ -473,11 +488,23 @@
     const article = region.parentElement?.closest('article, [role="article"]');
     if (article && article !== body && size(article) <= size(region) * 1.5 + 2000) region = article;
 
+    // Inside the region, the rest is searched too. Extraction may change spacing ("team :)"
+    // becomes "team:)"): longer text not found as it is is looked for again without spaces.
+    const inside = searcher(output),
+      tight = searcher(output.replace(/\s+/g, ''));
+    for (const item of nodes) {
+      if (item.found || !region.contains(item.node)) continue;
+      item.found =
+        (item.found === null && inside(item.text)) ||
+        (item.text.length >= 20 && tight(item.text.replace(/\s+/g, ''))) ||
+        (!!heading && heading.includes(item.text));
+    }
+
     const memo = { words: new Map(), links: new Map(), starts: new Map() };
     // A section headed "References", "Further reading", "参考文献"... is back matter until a
     // heading of its level or above.
     let back = 0;
-    const items = nodes
+    const classified = nodes
       .filter((item) => region.contains(item.node))
       .map((item) => {
         const heading = item.node.parentElement.closest('h1, h2, h3, h4, h5, h6');
@@ -488,8 +515,8 @@
           else if (back && level <= back) back = 0;
         }
         return { ...item, kind: back ? 'noise' : kindOf(item.node, region, memo) };
-      })
-      .filter((item) => item.kind !== 'noise');
+      });
+    const items = classified.filter((item) => item.kind !== 'noise');
     const visible = items.reduce((sum, item) => sum + item.text.length, 0);
     const kept = items.reduce((sum, item) => sum + (item.found ? item.text.length : 0), 0);
     const missing = visible - kept;
@@ -512,19 +539,24 @@
       }
       return fallback;
     };
-    // Each element's text and its missing part, to restore whole elements where possible.
+    // Each element's text, its missing part and its noise, to restore whole elements: an
+    // element is copied only when all its text is missing and none of it is noise (a copy
+    // would bring back the share buttons or link lists it holds).
     const totals = new Map();
-    for (const item of items)
+    for (const item of classified)
       for (let element = item.node.parentElement; element; element = element.parentElement) {
-        const entry = totals.get(element) || { all: 0, gone: 0 };
-        entry.all += item.text.length;
-        if (!item.found) entry.gone += item.text.length;
+        const entry = totals.get(element) || { all: 0, gone: 0, noise: 0 };
+        if (item.kind === 'noise') entry.noise += item.text.length;
+        else {
+          entry.all += item.text.length;
+          if (!item.found) entry.gone += item.text.length;
+        }
         totals.set(element, entry);
         if (element === region) break;
       }
     const whole = (element) => {
       const entry = totals.get(element);
-      return entry && entry.all === entry.gone;
+      return !!entry && entry.all > 0 && entry.all === entry.gone && !entry.noise;
     };
     const largest = Math.max(0, ...runs.map((r) => r.items.reduce((s, i) => s + i.text.length, 0)));
     const significant = (ratio < 0.95 && missing >= 150) || largest >= 300;
@@ -567,10 +599,16 @@
             noisy(drop, names)
           )
             drop.remove();
+        // Parts of a table stay in a table: alone, the parser would drop their row and cell tags.
+        const tag = element.localName;
         parts.push(
-          element.localName === 'td' || element.localName === 'th'
+          tag === 'td' || tag === 'th'
             ? `<p>${copy.innerHTML}</p>`
-            : copy.outerHTML,
+            : tag === 'tr'
+              ? `<table><tbody>${copy.outerHTML}</tbody></table>`
+              : /^(?:thead|tbody|tfoot)$/.test(tag)
+                ? `<table>${copy.outerHTML}</table>`
+                : copy.outerHTML,
         );
       }
       const html = parts.join('');

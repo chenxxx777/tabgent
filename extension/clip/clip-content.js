@@ -393,11 +393,14 @@
     }
     // The text the page shows in its content region against the text extracted from it.
     // (X posts are read above; Defuddle's site extractors, such as Substack's, read the
-    // page's DOM too.)
-    const coverage =
-      xPage(url) === 'post'
-        ? null
-        : structure.coverage(copy, result.content, { title: result.title || document.title });
+    // page's DOM too.) A check that fails leaves the clip as extracted.
+    let coverage = null;
+    if (xPage(url) !== 'post')
+      try {
+        coverage = structure.coverage(copy, result.content, {
+          title: result.title || document.title,
+        });
+      } catch {}
     // Defuddle's extractorType is a minified class name in its bundle; name X by address.
     return {
       ...result,

@@ -92,6 +92,9 @@ ${Array.from({ length: 900 }, (_, i) => `<p>Figure ${i}</p><img src="${longImage
       <div role="rowgroup"><div role="row"><span role="columnheader">Day</span><span role="columnheader">Session</span></div></div>
       <div role="rowgroup"><div role="row"><span role="rowheader">Monday</span><span role="gridcell"><span class="wrap">Opening talk</span></span></div>
       <div role="row"><span role="rowheader">Tuesday</span><span role="gridcell">Workshops</span></div></div></div>
+    <div role="grid" class="related-posts"><div role="row"><span role="gridcell"><a href="/p/9">Pencil notes for beginners</a></span>
+      <span role="gridcell">5 min</span></div><div role="row"><span role="gridcell"><a href="/p/10">Margins that matter</a></span>
+      <span role="gridcell">7 min</span></div></div>
     <h2>CSS grid</h2>
     <div class="grid"><div><b>Feature</b></div><div><b>Basic</b></div><div><b>Team</b></div>
       <div>Exports</div><div>Monthly</div><div>Daily</div></div>
@@ -103,7 +106,8 @@ ${Array.from({ length: 900 }, (_, i) => `<p>Figure ${i}</p><img src="${longImage
     <header class="site-header"><nav><a href="/">Home</a> <a href="/topics">Topics</a></nav></header>
     <main><article class="post">
       <header class="entry-header"><h1>On Reading Slowly</h1>
-        <div class="byline">By <a href="/author/jane">Jane Fixture</a> · Oct 3, 2026 · 6 min read</div></header>
+        <div class="byline">By <a class="author" href="/author/jane">Jane Fixture</a>,
+          <span class="author-role">Senior Reading Correspondent</span> · Oct 3, 2026 · 6 min read</div></header>
       <div class="entry-content">${paragraphs(8, 'Slow')}</div>
       <div class="share-bar"><button>Share</button> <a href="https://social.example.test/share">Post it</a>
         <span class="count">128</span> <span class="likes">42 likes</span></div>
@@ -112,6 +116,8 @@ ${Array.from({ length: 900 }, (_, i) => `<p>Figure ${i}</p><img src="${longImage
           <div><h4>About the author</h4><p>Jane Fixture writes about reading habits and the history of
           the book. Her newsletter covers slow reading practices.</p></div></div>
         <div class="guest-card">A guest post by <a href="/@sam">Sam Guest</a>, editor of the Fixture Review.</div>
+        <div class="author-more"><h4>More from this author</h4><ul><li><a href="/p/3">Reading by lamplight in winter</a></li>
+          <li><a href="/p/4">The slow annotation habit, revisited</a></li></ul></div>
       </footer>
       <section class="related-posts"><h3>Related posts</h3><ul><li><a href="/p/1">Reading with a pencil</a></li>
         <li><a href="/p/2">Why margins matter</a></li></ul></section>
@@ -699,6 +705,8 @@ function xThread() {
       /\*\*Feature\*\*[\s\S]*\*\*Basic\*\*[\s\S]*\*\*Team\*\*[\s\S]*Exports[\s\S]*Monthly[\s\S]*Daily/,
     );
     assert.doesNotMatch(sm, /\| +\||Home|Docs/);
+    // An ARIA grid named as related posts is noise, as the same grid of divs would be.
+    assert.doesNotMatch(sm, /Pencil notes for beginners|Margins that matter/);
     assert.equal(shapes.coverage.restoredPassages, 0);
     assert.deepEqual(requests, []);
 
@@ -719,8 +727,45 @@ function xThread() {
       cm,
       /Related posts|Reading with a pencil|Great essay|3 comments|128|42 likes|Share|Post it|Home|Topics|min read|© 2026/,
     );
+    // An author-named byline in the header is metadata, and a card of links ("More from this
+    // author") is a link list: neither is put back, nor the title above them.
+    assert.doesNotMatch(
+      cm,
+      /Senior Reading Correspondent|More from this author|lamplight|On Reading Slowly/,
+    );
     assert.equal(cards.coverage.restoredPassages, 1);
     assert.deepEqual(requests, []);
+
+    // A table row the extraction lost is put back in a table, its cells kept apart.
+    const row = await page.evaluate(() => {
+      const { coverage, restore } = globalThis.tabgentClipStructure;
+      const long = (word) =>
+        Array.from(
+          { length: 6 },
+          (_, i) => `${word} sentence ${i + 1} about careful reading.`,
+        ).join(' ');
+      const body = (lost) =>
+        `<article><h1>Rows</h1>${[1, 2, 3, 4].map((i) => `<p>${long('Before ' + i)}</p>`).join('')}
+        <table><tbody><tr><td>${long('Kept first')}</td><td>Kept</td></tr>
+        ${lost ? '' : `<tr><td>${long('Lost row')}</td><td>${long('Lost cell')}</td></tr>`}
+        <tr><td>${long('Kept last')}</td><td>Kept</td></tr></tbody></table>
+        ${[1, 2].map((i) => `<p>${long('After ' + i)}</p>`).join('')}</article>`;
+      const doc = new DOMParser().parseFromString(`<body>${body(false)}</body>`, 'text/html');
+      const content = body(true);
+      const checked = coverage(doc, content);
+      const article = new DOMParser()
+        .parseFromString(`<div>${content}</div>`, 'text/html')
+        .body.querySelector('div');
+      const done = restore(article, checked.patches);
+      const restored = [...article.querySelectorAll('tr')].find((tr) =>
+        tr.textContent.includes('Lost row'),
+      );
+      return {
+        passages: done.passages,
+        cells: restored ? [...restored.cells].map((cell) => cell.textContent.slice(0, 13)) : [],
+      };
+    });
+    assert.deepEqual(row, { passages: 1, cells: ['Lost row sent', 'Lost cell sen'] });
 
     // Visible text the extractor dropped is put back in place, and the clip says so.
     await open('/coverage');
