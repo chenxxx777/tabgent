@@ -39,6 +39,16 @@ AVIF images per page are saved, each up to 5 MB and 30 MB together; others (SVG,
 images, failed downloads) stay linked at their web addresses. The page's cover image (the one
 it names for link previews, such as `og:image`) is downloaded the same way and counts toward
 these limits.
+
+Clipping a YouTube video also saves its captions as a transcript, and clipping a podcast
+episode saves the transcript the page offers. This happens only when you clip, in your own
+browser session: Tabgent reads the video's data from the page you have open (its player's
+data in the page) and requests the caption text from the same site, with the page's
+cookies, as the page itself does; a podcast's transcript is read from the page, or from a
+page on the same site that its transcript link leads to. Tabgent never signs in, never uses
+another account, and never passes YouTube's sign-in or bot check: when YouTube asks for one,
+or returns no caption text, the clip keeps the description or show notes and says that no
+transcript was saved. Audio is never transcribed or uploaded.
 Clipping does not send anything to Codex. A message about the page names the clipped text
 (its `article.md` path) in the reading context, and Codex reads it only on request.
 

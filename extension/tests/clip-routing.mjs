@@ -79,9 +79,19 @@ const tabs = new Map([
   ],
   [3, { id: 3, windowId: 1, index: 2, url: 'https://example.test/private', incognito: true }],
   [4, { id: 4, windowId: 1, index: 3, url: 'https://example.test/short', title: 'Short' }],
+  [
+    5,
+    {
+      id: 5,
+      windowId: 1,
+      index: 4,
+      url: 'https://www.youtube.com/watch?v=FIXTUREvid1&t=30s',
+      title: 'Fixture video - YouTube',
+    },
+  ],
 ]);
 // The page's answers: what clipping returns, what the user chooses in the page prompt.
-const page = { run: [], ask: [] };
+const page = { run: [], ask: [], player: [] };
 const created = [];
 const injected = [],
   notes = [],
@@ -109,10 +119,12 @@ globalThis.chrome = {
   contextMenus: { onClicked: event(), removeAll: (done) => done(), create: (m) => menus.push(m) },
   commands: { onCommand: event() },
   scripting: {
-    executeScript: async ({ target, files, func, args }) => {
-      injected.push({ target, files, func: func && String(func), args });
+    executeScript: async ({ target, files, func, args, world }) => {
+      injected.push({ target, files, func: func && String(func), args, world });
       const frame = { frameId: 0, documentId: documentId(target.tabId) };
       if (files) return [{ ...frame, result: null }];
+      // A YouTube video's player data, read in the page's own world.
+      if (world === 'MAIN') return [{ ...frame, result: page.player.shift() ?? null }];
       const kind = /\.ask\(/.test(String(func)) ? 'ask' : /\.run\(/.test(String(func)) ? 'run' : '';
       if (!kind) return (notes.push(args[0]), [{ ...frame, result: undefined }]);
       const next = page[kind].shift();
@@ -255,6 +267,7 @@ try {
     'vendor/turndown/turndown.js',
     'vendor/dompurify/purify.umd.js',
     'clip/sanitize-config.js',
+    'clip/clip-media.js',
     'clip/clip-content.js',
   ]);
   assert(injected.every((entry) => entry.target.frameIds?.[0] === 0));
@@ -414,6 +427,57 @@ try {
   tabs.set(1, { ...tabs.get(1), url: article + '#top' });
   console.log('PASS navigated, refused and oversized clips save nothing');
 
+  // A YouTube video: its player data is read in the page's own world, for its id only, and
+  // given to the clipping script; a missing transcript is saved as such and said so.
+  const player = { videoId: 'FIXTUREvid1', status: 'OK', tracks: [], description: 'Notes.' };
+  page.player.push(player);
+  page.run.push((options) => {
+    assert.deepEqual(options.player, player);
+    return result({
+      extractor: 'youtube',
+      contentStatus: 'notesOnly',
+      transcript: { status: 'unavailable', reason: 'empty', language: 'x'.repeat(80) },
+      cover: 'https://i.ytimg.com/vi/FIXTUREvid1/maxresdefault.jpg',
+      metaSources: { author: 'site:www.youtube.com', cover: 'Not a source!' },
+    });
+  });
+  injected.length = 0;
+  notes.length = 0;
+  const youtube = await clip(5);
+  assert.equal(youtube.ok, true, JSON.stringify(youtube));
+  const mainWorld = injected.find((entry) => entry.world === 'MAIN');
+  assert.deepEqual(mainWorld.target, { tabId: 5, frameIds: [0] });
+  assert.deepEqual(mainWorld.args, ['FIXTUREvid1']);
+  assert.match(mainWorld.func, /getPlayerResponse/);
+  const youtubeSave = vaultCalls('vault/clip/save').at(-1).params;
+  assert.equal(youtubeSave.contentStatus, 'notesOnly');
+  assert.deepEqual(youtubeSave.transcript, {
+    status: 'unavailable',
+    reason: 'empty',
+    language: 'x'.repeat(35),
+    kind: '',
+    name: '',
+    source: '',
+  });
+  assert.deepEqual(youtubeSave.metaSources, { author: 'site:www.youtube.com' });
+  assert.deepEqual(youtubeSave.cover, {
+    source: 'https://i.ytimg.com/vi/FIXTUREvid1/maxresdefault.jpg',
+    file: '',
+  });
+  const said = notes
+    .map((note) => note?.text)
+    .filter(Boolean)
+    .at(-1);
+  assert.match(said, /^clipNotesOnly\(On Autonomy\) clipTranscriptEmpty/);
+  assert.equal(notes.at(-1).tone, 'warning');
+  // Other pages and selections never read a page's own world.
+  injected.length = 0;
+  page.ask.push('replace');
+  page.run.push(result());
+  await clip(4);
+  assert(!injected.some((entry) => entry.world === 'MAIN'));
+  console.log("PASS a YouTube clip reads the video's player data in the page's world");
+
   // A selection clip checks the page still selects the quote attached in the conversation.
   const live = {
     id: 'test',
@@ -455,6 +519,33 @@ try {
     { url: 'https://cdn.example.test/gone.png' },
   ]);
   assert.equal(cleanClip(result({ imageToken: 'page-chosen' })).imageToken, '');
+  // The cover, metadata sources, status and transcript are bounded too.
+  const reshaped = cleanClip(
+    result({
+      cover: 'javascript:alert(1)',
+      metaSources: { author: 'metadata', publishedAt: 'Title Line', siteName: 7 },
+      contentStatus: 'complete',
+      transcript: {
+        status: 'great',
+        reason: 'lost',
+        kind: 'robot',
+        source: 'radio',
+        name: 'n'.repeat(300),
+      },
+    }),
+  );
+  assert.equal(reshaped.cover, '');
+  assert.deepEqual(reshaped.metaSources, { author: 'metadata' });
+  assert.equal(reshaped.contentStatus, 'text');
+  assert.deepEqual(reshaped.transcript, {
+    status: 'unavailable',
+    reason: '',
+    language: '',
+    kind: '',
+    name: 'n'.repeat(200),
+    source: '',
+  });
+  assert.equal(cleanClip(result()).transcript, null);
   console.log('PASS page results are bounded and reshaped');
 
   // The keyboard shortcut clips the active tab.

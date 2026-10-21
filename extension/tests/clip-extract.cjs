@@ -3,7 +3,9 @@
 // code, links, embeds, unsafe markup, a synthetic X thread, X timelines, selections, the
 // whole-page fallback, short pages, figure captions, pages of only links, and the author,
 // date and cover with their sources (Meituan and WeChat layouts from de-identified
-// fixtures). Nothing is fetched by the clipping script.
+// fixtures), YouTube captions saved as transcripts (generated watch pages and caption files)
+// and podcast transcripts. Only the clipping script's caption and transcript requests to the
+// page's own site are made; nothing else is fetched.
 const assert = require('node:assert/strict'),
   fs = require('node:fs'),
   path = require('node:path'),
@@ -14,6 +16,7 @@ const files = [
   'vendor/turndown/turndown.js',
   'vendor/dompurify/purify.umd.js',
   'clip/sanitize-config.js',
+  'clip/clip-media.js',
   'clip/clip-content.js',
 ].map((file) => path.join(extension, file));
 
@@ -82,6 +85,17 @@ ${Array.from({ length: 900 }, (_, i) => `<p>Figure ${i}</p><img src="${longImage
     <span class="publish-date">发布于 2026年3月5日 21:00</span><span class="reading-time">阅读 5 分钟</span></div>
     ${Array.from({ length: 6 }, (_, i) => `<p>第 ${i + 1} 段：读者会反复回到困难的段落，记下自己的理解，并把问题和想法写成笔记，留待以后再读。</p>`).join('')}
     </article></main></body></html>`,
+  // A time the page states at midnight UTC is kept as that time.
+  '/midnight': `<!doctype html><html lang="en"><head><title>Midnight</title>
+    <meta property="article:published_time" content="2026-03-05T00:00:00Z"></head><body><main><article>
+    <h1>Midnight</h1>${paragraphs(5, 'Midnight')}</article></main></body></html>`,
+  // Chinese pages with an embedded video: a few characters around it are only links; a
+  // paragraph of text is the page's text.
+  '/zh-video': `<!doctype html><html lang="zh-CN"><head><title>演讲录像</title></head><body><main>
+    <h1>演讲录像</h1><p>请看视频：</p><iframe src="https://video.example.test/embed/zh" title="视频"></iframe></main></body></html>`,
+  '/zh-video-notes': `<!doctype html><html lang="zh-CN"><head><title>演讲录像与笔记</title></head><body><main>
+    <h1>演讲录像与笔记</h1><p>这场演讲讨论了慢读如何改变读者记住的内容，以及笔记怎样帮助我们回到困难的段落。</p>
+    <iframe src="https://video.example.test/embed/zh" title="视频"></iframe></main></body></html>`,
   // An English date as text: Defuddle reads it as midnight UTC; it is kept as a date.
   '/dated': `<!doctype html><html lang="en"><head><title>Dated</title></head><body><main><article>
     <h1>Dated</h1><p>March 5, 2026</p>${paragraphs(5, 'Dated')}</article></main></body></html>`,
@@ -104,6 +118,105 @@ const sitePages = {
     'utf8',
   ),
 };
+// YouTube watch pages and caption files (see fixtures/youtube.cjs).
+const { youtubePage, youtubeCues, json3, srv3 } = require('./fixtures/youtube.cjs');
+const chaptered = [
+  'A fixture video about careful reading.',
+  '',
+  'Notes: https://clip.test/notes (and more at 2:30).',
+  '',
+  '0:00 Introduction',
+  '1:00 The second part',
+  '2:30 Closing words',
+].join('\n');
+const youtubePages = {
+  // English captions of its own, an automatic track and another language: its own English.
+  FIXTUREvid1: youtubePage('FIXTUREvid1', {
+    tracks: [
+      ['en', 'asr', 'English (auto-generated)'],
+      ['en', '', 'English'],
+      ['de', '', 'German'],
+    ],
+    description: chaptered,
+  }),
+  // Japanese automatic captions, answered only with the token the player adds.
+  FIXTUREvid2: youtubePage('FIXTUREvid2', {
+    tracks: [
+      ['ja', 'asr', '日本語 (自動生成)'],
+      ['en', '', 'English'],
+    ],
+    playerRequest: '/api/timedtext?v=FIXTUREvid2&lang=ja&kind=asr&pot=FIXTUREPOT&fmt=json3&c=WEB',
+  }),
+  // No caption text at all, but the user opened the transcript panel.
+  FIXTUREvid3: youtubePage('FIXTUREvid3', {
+    tracks: [['en', '', 'English']],
+    panel: Array.from({ length: 12 }, (_, i) => [
+      `0:${String(i * 4).padStart(2, '0')}`,
+      `Panel line ${i + 1} about reading slowly.`,
+    ]),
+  }),
+  // Tracks whose text YouTube does not return: only the description is saved.
+  FIXTUREvid4: youtubePage('FIXTUREvid4', {
+    tracks: [['en', 'asr', 'English (auto-generated)']],
+    description: 'Show notes for the episode.\n\nGuests and links: https://clip.test/guests',
+  }),
+  // YouTube asks to sign in (or to confirm this is not a bot).
+  FIXTUREvid5: youtubePage('FIXTUREvid5', {
+    status: 'LOGIN_REQUIRED',
+    description: 'A description that is still on the page.',
+  }),
+  // No captions and no description.
+  FIXTUREvid6: youtubePage('FIXTUREvid6'),
+  // A very long transcript.
+  FIXTUREvid7: youtubePage('FIXTUREvid7', { tracks: [['en', '', 'English']] }),
+  // The player shows another video: its data is not used for this one.
+  FIXTUREvid8: youtubePage('FIXTUREvid8', { tracks: [['en', '', 'English']], current: false }),
+};
+function captions(url) {
+  const id = url.searchParams.get('v'),
+    pot = url.searchParams.has('pot');
+  if (
+    id === 'FIXTUREvid1' &&
+    url.searchParams.get('lang') === 'en' &&
+    !url.searchParams.get('kind')
+  )
+    return json3(
+      youtubeCues(60, (i) =>
+        i === 25 ? `Sentence ${i + 1} ends a thought.` : `Sentence ${i + 1} about careful reading`,
+      ).map(([start, duration, text], i) => [start + (i >= 26 ? 5 : 0), duration, text]),
+    );
+  if (id === 'FIXTUREvid2' && pot) return srv3(youtubeCues(20, (i) => `日本語の字幕${i + 1}`));
+  if (id === 'FIXTUREvid7')
+    return json3(youtubeCues(40000, (i) => `Line ${i + 1} of a very long talk about reading.`, 1));
+  return '';
+}
+// Podcast episode pages: show notes only; a transcript kept collapsed; a transcript on
+// another page of the site; and an article that only offers an audio version.
+const episode = (body, head = '') =>
+  `<!doctype html><html lang="en"><head><title>Episode 12: Reading slowly</title>${head}
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"PodcastEpisode","name":"Episode 12"}</script>
+  </head><body><main><article><h1>Episode 12: Reading slowly</h1>
+  <audio controls src="/audio/episode-12.mp3"></audio>
+  <h2>Show notes</h2>${paragraphs(5, 'Show notes')}${body}</article></main></body></html>`;
+const transcriptText = (n) =>
+  Array.from(
+    { length: n },
+    (_, i) =>
+      `<p><strong>Host:</strong> Transcript line ${i + 1}, where the guest explains how slow reading changes what a reader remembers.</p>`,
+  ).join('');
+Object.assign(pages, {
+  '/podcast/notes': episode(''),
+  '/podcast/collapsed': episode(
+    `<button aria-expanded="false">Show transcript</button><div class="episode-transcript" style="display: none">${transcriptText(8)}</div>`,
+  ),
+  '/podcast/linked': episode(
+    '<p><a href="/podcast/linked/transcript">Read the full transcript</a></p>',
+  ),
+  '/podcast/linked/transcript': `<!doctype html><html lang="en"><head><title>Transcript</title></head><body><main><article><h1>Episode 12 transcript</h1>${transcriptText(10)}</article></main></body></html>`,
+  '/listen': `<!doctype html><html lang="en"><head><title>An essay with audio</title></head><body><main><article>
+    <h1>An essay with audio</h1><p>Listen to this article: <audio controls src="/audio/essay.mp3"></audio></p>${paragraphs(6, 'Essay')}
+    </article></main></body></html>`,
+});
 // X fixtures are served at their x.com addresses (nothing reaches the network).
 const xPages = {
   'https://x.com/author/status/100': xThread(),
@@ -171,8 +284,19 @@ function xThread() {
       if (body) return route.fulfill({ contentType: 'text/html; charset=utf-8', body });
       return route.abort();
     });
+    await page.route(/^https:\/\/www\.youtube\.com\//, (route) => {
+      const url = new URL(route.request().url());
+      if (url.pathname === '/watch' && youtubePages[url.searchParams.get('v')])
+        return route.fulfill({
+          contentType: 'text/html; charset=utf-8',
+          body: youtubePages[url.searchParams.get('v')],
+        });
+      if (url.pathname === '/api/timedtext')
+        return route.fulfill({ contentType: 'text/plain; charset=utf-8', body: captions(url) });
+      return route.abort();
+    });
     await page.route(
-      /^(?!https:\/\/(?:clip\.test|x\.com|tech\.meituan\.com|mp\.weixin\.qq\.com)\/)/,
+      /^(?!https:\/\/(?:clip\.test|x\.com|tech\.meituan\.com|mp\.weixin\.qq\.com|www\.youtube\.com)\/)/,
       (route) => route.abort(),
     );
     async function open(pathname) {
@@ -365,6 +489,20 @@ function xThread() {
     const dated = await run({ mode: 'article', url: 'https://clip.test/dated' });
     assert.equal(dated.publishedAt, '2026-03-05');
     assert.equal(dated.metaSources.publishedAt, 'metadata');
+    await open('/midnight');
+    assert.equal(
+      (await run({ mode: 'article', url: 'https://clip.test/midnight' })).publishedAt,
+      '2026-03-05T00:00:00Z',
+    );
+    // Chinese counts each character as a word: a few characters around a video are links only.
+    for (const [pathname, status] of [
+      ['/zh-video', 'linksOnly'],
+      ['/zh-video-notes', 'text'],
+    ]) {
+      await open(pathname);
+      const zhVideo = await run({ mode: 'page', url: 'https://clip.test' + pathname });
+      assert.equal(zhVideo.contentStatus, status, pathname);
+    }
 
     // Meituan's tech blog: the team, the date and the cover from its post header. An image
     // followed by a paragraph keeps that paragraph as text in its place: it is not a caption.
@@ -596,6 +734,207 @@ function xThread() {
     assert(Buffer.byteLength(many.markdown) <= 3 * 1024 * 1024);
     assert.equal(many.images.filter((image) => image.url).length, 1);
 
+    // YouTube: the worker reads the player data in the page's own world (youtubePlayerData),
+    // and the clipping script saves the description and the captions as a transcript.
+    const { youtubePlayerData } = await import('../youtube-player.js');
+    const video = async (id, mode = 'article') => {
+      const url = `https://www.youtube.com/watch?v=${id}`;
+      await open(url);
+      const player = await page.evaluate(youtubePlayerData, id);
+      requests.length = 0;
+      return { player, result: await run({ mode, url, player }) };
+    };
+    const watch = (id, at) => `https://www.youtube.com/watch?v=${id}&t=${at}s`;
+    const escaped = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // The video's own English captions (not the automatic track), from the player's data
+    // for this video (the markup's data is an earlier video's).
+    const first = await video('FIXTUREvid1');
+    assert.equal(first.player.videoId, 'FIXTUREvid1');
+    assert.equal(first.player.tracks.length, 3);
+    const youtubeClip = first.result;
+    assert.equal(youtubeClip.ok, true, JSON.stringify(youtubeClip).slice(0, 300));
+    assert.equal(youtubeClip.extractor, 'youtube');
+    assert.equal(youtubeClip.title, 'Fixture video 1');
+    assert.equal(youtubeClip.byline, 'Fixture Channel');
+    assert.equal(youtubeClip.siteName, 'YouTube');
+    assert.equal(youtubeClip.publishedAt, '2026-08-14T05:00:01-07:00');
+    assert.equal(youtubeClip.cover, 'https://i.ytimg.com/vi/FIXTUREvid1/maxresdefault.jpg');
+    assert.deepEqual(youtubeClip.metaSources, {
+      author: 'site:www.youtube.com',
+      publishedAt: 'site:www.youtube.com',
+      siteName: 'site:www.youtube.com',
+      cover: 'site:www.youtube.com',
+    });
+    assert.equal(youtubeClip.contentStatus, 'text');
+    assert.equal(youtubeClip.tooLittle, false);
+    assert.equal(youtubeClip.language, 'en');
+    assert.deepEqual(youtubeClip.transcript, {
+      status: 'saved',
+      reason: '',
+      language: 'en',
+      kind: 'manual',
+      name: 'English',
+      source: 'captions',
+    });
+    // Only the chosen track's text was requested, from the page's own site.
+    assert.deepEqual(
+      requests.map((url) => new URL(url).searchParams.get('lang') + new URL(url).pathname),
+      ['en/api/timedtext'],
+    );
+    const ymd = youtubeClip.markdown;
+    // The description, with its links and timestamps as links.
+    assert.match(ymd, /^## clipVideoDescription\n\nA fixture video about careful reading\./m);
+    assert.match(ymd, /\[https:\/\/clip\.test\/notes\]\(https:\/\/clip\.test\/notes\)/);
+    assert.match(ymd, new RegExp(`\\[2:30\\]\\(${escaped(watch('FIXTUREvid1', 150))}\\)`));
+    // The transcript in chapters, each paragraph starting with a link to its moment.
+    assert.match(ymd, /^## clipTranscriptOf\(English\)$/m);
+    assert.match(
+      ymd,
+      new RegExp(
+        `^### \\[0:00\\]\\(${escaped(watch('FIXTUREvid1', 0))}\\) Introduction\\n\\n\\[0:00\\]\\(${escaped(watch('FIXTUREvid1', 0))}\\) Sentence 1 about careful reading Sentence 2`,
+        'm',
+      ),
+    );
+    assert.match(
+      ymd,
+      new RegExp(
+        `^### \\[1:00\\]\\(${escaped(watch('FIXTUREvid1', 60))}\\) The second part\\n\\n\\[1:00\\]`,
+        'm',
+      ),
+    );
+    assert.match(
+      ymd,
+      new RegExp(`^### \\[2:30\\]\\(${escaped(watch('FIXTUREvid1', 150))}\\) Closing words`, 'm'),
+    );
+    // A pause of more than three seconds starts a paragraph.
+    assert.match(ymd, /Sentence 26 ends a thought\.\n\n\[1:23\]\([^)]+&t=83s\) Sentence 27/);
+    assert.match(ymd, /Sentence 60 about careful reading$/);
+    // Japanese automatic captions, which YouTube returns only with the player's token: the
+    // player's own request is used, and the text is joined without spaces.
+    const japaneseVideo = (await video('FIXTUREvid2')).result;
+    assert.equal(japaneseVideo.ok, true);
+    assert.deepEqual(japaneseVideo.transcript, {
+      status: 'saved',
+      reason: '',
+      language: 'ja',
+      kind: 'auto',
+      name: '日本語 (自動生成)',
+      source: 'player',
+    });
+    assert.equal(japaneseVideo.language, 'ja');
+    assert.match(japaneseVideo.markdown, /^## clipTranscriptOf\(日本語 \(自動生成\)\)$/m);
+    assert.match(
+      japaneseVideo.markdown,
+      /\[0:00\]\([^)]+\) 日本語の字幕1日本語の字幕2日本語の字幕3/,
+    );
+    // No caption text, but the transcript panel the user opened.
+    const fromPanel = (await video('FIXTUREvid3')).result;
+    assert.equal(fromPanel.transcript.source, 'panel');
+    assert.equal(fromPanel.transcript.status, 'saved');
+    assert.match(
+      fromPanel.markdown,
+      /\[0:00\]\([^)]+&t=0s\) Panel line 1 about reading slowly\. Panel line 2/,
+    );
+    assert.match(fromPanel.markdown, /Panel line 12 about reading slowly\.$/);
+    // YouTube returns no text for the track: only the description, and why.
+    const empty = (await video('FIXTUREvid4')).result;
+    assert.equal(empty.contentStatus, 'notesOnly');
+    assert.deepEqual(empty.transcript, {
+      status: 'unavailable',
+      reason: 'empty',
+      language: '',
+      kind: '',
+      name: '',
+      source: '',
+    });
+    assert.match(empty.markdown, /Show notes for the episode\./);
+    assert.doesNotMatch(empty.markdown, /clipTranscript/);
+    // A sign-in or bot check: nothing is tried, and the clip says why.
+    const login = (await video('FIXTUREvid5')).result;
+    assert.equal(login.contentStatus, 'notesOnly');
+    assert.equal(login.transcript.reason, 'login');
+    assert.deepEqual(requests, [], 'Nothing is requested past a sign-in check');
+    // No captions and no description: only the video's link.
+    const bare = (await video('FIXTUREvid6')).result;
+    assert.equal(bare.contentStatus, 'linksOnly');
+    assert.equal(bare.transcript.reason, 'none');
+    // A very long transcript is saved within the Markdown limit, quickly.
+    const startedLong = Date.now();
+    const longVideo = (await video('FIXTUREvid7')).result;
+    assert(Date.now() - startedLong < 30000, `took ${Date.now() - startedLong} ms`);
+    assert.equal(longVideo.ok, true);
+    assert(Buffer.byteLength(longVideo.markdown) <= 3 * 1024 * 1024);
+    assert.match(longVideo.markdown, /Line 1 of a very long talk/);
+    // Another video's player data is not used: the page is clipped like any other.
+    const other = await video('FIXTUREvid8');
+    assert.equal(other.player, null);
+    assert.notEqual(other.result.extractor, 'youtube');
+    // A selection on a video page is the selection.
+    await open('https://www.youtube.com/watch?v=FIXTUREvid1');
+    await page.evaluate(() => getSelection().selectAllChildren(document.querySelector('h1')));
+    const picked = await run({
+      mode: 'selection',
+      url: 'https://www.youtube.com/watch?v=FIXTUREvid1',
+      player: first.player,
+    });
+    assert.equal(picked.extractor, 'selection');
+    await page.evaluate(() => getSelection().removeAllRanges());
+
+    // Podcast episodes: only show notes is said so; a transcript the page keeps collapsed
+    // or on another page of the site is added; an article with an audio version is not one.
+    await open('/podcast/notes');
+    const notes = await run({ mode: 'article', url: 'https://clip.test/podcast/notes' });
+    assert.equal(notes.contentStatus, 'notesOnly');
+    assert.equal(notes.transcript.reason, 'none');
+    assert.match(notes.markdown, /Show notes paragraph 1/);
+    await open('/podcast/collapsed');
+    const collapsed = await run({ mode: 'article', url: 'https://clip.test/podcast/collapsed' });
+    assert.equal(collapsed.contentStatus, 'text');
+    assert.equal(collapsed.transcript.source, 'page');
+    assert.match(
+      collapsed.markdown,
+      /Show notes paragraph 5[\s\S]*^## clipTranscriptHeading\n\n\*\*Host:\*\* Transcript line 1,[\s\S]*Transcript line 8,/m,
+    );
+    assert.deepEqual(requests, []);
+    await open('/podcast/linked');
+    const linked = await run({ mode: 'article', url: 'https://clip.test/podcast/linked' });
+    assert.equal(linked.contentStatus, 'text');
+    assert.equal(linked.transcript.source, 'link');
+    assert.match(linked.markdown, /^## clipTranscriptHeading\n\n[\s\S]*Transcript line 10,/m);
+    assert.deepEqual(requests, ['https://clip.test/podcast/linked/transcript']);
+    await open('/listen');
+    const essay = await run({ mode: 'article', url: 'https://clip.test/listen' });
+    assert.equal(essay.contentStatus, 'text');
+    assert.equal(essay.transcript, null);
+    // Caption formats: YouTube's XML (srv1, with entities escaped twice) and WebVTT.
+    const parsed = await page.evaluate(() => [
+      globalThis.tabgentClipMedia.parseCaptions(
+        '<?xml version="1.0"?><transcript><text start="1.5" dur="2">It&amp;#39;s here</text><text start="4" dur="1">&amp;lt;b&amp;gt;bold&amp;lt;/b&amp;gt;</text></transcript>',
+      ),
+      globalThis.tabgentClipMedia.parseCaptions(
+        'WEBVTT\n\n00:00:01.000 --> 00:00:03.500\n<c>Hello</c> there\n\n00:01:02.000 --> 00:01:04.000 align:start\nAgain',
+      ),
+      globalThis.tabgentClipMedia.chapters('0:00 Start\n5:00 Middle\n1:00 Back'),
+      globalThis.tabgentClipMedia.chapters('Intro\n0:00 Start\n1:00 Next\n1:02:03 Long'),
+    ]);
+    assert.deepEqual(parsed[0], [
+      { start: 1.5, end: 3.5, text: "It's here" },
+      { start: 4, end: 5, text: 'bold' },
+    ]);
+    assert.deepEqual(parsed[1], [
+      { start: 1, end: 3.5, text: 'Hello there' },
+      { start: 62, end: 64, text: 'Again' },
+    ]);
+    assert.deepEqual(parsed[2], [], 'Chapters must increase');
+    assert.deepEqual(
+      parsed[3].map((chapter) => [chapter.start, chapter.title]),
+      [
+        [0, 'Start'],
+        [60, 'Next'],
+        [3723, 'Long'],
+      ],
+    );
+
     // The prompt resolves with the chosen action; Escape cancels.
     const choice = page.evaluate(() =>
       globalThis.tabgentClip.ask({ kind: 'replace', clippedAt: '2026-10-12T09:30:00+08:00' }),
@@ -604,7 +943,7 @@ function xThread() {
     await page.keyboard.press('Escape');
     assert.equal(await choice, 'cancel');
     console.log(
-      'PASS clip extraction: article, page, selection, short page, X thread, captions, links only, metadata and cover',
+      'PASS clip extraction: article, page, selection, short page, X thread, captions, links only, metadata, cover, YouTube transcripts and podcasts',
     );
   } finally {
     await browser.close();

@@ -261,6 +261,59 @@ with tempfile.TemporaryDirectory(prefix="tabgent-clip-assets-") as directory:
         listed = call(settings, "vault/documents/list", {})["documents"]
         entry = next(d for d in listed if d["id"] == links["document"]["id"])
         assert entry["clip"]["contentStatus"] == "linksOnly"
+        # A cover over 1 MiB is recorded, but the library list does not show it.
+        large = b"\x89PNG\r\n\x1a\n" + bytes(range(256)) * 4200
+        upload(settings, large, chunk=600_000)
+        big = asset(large, "png", "https://cdn.example.test/big-cover.png")
+        large_name = f"assets/{digest(large)[:16]}.png"
+        shown = clip(
+            settings,
+            [chart, big],
+            replace=True,
+            cover={"source": big["source"], "file": large_name},
+        )
+        assert (
+            json.loads((folder / "article.json").read_text())["cover"]["file"]
+            == large_name
+        )
+        assert shown["clip"]["cover"] == ""
+        # A video's transcript: saved with its language, kind and source, or, with only the
+        # description or show notes, why it is missing.
+        saved_transcript = {
+            "status": "saved",
+            "reason": "",
+            "language": "en",
+            "kind": "auto",
+            "name": "English (auto-generated)",
+            "source": "player",
+        }
+        clip(settings, [chart], replace=True, transcript=saved_transcript)
+        record = json.loads((folder / "article.json").read_text())
+        assert record["transcript"] == saved_transcript
+        assert record["contentStatus"] == "text"
+        notes = clip(
+            settings,
+            [chart],
+            replace=True,
+            contentStatus="notesOnly",
+            transcript={"status": "unavailable", "reason": "login"},
+        )
+        assert notes["clip"]["contentStatus"] == "notesOnly"
+        record = json.loads((folder / "article.json").read_text())
+        assert record["transcript"] == {
+            "status": "unavailable",
+            "reason": "login",
+            "kind": "",
+            "source": "",
+            "language": "",
+            "name": "",
+        }
+        read = call(
+            settings, "vault/clip/read", {"documentId": notes["document"]["id"]}
+        )
+        assert read["clip"]["transcript"] == record["transcript"]
+        clip(settings, [chart], replace=True, contentStatus="linksOnly")
+        assert json.loads((folder / "article.json").read_text())["transcript"] is None
         # Records written before these fields read as a clip of the page's text.
         old = dict(record)
         for key in ("cover", "metaSources", "contentStatus"):
@@ -282,6 +335,10 @@ with tempfile.TemporaryDirectory(prefix="tabgent-clip-assets-") as directory:
             {"cover": {"source": "file:///etc/hosts", "file": ""}},
             {"cover": "https://cdn.example.test/chart.png"},
             {"contentStatus": "complete"},
+            {"transcript": "saved"},
+            {"transcript": {"status": "maybe"}},
+            {"transcript": {"status": "saved", "source": "microphone"}},
+            {"transcript": {"status": "unavailable", "reason": "tired"}},
             {"metaSources": {"author": "Site Rule!"}},
             {"metaSources": ["metadata"]},
         ):
@@ -302,7 +359,9 @@ with tempfile.TemporaryDirectory(prefix="tabgent-clip-assets-") as directory:
             )
             assert reply["error"]["code"] == "invalid_params", (bad, reply)
         assert (folder / "article.json").read_bytes() == before
-        print("PASS a clip records its cover, metadata sources and links-only status")
+        print(
+            "PASS a clip records its cover, metadata sources, transcript and content status"
+        )
 
         # A new clip reuses a saved image without uploading it again, adds a new one, and
         # removes the image the old clip used; files the user put in assets/ stay.

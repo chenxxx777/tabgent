@@ -10,42 +10,43 @@ flowchart LR
 
 ## Source map
 
-| Path                              | Responsibility                                                              |
-| --------------------------------- | --------------------------------------------------------------------------- |
-| `extension/background.js`         | Tab/session ownership, native transport, selection routing.                 |
-| `extension/bridge.js`             | Runtime port connecting a chat view to its owner tab.                       |
-| `extension/browser-tools.js`      | Scope enforcement, browser actions, page reading and frame context.         |
-| `extension/browser-input.js`      | CDP-based trusted input and coordinate actions.                             |
-| `extension/selection-content.js`  | Selected text, DOM endpoints, offsets, and frame-relative geometry.         |
-| `extension/highlight-content.js`  | Selection toolbar, saved webpage highlights, and highlight actions.         |
-| `extension/highlight-note.js`     | Note preview and editor shared by the webpage and PDF.js reading layers.    |
-| `extension/web-anchor.js`         | Normalized page text, web anchors, and verified anchor restoration.         |
-| `extension/vault-client.js`       | Reading-vault requests over the native port, with ids and timeouts.         |
-| `extension/pdf/viewer.js`         | PDF.js wrapper: loading, fallback, live quotes, and Agent PDF commands.     |
-| `extension/pdf/pdf-highlights.js` | Selection toolbar, saved PDF highlights, and highlight actions in PDF.js.   |
-| `extension/pdf/pdf-anchor.js`     | PDF page text, PDF anchors, and verified anchor restoration.                |
-| `extension/pdf/file.html`         | The PDF.js viewer's entry page for PDFs opened from the computer.           |
-| `extension/local-files.js`        | `file://` URL checks, the file access prompt, files open before access.     |
-| `extension/local-pdf.js`          | Hands a local PDF in Chrome's own viewer to the PDF.js viewer.              |
-| `extension/file-access.html`      | Explains Chrome's "Allow access to file URLs" setting, opened once.         |
-| `extension/epub/`                 | Library and EPUB reader page: vault documents, imports, books, highlights.  |
-| `extension/epub-routing.js`       | EPUB reader port registry and sender checks.                                |
-| `extension/clipper.js`            | Clipping a page: injection, the replace prompt, bounds and the vault save.  |
-| `extension/clip-images.js`        | A clip's images: download, type and size checks, uploads, Markdown links.   |
-| `extension/clip/`                 | Clipping script, shared sanitizer settings, and the clipped-page reader.    |
-| `extension/clip-routing.js`       | Clipped-page reader address, port registry and sender checks.               |
-| `extension/feeds.js`              | Subscriptions: scheduled feed fetches and the library's feed messages.      |
-| `extension/reading-companion.js`  | Highlight and page conversations: reading context and saved turns.          |
-| `extension/reading.js`            | Reading context parts, turn records, and vault append parameters.           |
-| `extension/session-config.js`     | Browser tool schema and agent instructions.                                 |
-| `extension/ui/`                   | Chat rendering, composer, attachments, previews, approvals, and onboarding. |
-| `extension/_locales/en/`          | English UI strings; i18n structure is retained.                             |
-| `extension/native/host.py`        | App-server discovery, sessions, authentication events, and RPC transport.   |
-| `extension/native/attachments.py` | Bounded uploads and text/PDF/DOCX reading.                                  |
-| `extension/native/vault.py`       | ReadingVault highlights, discussions, and Markdown files.                   |
-| `extension/native/epub_text.py`   | EPUB chapter text for the vault, using the standard library only.           |
-| `extension/native/feeds.py`       | Feed and OPML parsing, and the subscription index `.tabgent/feeds.db`.      |
-| `extension/native/pdf_text.py`    | Imported PDF page text for the vault, read with macOS PDFKit.               |
+| Path                              | Responsibility                                                                |
+| --------------------------------- | ----------------------------------------------------------------------------- |
+| `extension/background.js`         | Tab/session ownership, native transport, selection routing.                   |
+| `extension/bridge.js`             | Runtime port connecting a chat view to its owner tab.                         |
+| `extension/browser-tools.js`      | Scope enforcement, browser actions, page reading and frame context.           |
+| `extension/browser-input.js`      | CDP-based trusted input and coordinate actions.                               |
+| `extension/selection-content.js`  | Selected text, DOM endpoints, offsets, and frame-relative geometry.           |
+| `extension/highlight-content.js`  | Selection toolbar, saved webpage highlights, and highlight actions.           |
+| `extension/highlight-note.js`     | Note preview and editor shared by the webpage and PDF.js reading layers.      |
+| `extension/web-anchor.js`         | Normalized page text, web anchors, and verified anchor restoration.           |
+| `extension/vault-client.js`       | Reading-vault requests over the native port, with ids and timeouts.           |
+| `extension/pdf/viewer.js`         | PDF.js wrapper: loading, fallback, live quotes, and Agent PDF commands.       |
+| `extension/pdf/pdf-highlights.js` | Selection toolbar, saved PDF highlights, and highlight actions in PDF.js.     |
+| `extension/pdf/pdf-anchor.js`     | PDF page text, PDF anchors, and verified anchor restoration.                  |
+| `extension/pdf/file.html`         | The PDF.js viewer's entry page for PDFs opened from the computer.             |
+| `extension/local-files.js`        | `file://` URL checks, the file access prompt, files open before access.       |
+| `extension/local-pdf.js`          | Hands a local PDF in Chrome's own viewer to the PDF.js viewer.                |
+| `extension/file-access.html`      | Explains Chrome's "Allow access to file URLs" setting, opened once.           |
+| `extension/epub/`                 | Library and EPUB reader page: vault documents, imports, books, highlights.    |
+| `extension/epub-routing.js`       | EPUB reader port registry and sender checks.                                  |
+| `extension/clipper.js`            | Clipping a page: injection, the replace prompt, bounds and the vault save.    |
+| `extension/clip-images.js`        | A clip's images: download, type and size checks, uploads, Markdown links.     |
+| `extension/youtube-player.js`     | A YouTube video's id and its player data, read in the page's own world.       |
+| `extension/clip/`                 | Clipping script, transcripts, shared sanitizer settings, clipped-page reader. |
+| `extension/clip-routing.js`       | Clipped-page reader address, port registry and sender checks.                 |
+| `extension/feeds.js`              | Subscriptions: scheduled feed fetches and the library's feed messages.        |
+| `extension/reading-companion.js`  | Highlight and page conversations: reading context and saved turns.            |
+| `extension/reading.js`            | Reading context parts, turn records, and vault append parameters.             |
+| `extension/session-config.js`     | Browser tool schema and agent instructions.                                   |
+| `extension/ui/`                   | Chat rendering, composer, attachments, previews, approvals, and onboarding.   |
+| `extension/_locales/en/`          | English UI strings; i18n structure is retained.                               |
+| `extension/native/host.py`        | App-server discovery, sessions, authentication events, and RPC transport.     |
+| `extension/native/attachments.py` | Bounded uploads and text/PDF/DOCX reading.                                    |
+| `extension/native/vault.py`       | ReadingVault highlights, discussions, and Markdown files.                     |
+| `extension/native/epub_text.py`   | EPUB chapter text for the vault, using the standard library only.             |
+| `extension/native/feeds.py`       | Feed and OPML parsing, and the subscription index `.tabgent/feeds.db`.        |
+| `extension/native/pdf_text.py`    | Imported PDF page text for the vault, read with macOS PDFKit.                 |
 
 Each webpage tab owns a session. Agent tabs share that session through runtime
 ports and retain its original page context. The sidebar beside an Agent tab has
@@ -419,7 +420,7 @@ by the URL, as for highlights, so highlights, notes and discussions belong to bo
 `clipper.js` runs in the service worker. It takes the tab's top-frame URL and document from
 `webNavigation.getFrame`, refuses anything but HTTP(S) pages outside incognito, and injects
 `vendor/defuddle/defuddle.js`, `vendor/turndown/turndown.js`, the UMD build of DOMPurify,
-`clip/sanitize-config.js` and `clip/clip-content.js` into frame 0 with
+`clip/sanitize-config.js`, `clip/clip-media.js` and `clip/clip-content.js` into frame 0 with
 `chrome.scripting.executeScript`. Nothing is loaded into pages that are not clipped. Each
 later call checks that the injection result's `documentId` is still the frame's, so a page
 that navigated mid-clip saves nothing. A single-page app can change its address without a
@@ -482,6 +483,39 @@ and WeChat's Unix time is written in China time with its offset, as WeChat shows
 cover is `og:image`, `twitter:image`, JSON-LD `image.url` or `link[rel=image_src]`, else the
 site's own cover; X posts and selections have none. `metaSources` in `article.json` names the
 source of each value.
+
+A YouTube video (`watch`, `shorts` or `live` on `www.youtube.com`) is clipped from its
+player data, not its markup: YouTube keeps the current video's data in the page's own world
+(the player's `getPlayerResponse()`; the markup's `ytInitialPlayerResponse` still names the
+first video a tab opened). The worker reads it there with `chrome.scripting.executeScript`
+in the `MAIN` world (`youtube-player.js`: title, channel, description, publish date,
+thumbnail and caption tracks, bounded, only when its `videoId` is the address's) and passes
+it to the clipping script, which checks it again (`clip-media.js`). The track saved is the
+original language's own captions (the language of YouTube's automatic track), else that
+automatic track (recorded as `auto`), else the default track. Its text is requested from the
+page's own site with the page's cookies, as YouTube's player does: the track's address
+(`fmt=json3`); else the player's own request for that track, found in the page's resource
+timing (YouTube now answers caption requests only with a token the player adds, so this
+works once captions are on); else the transcript panel when the user opened it. YouTube's
+json3, srv1 and srv3 and WebVTT are read; cues become paragraphs (a new one at a chapter,
+after a pause over three seconds, at a sentence end after 30 seconds, at the latest after 90
+seconds, or 60 for automatic captions without punctuation), each starting with a link to its
+moment (`watch?v=<id>&t=<s>s`), under chapter headings when the description has chapters
+(lines starting with a timestamp, the first at 0:00, at least three, increasing). The
+description is saved before it, with its links and timestamps linked. `transcript` in
+`article.json` records the language, kind, name and source, or, when no text was available,
+why: `login` (YouTube asks to sign in or to confirm the user is not a bot: nothing is
+requested), `none`, `empty` (YouTube returned no text) or `unplayable`. Without a transcript
+the clip is `contentStatus: "notesOnly"`, and the page and reader say why. Audio is never
+transcribed.
+
+A podcast episode page (known podcast hosts, a podcast player embedded in the page, JSON-LD
+`PodcastEpisode` or an `og:type` naming an episode; a page that only offers an audio version
+of an article is not one) gets its transcript added after the show notes when the page has
+one: a block whose id or class names a transcript (also when the page keeps it collapsed),
+the part under a "Transcript" heading or `<summary>`, or a page on the same site that a
+"transcript" link leads to (requested with the page's cookies, cleaned by Defuddle without
+running it). Without one, the clip is `notesOnly`.
 
 A clip whose text is only links and at most 12 words besides, with no image (an embedded
 video turned into a link, a page whose text did not load), is `contentStatus: "linksOnly"`
@@ -566,7 +600,8 @@ published date as the page states it (formatted in UTC from its date part, so `2
 never shown as the day before), and the cover shows above the text unless the text already
 has that image. The library shows each clip's cover from the vault when its entry comes into
 view (`libraryCover`, relayed to `vault/clip/asset/read`, which reads only images the record
-lists).
+lists), for covers up to 1 MiB: the list reads them through the vault queue that highlights
+and notes share.
 
 The reader loads the webpage reading layer (`selection-content.js`, `web-anchor.js`,
 `highlight-note.js` and `highlight-content.js`) after setting `globalThis.tabgentReadingView`
