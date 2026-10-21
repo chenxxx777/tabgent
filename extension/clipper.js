@@ -13,6 +13,7 @@ const FILES = [
   'vendor/turndown/turndown.js',
   'vendor/dompurify/purify.umd.js',
   'clip/sanitize-config.js',
+  'clip/clip-structure.js',
   'clip/clip-media.js',
   'clip/clip-content.js',
 ];
@@ -43,6 +44,21 @@ function clipFailure(reason, message) {
   const explained = key ? globalThis.tabgentExplainError?.({ code: reason, message: '' }, t) : '';
   if (explained && explained !== t('errorGeneric')) return explained;
   return key ? t(key) : t('clipFailed', message || '');
+}
+
+// The coverage check's figures (see clip-structure.js), bounded; null when the page's text
+// was not checked.
+function cleanCoverage(value) {
+  if (!value || typeof value !== 'object') return null;
+  const ratio = Number(value.ratio);
+  return {
+    visibleChars: count(value.visibleChars),
+    keptChars: count(value.keptChars),
+    ratio: Number.isFinite(ratio) ? Math.min(1, Math.max(0, Math.round(ratio * 1000) / 1000)) : 1,
+    restoredPassages: count(value.restoredPassages),
+    restoredChars: count(value.restoredChars),
+    incomplete: value.incomplete === true,
+  };
 }
 
 // The page's result reshaped to the vault contract; null when it is not usable.
@@ -108,6 +124,7 @@ export function cleanClip(result) {
             source: one(result.transcript.source, ['captions', 'player', 'panel', 'page', 'link']),
           }
         : null,
+    coverage: cleanCoverage(result.coverage),
   };
 }
 
@@ -168,6 +185,7 @@ export async function storeClip(
       words: clip.words,
       chars: clip.chars,
       truncated: clip.truncated,
+      ...(clip.coverage ? { coverage: clip.coverage } : {}),
       assets: downloaded.assets.map(({ sha256, ext, size, source, sources }) => ({
         sha256,
         ext,
@@ -348,6 +366,8 @@ export function createClipper({ vault, changed = () => {}, fetch = globalThis.fe
         failed ? t('clipImagesFailed', failed) : '',
         clip.posts ? t('clipXPartial', clip.posts) : '',
         clip.truncated ? t('clipTruncated') : '',
+        clip.coverage?.restoredPassages ? t('clipRestored', clip.coverage.restoredPassages) : '',
+        clip.coverage?.incomplete ? t('clipTextMissing') : '',
       ]
         .filter(Boolean)
         .join(' '),

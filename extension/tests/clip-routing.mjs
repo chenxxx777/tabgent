@@ -214,6 +214,14 @@ const result = (fields = {}) => ({
   chars: 45,
   truncated: false,
   posts: 0,
+  coverage: {
+    visibleChars: 60,
+    keptChars: 45,
+    ratio: 0.75,
+    incomplete: false,
+    restoredPassages: 1,
+    restoredChars: 15,
+  },
   tooLittle: false,
   hasSelection: false,
   ...fields,
@@ -267,6 +275,7 @@ try {
     'vendor/turndown/turndown.js',
     'vendor/dompurify/purify.umd.js',
     'clip/sanitize-config.js',
+    'clip/clip-structure.js',
     'clip/clip-media.js',
     'clip/clip-content.js',
   ]);
@@ -307,7 +316,21 @@ try {
   );
   assert(vaultCalls('vault/clip/asset').length >= 2, 'The image is uploaded before the save');
   assert.equal(save.replace, undefined);
+  // The coverage check's figures go into article.json.
+  const coverage = {
+    visibleChars: 60,
+    keptChars: 45,
+    ratio: 0.75,
+    restoredPassages: 1,
+    restoredChars: 15,
+    incomplete: false,
+  };
+  assert.deepEqual(save.coverage, coverage);
   const folder = first.document.folder;
+  assert.deepEqual(
+    JSON.parse(fs.readFileSync(path.join(folder, 'article.json'), 'utf8')).coverage,
+    coverage,
+  );
   const markdown = fs.readFileSync(path.join(folder, 'article.md'), 'utf8');
   assert.match(markdown, /endorsement of one's/);
   assert.match(markdown, new RegExp(`!\\[Figure\\]\\(assets/${png.slice(0, 16)}\\.png\\)`));
@@ -323,7 +346,7 @@ try {
       'clipSaving',
       'clipSavingImages(1|2)',
       'clipSavingImages(2|2)',
-      'clipSaved(On Autonomy|8) clipImagesSaved(1) clipImagesFailed(1)',
+      'clipSaved(On Autonomy|8) clipImagesSaved(1) clipImagesFailed(1) clipRestored(1)',
     ],
   );
   await wait();
@@ -519,6 +542,30 @@ try {
     { url: 'https://cdn.example.test/gone.png' },
   ]);
   assert.equal(cleanClip(result({ imageToken: 'page-chosen' })).imageToken, '');
+  // Coverage figures are bounded; a page that was not checked has none.
+  assert.deepEqual(
+    cleanClip(
+      result({
+        coverage: {
+          visibleChars: -1,
+          keptChars: 2.5,
+          ratio: 7,
+          restoredPassages: 'x',
+          incomplete: 'yes',
+        },
+      }),
+    ).coverage,
+    {
+      visibleChars: 0,
+      keptChars: 0,
+      ratio: 1,
+      restoredPassages: 0,
+      restoredChars: 0,
+      incomplete: false,
+    },
+  );
+  assert.equal(cleanClip(result({ coverage: null })).coverage, null);
+  assert.equal(cleanClip(result({ coverage: 'all' })).coverage, null);
   // The cover, metadata sources, status and transcript are bounded too.
   const reshaped = cleanClip(
     result({

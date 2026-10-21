@@ -10,43 +10,43 @@ flowchart LR
 
 ## Source map
 
-| Path                              | Responsibility                                                                |
-| --------------------------------- | ----------------------------------------------------------------------------- |
-| `extension/background.js`         | Tab/session ownership, native transport, selection routing.                   |
-| `extension/bridge.js`             | Runtime port connecting a chat view to its owner tab.                         |
-| `extension/browser-tools.js`      | Scope enforcement, browser actions, page reading and frame context.           |
-| `extension/browser-input.js`      | CDP-based trusted input and coordinate actions.                               |
-| `extension/selection-content.js`  | Selected text, DOM endpoints, offsets, and frame-relative geometry.           |
-| `extension/highlight-content.js`  | Selection toolbar, saved webpage highlights, and highlight actions.           |
-| `extension/highlight-note.js`     | Note preview and editor shared by the webpage and PDF.js reading layers.      |
-| `extension/web-anchor.js`         | Normalized page text, web anchors, and verified anchor restoration.           |
-| `extension/vault-client.js`       | Reading-vault requests over the native port, with ids and timeouts.           |
-| `extension/pdf/viewer.js`         | PDF.js wrapper: loading, fallback, live quotes, and Agent PDF commands.       |
-| `extension/pdf/pdf-highlights.js` | Selection toolbar, saved PDF highlights, and highlight actions in PDF.js.     |
-| `extension/pdf/pdf-anchor.js`     | PDF page text, PDF anchors, and verified anchor restoration.                  |
-| `extension/pdf/file.html`         | The PDF.js viewer's entry page for PDFs opened from the computer.             |
-| `extension/local-files.js`        | `file://` URL checks, the file access prompt, files open before access.       |
-| `extension/local-pdf.js`          | Hands a local PDF in Chrome's own viewer to the PDF.js viewer.                |
-| `extension/file-access.html`      | Explains Chrome's "Allow access to file URLs" setting, opened once.           |
-| `extension/epub/`                 | Library and EPUB reader page: vault documents, imports, books, highlights.    |
-| `extension/epub-routing.js`       | EPUB reader port registry and sender checks.                                  |
-| `extension/clipper.js`            | Clipping a page: injection, the replace prompt, bounds and the vault save.    |
-| `extension/clip-images.js`        | A clip's images: download, type and size checks, uploads, Markdown links.     |
-| `extension/youtube-player.js`     | A YouTube video's id and its player data, read in the page's own world.       |
-| `extension/clip/`                 | Clipping script, transcripts, shared sanitizer settings, clipped-page reader. |
-| `extension/clip-routing.js`       | Clipped-page reader address, port registry and sender checks.                 |
-| `extension/feeds.js`              | Subscriptions: scheduled feed fetches and the library's feed messages.        |
-| `extension/reading-companion.js`  | Highlight and page conversations: reading context and saved turns.            |
-| `extension/reading.js`            | Reading context parts, turn records, and vault append parameters.             |
-| `extension/session-config.js`     | Browser tool schema and agent instructions.                                   |
-| `extension/ui/`                   | Chat rendering, composer, attachments, previews, approvals, and onboarding.   |
-| `extension/_locales/en/`          | English UI strings; i18n structure is retained.                               |
-| `extension/native/host.py`        | App-server discovery, sessions, authentication events, and RPC transport.     |
-| `extension/native/attachments.py` | Bounded uploads and text/PDF/DOCX reading.                                    |
-| `extension/native/vault.py`       | ReadingVault highlights, discussions, and Markdown files.                     |
-| `extension/native/epub_text.py`   | EPUB chapter text for the vault, using the standard library only.             |
-| `extension/native/feeds.py`       | Feed and OPML parsing, and the subscription index `.tabgent/feeds.db`.        |
-| `extension/native/pdf_text.py`    | Imported PDF page text for the vault, read with macOS PDFKit.                 |
+| Path                              | Responsibility                                                              |
+| --------------------------------- | --------------------------------------------------------------------------- |
+| `extension/background.js`         | Tab/session ownership, native transport, selection routing.                 |
+| `extension/bridge.js`             | Runtime port connecting a chat view to its owner tab.                       |
+| `extension/browser-tools.js`      | Scope enforcement, browser actions, page reading and frame context.         |
+| `extension/browser-input.js`      | CDP-based trusted input and coordinate actions.                             |
+| `extension/selection-content.js`  | Selected text, DOM endpoints, offsets, and frame-relative geometry.         |
+| `extension/highlight-content.js`  | Selection toolbar, saved webpage highlights, and highlight actions.         |
+| `extension/highlight-note.js`     | Note preview and editor shared by the webpage and PDF.js reading layers.    |
+| `extension/web-anchor.js`         | Normalized page text, web anchors, and verified anchor restoration.         |
+| `extension/vault-client.js`       | Reading-vault requests over the native port, with ids and timeouts.         |
+| `extension/pdf/viewer.js`         | PDF.js wrapper: loading, fallback, live quotes, and Agent PDF commands.     |
+| `extension/pdf/pdf-highlights.js` | Selection toolbar, saved PDF highlights, and highlight actions in PDF.js.   |
+| `extension/pdf/pdf-anchor.js`     | PDF page text, PDF anchors, and verified anchor restoration.                |
+| `extension/pdf/file.html`         | The PDF.js viewer's entry page for PDFs opened from the computer.           |
+| `extension/local-files.js`        | `file://` URL checks, the file access prompt, files open before access.     |
+| `extension/local-pdf.js`          | Hands a local PDF in Chrome's own viewer to the PDF.js viewer.              |
+| `extension/file-access.html`      | Explains Chrome's "Allow access to file URLs" setting, opened once.         |
+| `extension/epub/`                 | Library and EPUB reader page: vault documents, imports, books, highlights.  |
+| `extension/epub-routing.js`       | EPUB reader port registry and sender checks.                                |
+| `extension/clipper.js`            | Clipping a page: injection, the replace prompt, bounds and the vault save.  |
+| `extension/clip-images.js`        | A clip's images: download, type and size checks, uploads, Markdown links.   |
+| `extension/youtube-player.js`     | A YouTube video's id and its player data, read in the page's own world.     |
+| `extension/clip/`                 | Clipping scripts, transcripts, sanitizer settings, clipped-page reader.     |
+| `extension/clip-routing.js`       | Clipped-page reader address, port registry and sender checks.               |
+| `extension/feeds.js`              | Subscriptions: scheduled feed fetches and the library's feed messages.      |
+| `extension/reading-companion.js`  | Highlight and page conversations: reading context and saved turns.          |
+| `extension/reading.js`            | Reading context parts, turn records, and vault append parameters.           |
+| `extension/session-config.js`     | Browser tool schema and agent instructions.                                 |
+| `extension/ui/`                   | Chat rendering, composer, attachments, previews, approvals, and onboarding. |
+| `extension/_locales/en/`          | English UI strings; i18n structure is retained.                             |
+| `extension/native/host.py`        | App-server discovery, sessions, authentication events, and RPC transport.   |
+| `extension/native/attachments.py` | Bounded uploads and text/PDF/DOCX reading.                                  |
+| `extension/native/vault.py`       | ReadingVault highlights, discussions, and Markdown files.                   |
+| `extension/native/epub_text.py`   | EPUB chapter text for the vault, using the standard library only.           |
+| `extension/native/feeds.py`       | Feed and OPML parsing, and the subscription index `.tabgent/feeds.db`.      |
+| `extension/native/pdf_text.py`    | Imported PDF page text for the vault, read with macOS PDFKit.               |
 
 Each webpage tab owns a session. Agent tabs share that session through runtime
 ports and retain its original page context. The sidebar beside an Agent tab has
@@ -420,7 +420,7 @@ by the URL, as for highlights, so highlights, notes and discussions belong to bo
 `clipper.js` runs in the service worker. It takes the tab's top-frame URL and document from
 `webNavigation.getFrame`, refuses anything but HTTP(S) pages outside incognito, and injects
 `vendor/defuddle/defuddle.js`, `vendor/turndown/turndown.js`, the UMD build of DOMPurify,
-`clip/sanitize-config.js`, `clip/clip-media.js` and `clip/clip-content.js` into frame 0 with
+`clip/sanitize-config.js`, `clip/clip-structure.js`, `clip/clip-media.js` and `clip/clip-content.js` into frame 0 with
 `chrome.scripting.executeScript`. Nothing is loaded into pages that are not clipped. Each
 later call checks that the injection result's `documentId` is still the frame's, so a page
 that navigated mid-clip saves nothing. A single-page app can change its address without a
@@ -435,8 +435,17 @@ address whose vault document is a PDF (Chrome's own viewer) is refused.
 `clip-content.js` runs Defuddle's synchronous `parse()` with `useAsync: false` and a
 `fetch` that always rejects, so no extractor contacts a third party. Defuddle normalizes
 some attributes of the document it is given, so it reads `document.cloneNode(true)`:
-elements that `checkVisibility()` reports as not displayed are marked `hidden` in the copy,
-and images keep their displayed size, so the page the user reads is never modified. On
+elements that `checkVisibility()` reports as not displayed are marked `hidden` in the copy
+(except `display: contents`, which has no box but draws its children: tables built from divs
+put their cell text in such wrappers), and images keep their displayed size, so the page the
+user reads is never modified. Before Defuddle reads the copy, `clip-structure.js` turns
+tables drawn with ARIA roles (`role="table"`, `grid` or `treegrid` with `row` and cell roles)
+into real tables, header rows in `<thead>`, keeping the elements' other attributes so Defuddle
+still drops noise grids (related posts; copied as attribute nodes, so a malformed name from
+broken markup cannot stop the clip); puts loose text in a table cell that also holds
+blocks into a block of its own (Defuddle replaces a layout table by its only block, which
+dropped the text beside it); and turns inline elements holding only a space into that space
+(Defuddle removes empty elements, and words ran together). On
 `x.com` and `twitter.com`, single posts use Defuddle's X extractor with
 `includeReplies: false` (the post and the author's thread loaded on the page); X articles
 use its article extractor; timelines and profiles are refused. Visitors who are not logged
@@ -457,9 +466,14 @@ inert `DOMParser` document. Images keep only their address in `data-remote-src` 
 `data:` images are dropped), frames and media become links, links become absolute HTTP(S)
 or mail addresses or in-page fragments, and DOMPurify then removes everything else with the
 allowlist in `sanitize-config.js` (no scripts, styles, `style` or `class` attributes, forms,
-frames, SVG or media). Turndown converts the cleaned HTML with Tabgent's rules for images,
-fenced code with its language, strikethrough, MathML with LaTeX, and GFM tables (tables with
-merged cells become lines of text). The HTML is cut at a block boundary to 4 MiB and the
+frames, SVG or media). Before that, layout tables (`role="presentation"`, holding tables or
+headings, or at most one filled cell per row, and no header cells or caption) become blocks
+in reading order, a table inside a table's cell becomes a line per row (cells joined with
+" · "), and a line break at the edge of emphasis or a link moves outside it. Turndown converts
+the cleaned HTML with Tabgent's rules for images, fenced code with its language,
+strikethrough, MathML with LaTeX, and GFM tables (lines within a cell are joined with `<br>`;
+tables with merged cells become lines of text); an inline element holding only a space keeps
+it. The HTML is cut at a block boundary to 4 MiB and the
 Markdown at a paragraph break (else a line break, never inside a surrogate pair) to 3 MiB
 (UTF-8); a code fence the cut left open is closed, and each ends with a note. When little text
 is found, the page offers **Save whole page** (Defuddle on `body` without low-score
@@ -521,6 +535,34 @@ A clip whose text is only links and at most 12 words besides, with no image (an 
 video turned into a link, a page whose text did not load), is `contentStatus: "linksOnly"`
 (not for selections or X posts). It is saved, but the page says that only links were saved
 instead of the usual message, the reader shows a notice and the library marks it.
+
+A coverage check guards against text the extraction drops silently (not for selections, X
+posts, or video and podcast clips, whose text is notes and a transcript from captions or
+another page: putting a page passage back could repeat the transcript). It walks the copy's
+visible text nodes and looks for each in the extracted text (in page order, and again without
+spaces). The content region is the deepest element holding 95% of the matched text, widened
+to its `<article>` when that is at most half again as large. Inside it, navigation, forms,
+buttons, dialogs, comments, sharing, likes, related or recommended posts, subscribe boxes,
+ads, tables of contents, references and citations, summary boxes, headers, footers and
+asides, counts standing alone (a count in a sentence or a table's cell is text), short labels
+outside text blocks and link lists are not counted (class names, ids and labels are read as
+words; CSS-module hashes are skipped), nor is back matter: a section headed "References",
+"Further reading", "External links", "See also", "参考文献", "延伸阅读" and the like. Author, guest
+and acknowledgement cards (by name, or text such as "A guest post by") count even inside a
+footer, but not anywhere in a header, where they are the byline, nor when the card as a whole
+is mostly links ("More from this author"; a linked author name is part of the card). When the
+kept share falls under 95% with at least 150 characters missing, or one missing run reaches
+300 characters, each missing run with kept text on both sides is put back after the kept text
+that preceded it on the page; missing cards are put back wherever they are. Only whole
+elements that lost all their text and hold no noise (counts and short labels aside) are put
+back (40 characters or more, 30 for a card), copied with their links and emphasis but without
+images or hidden parts (a row or row group stays in a table): an element that lost part of
+its text was rewritten by the extractor (footnotes, citations), not dropped. If more is
+missing than was kept (over 5,000 characters), the region is likely wrong: nothing but cards
+is put back and the clip is marked `incomplete`; a check that fails leaves the clip as
+extracted. The result's `coverage` (`visibleChars`, `keptChars`, `ratio`, `restoredPassages`,
+`restoredChars`, `incomplete`) is bounded by `cleanClip`, recorded in `article.json`, and the
+page's saved message says how many passages were put back or that text may be missing.
 
 The worker treats the result as untrusted: `cleanClip` refuses oversized or empty text and
 bounds every field before `vault/clip/save`. The vault writes `article.html` (the cleaned
@@ -721,7 +763,8 @@ vault copy as a clip does; otherwise the reader shows the feed's HTML, or full t
   **Always**, or **When the feed has only a summary** (an item without `content:encoded` or
   Atom content, or with under 1,000 characters of it); otherwise on request.
 - Cleaning runs in `clip/extract.html`, a same-origin frame (the reader's policy now allows
-  `frame-src 'self'`) that loads Defuddle, Turndown, DOMPurify and `clip-content.js` and
+  `frame-src 'self'`) that loads Defuddle, Turndown, DOMPurify, `clip-structure.js` and
+  `clip-content.js` and
   nothing else. The reader keeps Trusted Types, which Defuddle and HTML parsing cannot meet,
   and calls the frame's `tabgentClip.clean()` directly. `clean()` shares the clipping
   script's pipeline (`finish()`): links, frames and media, images as `data-remote-src`,
