@@ -81,6 +81,15 @@ function png(width, height) {
 const PICTURE = png(32, 18);
 // Served only with a Referer, as some image hosts do (anti-hotlinking).
 const PROTECTED = png(32, 20);
+// A comparison drawn as cards the extractor drops (class "card-content"): the coverage check
+// puts it back, the page says so and article.json records it.
+const compare = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Compared</title></head>
+  <body><main><article><h1>Compared</h1>${paragraphs(5, 'Compare')}
+  <div class="cards"><div class="card-content"><h3>First approach</h3><p>Reads every page twice and keeps
+  the longer copy, which is slow but never loses a paragraph of the text.</p></div>
+  <div class="card-content"><h3>Second approach</h3><p>Reads each page once and checks what it kept
+  against what the page showed, which is quick and puts back what went missing.</p></div></div>
+  ${paragraphs(3, 'After')}</article></main></body></html>`;
 const short = `<!doctype html><html><head><meta charset="utf-8"><title>Short note</title></head><body>
   <main><p>Only a few words on this page.</p></main><aside>${paragraphs(1, 'Aside')}</aside></body></html>`;
 
@@ -136,7 +145,9 @@ const short = `<!doctype html><html><head><meta charset="utf-8"><title>Short not
           ? short
           : pathname === '/heavy'
             ? heavy
-            : article,
+            : pathname === '/compare'
+              ? compare
+              : article,
     );
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -352,6 +363,9 @@ const short = `<!doctype html><html><head><meta charset="utf-8"><title>Short not
     assert.doesNotMatch(html, /<script|javascript:|\ssrc=/);
     assert.match(html, /default-src 'none'/);
     const first = record(folder);
+    // The page's text is all in the clip: the coverage check put nothing back.
+    assert.equal(first.coverage.restoredPassages, 0);
+    assert(first.coverage.ratio >= 0.95, JSON.stringify(first.coverage));
     assert.equal(first.origin.pageUrl, origin + '/essays/autonomy?id=3#intro');
     assert.equal(first.origin.method, 'article');
     assert.deepEqual(first.images, {
@@ -700,6 +714,35 @@ print(json.dumps([m["path"] for m in found["matches"]][:3] + [read["text"][:2000
     assert(trustedFolder, 'A Trusted Types page is clipped');
     assert.match(read(trustedFolder, 'article.md'), /Body paragraph 3: careful readers/);
     console.log('PASS a page that enforces Trusted Types is clipped');
+
+    // Text the extractor dropped is put back in place; the page and article.json say so.
+    await page.goto(origin + '/compare');
+    await wait(800);
+    await panel(`(() => {
+      document.getElementById('readingButton').click();
+      document.getElementById('readingClip').click();
+    })()`);
+    const compareFolder = await until(() =>
+      folders().find(
+        (name) =>
+          name.startsWith('article-compared-') &&
+          fs.existsSync(path.join(articles, name, 'article.json')),
+      ),
+    );
+    assert(compareFolder, 'The compared page is clipped');
+    assert.match(
+      read(compareFolder, 'article.md'),
+      /Compare paragraph 5[^\n]*\n\n### First approach\n\nReads every page twice[\s\S]*### Second approach[\s\S]*\n\nAfter paragraph 1/,
+    );
+    const compared = record(compareFolder).coverage;
+    assert.equal(compared.restoredPassages, 1);
+    assert(compared.ratio < 0.9 && compared.restoredChars > 200, JSON.stringify(compared));
+    const restoredText = await message('clipRestored', '1');
+    assert(
+      await until(async () => (await promptText(page)).includes(restoredText)),
+      'The page says text was put back',
+    );
+    console.log('PASS text the extractor dropped is put back and recorded in article.json');
 
     // Too little text: the page offers the whole page, which is saved instead.
     await page.goto(origin + '/short');

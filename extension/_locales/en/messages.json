@@ -1153,6 +1153,12 @@
   "clipTruncated": {
     "message": "The text was too long and was shortened."
   },
+  "clipRestored": {
+    "message": "Put back $1 passages that extraction had left out."
+  },
+  "clipTextMissing": {
+    "message": "Some text the page shows may be missing from the clip."
+  },
   "clipReplaceAsk": {
     "message": "You clipped this page on $1. Replace it with the page as it is now?"
   },

@@ -1,10 +1,12 @@
 // Clipping: the main text of a page, read from its rendered DOM when the user clips it.
 // The service worker injects this file on demand together with Defuddle, Turndown,
-// DOMPurify (UMD) and sanitize-config.js; it is never loaded otherwise. Its results are
-// untrusted (a compromised page can forge them) and are bounded again by the worker.
+// DOMPurify (UMD), sanitize-config.js and clip-structure.js; it is never loaded otherwise.
+// Its results are untrusted (a compromised page can forge them) and are bounded again by
+// the worker.
 (() => {
   if (globalThis.tabgentClip) return;
   const { config, remote } = globalThis.tabgentClipSanitize;
+  const structure = globalThis.tabgentClipStructure;
   const t = (key, ...values) => chrome.i18n.getMessage(key, values.map(String)) || key;
   // UTF-8 bytes, as the vault counts them; reading_vault reads files up to 4 MiB.
   const LIMIT = { html: 4 * 1024 * 1024, markdown: 3 * 1024 * 1024, images: 200, excerpt: 1000 };
@@ -162,7 +164,8 @@
   // Defuddle normalizes some attributes in the document it is given, so it reads a copy:
   // the page the user is reading is never changed. A copy has no layout, so elements the
   // page does not display are marked hidden (Defuddle drops [hidden]) and images keep
-  // their displayed size (tracking pixels are dropped by size).
+  // their displayed size (tracking pixels are dropped by size). An element with
+  // display: contents is displayed: it has no box of its own, but its children are drawn.
   function snapshot() {
     const copy = document.cloneNode(true);
     const stack = [[document.body, copy.body]];
@@ -174,8 +177,7 @@
           other = twin.children[i];
         if (element.localName !== other.localName) continue;
         if (
-          typeof element.checkVisibility === 'function' &&
-          !element.checkVisibility() &&
+          !structure.displayed(element) &&
           !element.closest('details:not([open])') &&
           element.localName !== 'math' &&
           !element.querySelector('math')
@@ -232,7 +234,11 @@
     const status = mode === 'article' ? xStatus(url) : '';
     const loggedIn = !!document.querySelector('article[data-testid="tweet"]');
     if (status && !loggedIn) return xVisitorPost(url, status) || { unknownX: true };
-    const result = new Defuddle(snapshot(), {
+    const copy = snapshot();
+    // Structure Defuddle would lose: ARIA tables become real tables; loose text in table
+    // cells and spaces in otherwise empty inline elements are kept.
+    structure.prepare(copy);
+    const result = new Defuddle(copy, {
       url,
       useAsync: false,
       includeReplies: false,
@@ -249,9 +255,17 @@
         extractor: 'x',
       };
     }
+    // The text the page shows in its content region against the text extracted from it.
+    // (X posts are read above; Defuddle's site extractors, such as Substack's, read the
+    // page's DOM too.)
+    const coverage =
+      xPage(url) === 'post'
+        ? null
+        : structure.coverage(copy, result.content, { title: result.title || document.title });
     // Defuddle's extractorType is a minified class name in its bundle; name X by address.
     return {
       ...result,
+      coverage,
       extractor: mode === 'article' && xPage(url) === 'post' ? 'x' : 'defuddle',
     };
   }
@@ -384,6 +398,9 @@
       emDelimiter: '*',
       strongDelimiter: '**',
       linkStyle: 'inlined',
+      // An inline element holding only a space ("I<strong> </strong>was") keeps the space.
+      blankReplacement: (content, node) =>
+        node.isBlock ? '\n\n' : /\s/.test(node.textContent || '') ? ' ' : '',
     });
     const destination = (url) => (/[\s()<>]/.test(url) ? `<${url.replace(/>/g, '%3E')}>` : url);
     service.addRule('tabgentImage', {
@@ -421,22 +438,25 @@
         return node.getAttribute('display') === 'block' ? `\n\n$$\n${latex}\n$$\n\n` : `$${latex}$`;
       },
     });
-    // GFM pipe tables for simple tables; tables with merged cells become lines of text.
+    // GFM pipe tables for simple tables (lines within a cell are joined with <br>); tables
+    // with merged cells become lines of text.
     service.addRule('table', {
       filter: 'table',
       replacement(content, node) {
         const rows = [...node.rows];
         if (!rows.length) return '';
-        const cell = (element) =>
-          service
-            .turndown(element.innerHTML)
-            .replace(/\s*\n+\s*/g, ' ')
-            .replace(/\|/g, '\\|')
-            .trim();
-        const caption = node.caption ? `*${cell(node.caption)}*\n\n` : '';
         const merged = rows.some((row) =>
           [...row.cells].some((c) => c.colSpan > 1 || c.rowSpan > 1 || c.querySelector('table')),
         );
+        const cell = (element) =>
+          service
+            .turndown(element.innerHTML)
+            .split(/\n+/)
+            .map((line) => line.replace(/\s+/g, ' ').trim())
+            .filter(Boolean)
+            .join(merged ? ' ' : ' <br> ')
+            .replace(/\|/g, '\\|');
+        const caption = node.caption ? `*${cell(node.caption)}*\n\n` : '';
         const values = rows.map((row) => [...row.cells].map(cell));
         if (merged)
           return `\n\n${caption}${values.map((row) => row.filter(Boolean).join(' · ')).join('\n\n')}\n\n`;
@@ -555,6 +575,9 @@
     const article = doc.createElement('div');
     article.append(...doc.body.childNodes);
     doc.body.append(article);
+    // Passages the coverage check found missing go back first, and are cleaned like the rest.
+    const restored = structure.restore(article, found.coverage?.patches);
+    structure.normalize(article);
     embeds(article, url);
     const { found: list, index } = images(article, url);
     const token = crypto.randomUUID().replace(/-/g, '');
@@ -606,6 +629,14 @@
       chars,
       truncated,
       posts,
+      // How much of the text the page showed the clip kept, and what was put back.
+      coverage: found.coverage
+        ? {
+            ...found.coverage.stats,
+            restoredPassages: restored.passages,
+            restoredChars: restored.chars,
+          }
+        : null,
       // A short post is still the whole post: no "save whole page" offer for X.
       tooLittle: mode === 'article' && !enough && found.extractor !== 'x',
       hasSelection,
@@ -628,6 +659,7 @@
     try {
       if (kind === 'page') {
         const doc = new DOMParser().parseFromString(String(html), 'text/html');
+        structure.prepare(doc);
         const result = new Defuddle(doc, {
           url,
           useAsync: false,

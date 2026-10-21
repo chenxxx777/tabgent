@@ -1,7 +1,9 @@
 // Clipping extraction on generated pages: Defuddle, the shared sanitizer settings and
-// Turndown run in the page as the service worker injects them. Covers lazy images, tables,
-// code, links, embeds, unsafe markup, a synthetic X thread, X timelines, selections, the
-// whole-page fallback and short pages. Nothing is fetched by the clipping script.
+// Turndown run in the page as the service worker injects them. Covers lazy images, tables
+// (data, nested, layout, ARIA and CSS grids), code, links, embeds, unsafe markup, author and
+// guest cards, the coverage check, a synthetic X thread, X timelines, selections, the
+// whole-page fallback and short pages, and two real pages' structure (captured fixtures).
+// Nothing is fetched by the clipping script.
 const assert = require('node:assert/strict'),
   fs = require('node:fs'),
   path = require('node:path'),
@@ -12,6 +14,7 @@ const files = [
   'vendor/turndown/turndown.js',
   'vendor/dompurify/purify.umd.js',
   'clip/sanitize-config.js',
+  'clip/clip-structure.js',
   'clip/clip-content.js',
 ].map((file) => path.join(extension, file));
 
@@ -59,6 +62,72 @@ ${Array.from({ length: 900 }, (_, i) => `<p>Figure ${i}</p><img src="${longImage
     <footer><p>Copyright Fixture Blog. All rights reserved.</p></footer></body></html>`,
   '/short': `<!doctype html><html><head><title>Short page</title></head><body>
     <main><p>Only a few words here.</p></main></body></html>`,
+  // Tables of every shape: data, a layout table holding a data table, a data table with a
+  // table in a cell, layout tables, an ARIA grid (with display: contents in a cell) and a
+  // CSS grid of divs (no table semantics: its text stays, in reading order).
+  '/tables': `<!doctype html><html lang="en"><head><title>Table shapes</title>
+    <style>.grid { display: grid; grid-template-columns: repeat(3, 1fr) } .wrap { display: contents }</style>
+    </head><body><nav><a href="/">Home</a> <a href="/docs">Docs</a></nav><main><article>
+    <h1>Table shapes</h1>${paragraphs(4, 'Intro')}
+    <h2>Plain table</h2>
+    <table><thead><tr><th>Plan</th><th>Price</th></tr></thead>
+      <tbody><tr><td>Basic</td><td>Free</td></tr><tr><td>Team</td><td>$8 a seat</td></tr></tbody></table>
+    <h2>Nested tables</h2>
+    <table><tr><td><p>Quarterly results, as reported:</p><table><thead><tr><th>Quarter</th><th>Revenue</th></tr></thead>
+      <tbody><tr><td>Q1</td><td>120</td></tr><tr><td>Q2</td><td>135</td></tr></tbody></table></td></tr></table>
+    <table><thead><tr><th>Region</th><th>Details</th></tr></thead>
+      <tbody><tr><td>North</td><td><table><tr><td>Stores</td><td>12</td></tr><tr><td>Staff</td><td>40</td></tr></table></td></tr></tbody></table>
+    <h2>Layout tables</h2>
+    <table role="presentation" width="600"><tr>
+      <td><p>Left column: the layout table places this paragraph beside the next one.</p></td>
+      <td><p>Right column: a second paragraph that only sits beside the first for looks.</p></td></tr></table>
+    <table><tr><td></td><td>A spacer cell, then the only filled cell, with a note about the layout.</td><td></td></tr></table>
+    <h2>ARIA grid</h2>
+    <div role="grid" aria-label="Schedule">
+      <div role="rowgroup"><div role="row"><span role="columnheader">Day</span><span role="columnheader">Session</span></div></div>
+      <div role="rowgroup"><div role="row"><span role="rowheader">Monday</span><span role="gridcell"><span class="wrap">Opening talk</span></span></div>
+      <div role="row"><span role="rowheader">Tuesday</span><span role="gridcell">Workshops</span></div></div></div>
+    <h2>CSS grid</h2>
+    <div class="grid"><div><b>Feature</b></div><div><b>Basic</b></div><div><b>Team</b></div>
+      <div>Exports</div><div>Monthly</div><div>Daily</div></div>
+    ${paragraphs(2, 'Closing')}</article></main></body></html>`,
+  // An author card and a guest card in the article's footer are kept; the byline, sharing
+  // counts, related posts, comments and navigation are not.
+  '/cards': `<!doctype html><html lang="en"><head><title>On Reading Slowly</title>
+    <meta name="author" content="Jane Fixture"></head><body>
+    <header class="site-header"><nav><a href="/">Home</a> <a href="/topics">Topics</a></nav></header>
+    <main><article class="post">
+      <header class="entry-header"><h1>On Reading Slowly</h1>
+        <div class="byline">By <a href="/author/jane">Jane Fixture</a> · Oct 3, 2026 · 6 min read</div></header>
+      <div class="entry-content">${paragraphs(8, 'Slow')}</div>
+      <div class="share-bar"><button>Share</button> <a href="https://social.example.test/share">Post it</a>
+        <span class="count">128</span> <span class="likes">42 likes</span></div>
+      <footer class="entry-footer">
+        <div class="author-bio"><img src="/img/jane.jpg" alt="Jane Fixture" width="64" height="64">
+          <div><h4>About the author</h4><p>Jane Fixture writes about reading habits and the history of
+          the book. Her newsletter covers slow reading practices.</p></div></div>
+        <div class="guest-card">A guest post by <a href="/@sam">Sam Guest</a>, editor of the Fixture Review.</div>
+      </footer>
+      <section class="related-posts"><h3>Related posts</h3><ul><li><a href="/p/1">Reading with a pencil</a></li>
+        <li><a href="/p/2">Why margins matter</a></li></ul></section>
+      <section id="comments" class="comments"><h3>3 comments</h3>
+        <div class="comment"><p>Great essay, I agree with the point about rereading difficult passages.</p></div></section>
+    </article></main>
+    <footer class="site-footer"><p>© 2026 Fixture Press</p></footer></body></html>`,
+  // A comparison drawn as cards: Defuddle drops elements named "card-content", although the
+  // page shows them. The coverage check puts them back where they were.
+  '/coverage': `<!doctype html><html lang="en"><head><title>Field notes</title>
+    <style>.compare { display: grid; grid-template-columns: repeat(3, 1fr) }</style></head><body>
+    <main><article><h1>Field notes</h1>${paragraphs(6, 'Field')}
+    <div class="compare">
+      <div class="card"><div class="card-content"><h3>Morning series</h3><p>Taken at six, before
+        the wind rises; the readings are steady and agree with the earlier field season.</p></div></div>
+      <div class="card"><div class="card-content"><h3>Night series</h3><p>Taken at ten, after the
+        ground cools; about four percent lower than the morning readings on most days.</p></div></div>
+      <div class="card"><div class="card-content"><h3>Both together</h3><p>Read the figures as ranges,
+        not exact values, before drawing conclusions about the trend over the decade.</p></div></div>
+    </div>
+    ${paragraphs(4, 'Later')}</article></main></body></html>`,
   // About 5 MB of UTF-8 (Chinese text is three bytes a character): over both limits.
   '/huge': `<!doctype html><html lang="zh"><head><title>长文</title></head><body><main><article><h1>长文</h1>${Array.from(
     { length: 28000 },
@@ -80,6 +149,20 @@ const xPages = {
   'https://x.com/someone/status/5': `<!doctype html><html><head><title>X</title></head><body><main>
     <h1>A post</h1><ul><li><p>Post text that cannot be told apart from replies.</p></li>
     <li><p>Somebody else's reply.</p></li></ul></main></body></html>`,
+};
+// Two real pages' structure, captured 2026-10-21 and served at their addresses (see each
+// fixture's first comment): Anthropic's "Demystifying evals" (comparison tables drawn with
+// ARIA roles, their cell text in display: contents wrappers) and a Substack guest post
+// (a guest card in nested layout tables; a space only in "<strong> </strong>").
+const sitePages = {
+  'https://www.anthropic.com/research/demystifying-evals-for-ai-agents': fs.readFileSync(
+    path.join(__dirname, 'fixtures/anthropic-evals.html'),
+    'utf8',
+  ),
+  'https://fixturehost.substack.com/p/the-human-interfaces-of-data-guest': fs.readFileSync(
+    path.join(__dirname, 'fixtures/substack-guest-post.html'),
+    'utf8',
+  ),
 };
 // A synthetic X conversation page: the structure X renders, with generated text.
 function xThread() {
@@ -128,7 +211,15 @@ function xThread() {
       if (body) return route.fulfill({ contentType: 'text/html; charset=utf-8', body });
       return route.abort();
     });
-    await page.route(/^(?!https:\/\/(?:clip\.test|x\.com)\/)/, (route) => route.abort());
+    await page.route(/^https:\/\/(?:www\.anthropic\.com|fixturehost\.substack\.com)\//, (route) => {
+      const body = sitePages[route.request().url()];
+      if (body) return route.fulfill({ contentType: 'text/html; charset=utf-8', body });
+      return route.abort();
+    });
+    await page.route(
+      /^(?!https:\/\/(?:clip\.test|x\.com|www\.anthropic\.com|fixturehost\.substack\.com)\/)/,
+      (route) => route.abort(),
+    );
     async function open(pathname) {
       await page.goto(pathname.startsWith('https://') ? pathname : 'https://clip.test' + pathname);
       await page.evaluate(() => {
@@ -205,6 +296,9 @@ function xThread() {
     );
     assert.match(html, /<img[^>]+data-remote-src="https:\/\/clip\.test\/img\/lazy\.jpg"/);
     assert.ok(article.words > 150, article.words);
+    // The page's text is all in the clip: nothing to put back.
+    assert.equal(article.coverage.restoredPassages, 0);
+    assert(article.coverage.ratio >= 0.95, JSON.stringify(article.coverage));
 
     // The whole page: the body without navigation, headers, footers and asides.
     const whole = await run({ mode: 'page', url: 'https://clip.test/blog/autonomy' });
@@ -252,6 +346,145 @@ function xThread() {
     assert(size(huge.markdown) <= 3 * 1024 * 1024, size(huge.markdown));
     assert.match(huge.markdown, /\*clipTruncated\*$/);
     assert.match(huge.html, /<em>clipTruncated<\/em><\/p>$/);
+
+    // Tables of every shape.
+    await open('/tables');
+    const shapes = await run({ mode: 'article', url: 'https://clip.test/tables' });
+    assert.equal(shapes.ok, true, JSON.stringify(shapes).slice(0, 300));
+    const sm = shapes.markdown;
+    assert.match(
+      sm,
+      /\| Plan \| Price \|\n\| --- \| --- \|\n\| Basic \| Free \|\n\| Team \| \$8 a seat \|/,
+    );
+    // A layout table holding a data table: the text, then the data table.
+    assert.match(
+      sm,
+      /Quarterly results, as reported:\n\n\| Quarter \| Revenue \|\n\| --- \| --- \|\n\| Q1 \| 120 \|\n\| Q2 \| 135 \|/,
+    );
+    // A table in a data table's cell: a line per row in the cell.
+    assert.match(
+      sm,
+      /\| Region \| Details \|\n\| --- \| --- \|\n\| North \| Stores · 12 <br> Staff · 40 \|/,
+    );
+    // Layout tables: their paragraphs, in reading order, not a table.
+    assert.match(sm, /Left column: the layout table[^\n]*\n\nRight column: a second paragraph/);
+    assert.match(
+      sm,
+      /\n\nA spacer cell, then the only filled cell, with a note about the layout\.\n\n/,
+    );
+    // An ARIA grid is a table; the text inside display: contents is kept.
+    assert.match(
+      sm,
+      /\| Day \| Session \|\n\| --- \| --- \|\n\| Monday \| Opening talk \|\n\| Tuesday \| Workshops \|/,
+    );
+    // A CSS grid has no rows to read: its text stays, in reading order.
+    assert.match(
+      sm,
+      /\*\*Feature\*\*[\s\S]*\*\*Basic\*\*[\s\S]*\*\*Team\*\*[\s\S]*Exports[\s\S]*Monthly[\s\S]*Daily/,
+    );
+    assert.doesNotMatch(sm, /\| +\||Home|Docs/);
+    assert.equal(shapes.coverage.restoredPassages, 0);
+    assert.deepEqual(requests, []);
+
+    // Author and guest cards stay; the byline, counts, sharing, related posts and comments do not.
+    await open('/cards');
+    const cards = await run({ mode: 'article', url: 'https://clip.test/cards' });
+    assert.equal(cards.ok, true);
+    const cm = cards.markdown;
+    assert.match(
+      cm,
+      /Slow paragraph 8[^\n]*\n\n#### About the author\n\nJane Fixture writes about reading habits/,
+    );
+    assert.match(
+      cm,
+      /A guest post by \[Sam Guest\]\(https:\/\/clip\.test\/@sam\), editor of the Fixture Review\./,
+    );
+    assert.doesNotMatch(
+      cm,
+      /Related posts|Reading with a pencil|Great essay|3 comments|128|42 likes|Share|Post it|Home|Topics|min read|© 2026/,
+    );
+    assert.equal(cards.coverage.restoredPassages, 1);
+    assert.deepEqual(requests, []);
+
+    // Visible text the extractor dropped is put back in place, and the clip says so.
+    await open('/coverage');
+    const field = await run({ mode: 'article', url: 'https://clip.test/coverage' });
+    assert.equal(field.ok, true);
+    assert.match(
+      field.markdown,
+      /Field paragraph 6[^\n]*\n\n### Morning series\n\nTaken at six, before the wind rises;[^\n]*\n\n### Night series\n\n[^\n]+\n\n### Both together\n\nRead the figures as ranges,[^\n]*over the decade\.\n\nLater paragraph 1/,
+    );
+    assert.equal(field.coverage.restoredPassages, 1);
+    assert(field.coverage.restoredChars > 300, JSON.stringify(field.coverage));
+    assert(field.coverage.ratio < 0.9, JSON.stringify(field.coverage));
+    assert.equal(field.coverage.incomplete, false);
+    assert.match(field.html, /<h3>Morning series<\/h3>/);
+
+    // 02: Anthropic's comparison tables (ARIA roles, cell text in display: contents) and the
+    // acknowledgements, as on the page; no navigation, related articles or footer.
+    const evalsUrl = 'https://www.anthropic.com/research/demystifying-evals-for-ai-agents';
+    await open(evalsUrl);
+    const evals = await run({ mode: 'article', url: evalsUrl });
+    assert.equal(evals.ok, true, JSON.stringify(evals).slice(0, 300));
+    assert.equal(evals.title, 'Demystifying evals for AI agents');
+    const em = evals.markdown;
+    assert.equal(
+      em.match(
+        /^\| \*\*Methods\*\* \| \*\*Strengths\*\* \| \*\*Weaknesses\*\* \|\n\| --- \| --- \| --- \|$/gm,
+      )?.length,
+      3,
+    );
+    assert.match(
+      em,
+      /## Code-based graders\n\n\| \*\*Methods\*\* [^\n]+\n\| --- \| --- \| --- \|\n\| • String match checks \(exact, regex, fuzzy, etc\.\) <br> • Binary tests \(fail-to-pass, pass-to-pass\) <br> [^\n]+ \| • Fast <br> • Cheap <br> • Objective <br> /,
+    );
+    assert.match(em, /\| - Rubric-based scoring <br> - Natural language assertions <br> /);
+    assert.match(
+      em,
+      /\| Method \| Pros \| Cons \|\n\| --- \| --- \| --- \|\n\| \*\*Automated evals\*\* <br> \*Running tests programmatically without real users\* \| - Faster iteration <br> - Fully reproducible/,
+    );
+    for (const method of [
+      'Production monitoring',
+      'A\\/B testing',
+      'User feedback',
+      'Manual transcript review',
+      'Systematic human studies',
+    ])
+      assert.match(em, new RegExp(`^\\| \\*\\*${method}\\*\\* <br> \\*`, 'm'));
+    assert.match(
+      em,
+      /## Authors & Acknowledgments\n\n### Acknowledgements\n\nWritten by Fixture Writer One/,
+    );
+    assert.doesNotMatch(
+      em,
+      /Skip to main content|Try Claude|Related articles|Trustworthy agents in practice|© 2026 Anthropic/,
+    );
+    assert.equal((evals.html.match(/<table>/g) || []).length, 4);
+    assert.equal(evals.coverage.ratio, 1);
+    assert.equal(evals.coverage.restoredPassages, 0);
+    assert.deepEqual(requests, []);
+
+    // 09: the Substack guest card is text, not a table of empty cells; spaces kept; no
+    // subscribe box, sharing, counts, comments or more posts.
+    const guestUrl = 'https://fixturehost.substack.com/p/the-human-interfaces-of-data-guest';
+    await open(guestUrl);
+    const guest = await run({ mode: 'article', url: guestUrl });
+    assert.equal(guest.ok, true, JSON.stringify(guest).slice(0, 300));
+    assert.equal(guest.title, 'The Human Interfaces of Data - Guest');
+    const gm = guest.markdown;
+    assert.match(
+      gm,
+      /\n\nA guest post by\n\n\[Fixture Guest\]\(https:\/\/substack\.com\/@fixtureguest\?utm_campaign=guest_post_bio&utm_medium=web\) {2}\nCEO, Fixture Labs/,
+    );
+    assert.doesNotMatch(gm, /\|/);
+    assert.match(gm, /\*\*\*Fixture Guest -\*\* I test interface/);
+    assert.doesNotMatch(
+      gm,
+      /Thanks for reading|Subscribe|Discussion about this post|Fixture Reader|Semantic Superiority|Ready for more|Restacks|Likes|^Share$/m,
+    );
+    assert.equal(guest.coverage.ratio, 1);
+    assert.equal(guest.coverage.restoredPassages, 0);
+    assert.deepEqual(requests, []);
 
     // An X conversation: the author's thread, not other replies; large images; emoji as text.
     await open('https://x.com/author/status/100');
@@ -419,7 +652,9 @@ function xThread() {
     await page.waitForTimeout(50);
     await page.keyboard.press('Escape');
     assert.equal(await choice, 'cancel');
-    console.log('PASS clip extraction: article, page, selection, short page and X thread');
+    console.log(
+      'PASS clip extraction: article, page, selection, short page, X thread, table shapes, cards, coverage and captured pages',
+    );
   } finally {
     await browser.close();
   }
