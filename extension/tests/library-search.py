@@ -3,10 +3,13 @@ All fixture files (including a rebuildable SQLite index) live in a temporary vau
 """
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 import tempfile
+import threading
 import time
 from unittest.mock import patch
 
@@ -141,8 +144,100 @@ with tempfile.TemporaryDirectory(prefix="tabgent-search-") as directory:
         == "discussion"
     )
     full.rename(full.with_name("renamed.md"))
+    full = full.with_name("renamed.md")
     assert ids(search(settings, "Body needle")) == [ident]
     print("PASS full text/chapters, default discussion exclusion and opt-in")
+
+    # Losing one Markdown part must not hide its readable record or other parts.
+    saved_note, saved_full, saved_talk = (
+        path.read_bytes() for path in (note, full, talk)
+    )
+    for damaged in (None, b"\xef\xbb\xbf" + saved_note, saved_note + b"\xff"):
+        if damaged is None:
+            note.unlink()
+        else:
+            note.write_bytes(damaged)
+        for query in ("Learning", "Test Author", "example.test/learning"):
+            item = next(
+                item
+                for item in search(settings, query)["documents"]
+                if item["id"] == ident
+            )
+            assert "notes" in item["unavailableParts"]
+            assert item["library"]["state"] == "later"
+        assert ident in ids(search(settings))
+        assert not ids(search(settings, "独特见解"))
+        assert ids(search(settings, "Body needle")) == [ident]
+    note.write_bytes(saved_note)
+    talk.write_bytes(saved_talk + b"\xff")
+    full.unlink()
+    item = search(settings, "独特见解")["documents"][0]
+    assert set(item["unavailableParts"]) == {"full", "discussions"}
+    assert not ids(search(settings, "Dialog needle", includeDiscussions=True))
+    assert not ids(search(settings, "Body needle"))
+    talk.write_bytes(saved_talk)
+    full.write_bytes(saved_full)
+    assert not search(settings, "Body needle")["documents"][0]["unavailableParts"]
+    print("PASS missing, unowned and unreadable Markdown retains searchable documents")
+
+    # A cold scan paused at a full-text read must allow a different connector to save.
+    (root / library_search.DATABASE).unlink()
+    reading, resume = threading.Event(), threading.Event()
+    read_text = Path.read_text
+
+    def slow_read(path, *args, **kwargs):
+        if path == full:
+            reading.set()
+            assert resume.wait(5), "scan was never released"
+        return read_text(path, *args, **kwargs)
+
+    with ThreadPoolExecutor(max_workers=1) as pool, patch.object(
+        Path, "read_text", slow_read
+    ):
+        future = pool.submit(search, settings, "Body needle")
+        try:
+            assert reading.wait(5), "scan did not reach full text"
+            writer = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    "import sys; from pathlib import Path; sys.path.insert(0, sys.argv[1]); "
+                    "import vault; vault.LOCK_TIMEOUT = 0.2; "
+                    "reply = vault.handle(Path(sys.argv[2]), 'vault/highlight/update', "
+                    "{'documentId': sys.argv[3], 'highlightId': 'h001', 'note': 'Concurrent save'}); "
+                    "assert 'result' in reply, reply",
+                    str(Path(vault.__file__).parent),
+                    str(settings),
+                    other["document"]["id"],
+                ],
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
+            assert writer.returncode == 0, writer.stderr
+        finally:
+            resume.set()
+        assert ids(future.result()) == [ident]
+    assert ids(search(settings, "Concurrent save")) == [other["document"]["id"]]
+    print("PASS cold full-text scan allows concurrent highlight saves")
+
+    # ISO strings with different offsets must sort by the same instant as the old list.
+    for document_id, updated in (
+        (ident, "2026-10-21T16:00:00+08:00"),
+        (other["document"]["id"], "2026-10-21T09:00:00+00:00"),
+    ):
+        data = vault._load(root, document_id)
+        data["document"]["updatedAt"] = updated
+        vault._save(root, data)
+    assert (
+        ids(search(settings))
+        == ids(call(settings, "vault/documents/list"))
+        == [
+            other["document"]["id"],
+            ident,
+        ]
+    )
+    print("PASS mixed UTC offsets sort by instant")
 
     note.write_text(
         note.read_text().replace("独特见解", "最新判断").replace("Important", "Renamed")

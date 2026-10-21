@@ -494,7 +494,12 @@ items. Searches exclude discussions unless explicitly requested.
 visible Markdown and record file mtimes, ctimes and sizes; only changed documents
 are parsed again. Ownership follows `tabgent_id` / `tabgent_part` after moves,
 without following symlinks or hidden folders. Cache loss or corruption rebuilds
-from Markdown and records. Changes outside Tabgent appear at the next request;
+from Markdown and records. Index requests use a separate cache lock, so scanning
+full text never holds the vault mutation lock or blocks concurrent highlight saves.
+Missing or unreadable Markdown parts are skipped and flagged in the library;
+readable records remain listed and searchable by title, author and URL. Update
+times sort by their epoch instant, as in `vault/documents/list`.
+Changes outside Tabgent appear at the next request;
 the UI searches again on return to the library. SQL predicates intersect category,
 comment/highlight presence, existing reading state and every selected tag (NFC,
 casefold). An unmarked saved document has no reading state; saved feed items can

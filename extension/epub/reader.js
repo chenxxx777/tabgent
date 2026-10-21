@@ -265,6 +265,7 @@ function libraryItem(item, seen) {
     category && PLAIN_KINDS.has(label) ? '' : t(label),
     flag ? t(flag) : '',
     item.hasFullText === false ? t('libraryNoFullText') : '',
+    item.unavailableParts?.length ? t('libraryMarkdownUnavailable') : '',
     item.author,
     host(item.url),
     loadTimeData.getStringF('epubHighlightCount', item.highlightCount),

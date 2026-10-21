@@ -1680,5 +1680,8 @@
   },
   "libraryNoFullText": {
     "message": "Full text not saved"
+  },
+  "libraryMarkdownUnavailable": {
+    "message": "Some note files are missing or unreadable"
   }
 }

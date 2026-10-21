@@ -1680,5 +1680,8 @@
   },
   "libraryNoFullText": {
     "message": "尚未保存全文"
+  },
+  "libraryMarkdownUnavailable": {
+    "message": "部分笔记文件缺失或无法读取"
   }
 }

@@ -5,6 +5,8 @@ Unicode-normalized text deliberately supports Chinese substrings without a token
 Only changed Markdown/record files are read again. No third-party Python packages.
 """
 
+import contextlib
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -14,7 +16,7 @@ import unicodedata
 
 import vault
 
-VERSION = 1
+VERSION = 2
 DATABASE = ".tabgent/library-search.db"
 HIGHLIGHT = re.compile(
     r"<!-- tabgent:highlight (h\d{3,9}) start -->\n(.*?)\n<!-- tabgent:highlight \1 end -->",
@@ -236,8 +238,6 @@ def refresh(db, root):
     live = set()
     for ident, entry in known.items():
         selected = select_files(ident, entry, found)
-        if "notes" not in selected:
-            continue
         try:
             record_files = [
                 f"{vault.RECORDS}/{ident}/{name}"
@@ -259,8 +259,23 @@ def refresh(db, root):
                 continue
             data = vault._existing(root, ident)
             item = descriptor(root, data, selected)
-            note = (root / selected["notes"][1]).read_text(encoding="utf-8")
-            meta, body = front(note)
+            files = entry.get("files") or {}
+            expected = ["notes"]
+            if files.get("discussions"):
+                expected.append("discussions")
+            expected += [
+                vault._label_of("full", n)
+                for n, _ in enumerate(files.get("full") or [], 1)
+            ]
+            unavailable = [part for part in expected if part not in selected]
+            note = None
+            if "notes" in selected:
+                try:
+                    note = (root / selected["notes"][1]).read_text(encoding="utf-8")
+                except (OSError, UnicodeError):
+                    unavailable.append("notes")
+                    signature = None  # Retry transient read failures next time.
+            meta, body = front(note) if note is not None else ({}, "")
             for key, field in (("title", "title"), ("author", "author")):
                 if isinstance(meta.get(key), str):
                     item[field] = plain(meta[key])
@@ -269,7 +284,11 @@ def refresh(db, root):
             item["tags"] = meta.get("tags", [])
             item["comment"] = document_comment(body)
             sections = [(kind, hid, text) for kind, hid, text in passages(body) if text]
-            item["highlightCount"] = sum(kind == "highlight" for kind, _, _ in sections)
+            item["highlightCount"] = (
+                sum(kind == "highlight" for kind, _, _ in sections)
+                if note is not None
+                else len(data["highlights"])
+            )
             item["hasComments"] = any(kind == "comment" for kind, _, _ in sections)
             item["searchState"] = (item.get("library") or {}).get("state")
             # Inbox is meaningful only for saved feed items, not arbitrary older notes.
@@ -292,7 +311,12 @@ def refresh(db, root):
             for part, (_, rel, _) in selected.items():
                 if part == "notes":
                     continue
-                _, content = front((root / rel).read_text(encoding="utf-8"))
+                try:
+                    _, content = front((root / rel).read_text(encoding="utf-8"))
+                except (OSError, UnicodeError):
+                    unavailable.append(part)
+                    signature = None
+                    continue
                 kind = "discussion" if part == "discussions" else "body"
                 content = plain(content)
                 # Overlap covers even the longest permitted query across chunk edges.
@@ -303,6 +327,7 @@ def refresh(db, root):
                 if kind == "body":
                     full_count += 1
             item["hasFullText"] = bool(full_count)
+            item["unavailableParts"] = unavailable
             drop(db, ident)
             db.execute(
                 "INSERT INTO documents VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -314,7 +339,7 @@ def refresh(db, root):
                     item["hasComments"],
                     bool(item["highlightCount"]),
                     item["searchState"],
-                    item.get("updatedAt") or "",
+                    vault._instant(item.get("updatedAt")),
                 ),
             )
             db.executemany(
@@ -353,7 +378,7 @@ def connect(path):
             )
         db.executescript(
             """
-            CREATE TABLE IF NOT EXISTS documents (id TEXT PRIMARY KEY, signature TEXT, item TEXT, category TEXT, comments INTEGER, highlights INTEGER, state TEXT, updated TEXT);
+            CREATE TABLE IF NOT EXISTS documents (id TEXT PRIMARY KEY, signature TEXT, item TEXT, category TEXT, comments INTEGER, highlights INTEGER, state TEXT, updated REAL);
             CREATE TABLE IF NOT EXISTS files (path TEXT PRIMARY KEY, signature TEXT, document TEXT, part TEXT);
             CREATE TABLE IF NOT EXISTS passages (document TEXT, kind TEXT, highlight TEXT, text TEXT, folded TEXT);
             CREATE INDEX IF NOT EXISTS passages_document ON passages(document);
@@ -373,6 +398,25 @@ def snippet(text, query):
     start = max(0, pos - 55)
     end = min(len(text), max(pos + len(query) + 75, start + 150))
     return ("…" if start else "") + text[start:end] + ("…" if end < len(text) else "")
+
+
+@contextlib.contextmanager
+def index_lock(root):
+    """Serialize cache writers/recovery without blocking vault mutations.
+    Source files are read just as in list_documents: their atomic replacements
+    need no reader lock, and any intervening edits are picked up next request.
+    """
+    vault._ensure_dir(root / ".tabgent")
+    descriptor = os.open(
+        root / ".tabgent/library-search.lock",
+        os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW,
+        0o600,
+    )
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(descriptor)
 
 
 def search(settings, params):
@@ -397,7 +441,7 @@ def search(settings, params):
     root = vault._root(settings)
     if not root.exists():
         return {"documents": [], "tags": [], "total": 0, "offset": offset}
-    with vault._locked(root):
+    with index_lock(root):
         path = root / DATABASE
         if path.is_symlink():
             raise vault.VaultError(

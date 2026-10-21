@@ -455,6 +455,17 @@ for method, params in json.loads(sys.argv[3]):
       'PASS library search: Chinese/English, typed snippets, combined filters, md refresh, clear and highlight open',
     );
 
+    // A missing primary note keeps its record visible, with an explanation.
+    fs.unlinkSync(webNotes);
+    await page.reload();
+    const missingNote = byTitle(await listed(2), 'On Autonomy');
+    assert.equal(missingNote.href, articleUrl);
+    assert(missingNote.meta.includes(await message('libraryMarkdownUnavailable')));
+    fs.writeFileSync(webNotes, originalNotes);
+    await page.reload();
+    assert(await listed(2));
+    console.log('PASS a missing note stays in the library with an unavailable-file warning');
+
     // Choose a local PDF: it is copied into the vault, then opens in PDF.js from that copy.
     await page.setInputFiles('#file', files.local);
     await viewer();
