@@ -32,7 +32,8 @@ flowchart LR
 | `extension/epub-routing.js`       | EPUB reader port registry and sender checks.                                |
 | `extension/clipper.js`            | Clipping a page: injection, the replace prompt, bounds and the vault save.  |
 | `extension/clip-images.js`        | A clip's images: download, type and size checks, uploads, Markdown links.   |
-| `extension/clip/`                 | Clipping scripts, shared sanitizer settings, and the clipped-page reader.   |
+| `extension/youtube-player.js`     | A YouTube video's id and its player data, read in the page's own world.     |
+| `extension/clip/`                 | Clipping scripts, transcripts, sanitizer settings, clipped-page reader.     |
 | `extension/clip-routing.js`       | Clipped-page reader address, port registry and sender checks.               |
 | `extension/feeds.js`              | Subscriptions: scheduled feed fetches and the library's feed messages.      |
 | `extension/reading-companion.js`  | Highlight and page conversations: reading context and saved turns.          |
@@ -419,7 +420,7 @@ by the URL, as for highlights, so highlights, notes and discussions belong to bo
 `clipper.js` runs in the service worker. It takes the tab's top-frame URL and document from
 `webNavigation.getFrame`, refuses anything but HTTP(S) pages outside incognito, and injects
 `vendor/defuddle/defuddle.js`, `vendor/turndown/turndown.js`, the UMD build of DOMPurify,
-`clip/sanitize-config.js`, `clip/clip-structure.js` and `clip/clip-content.js` into frame 0 with
+`clip/sanitize-config.js`, `clip/clip-structure.js`, `clip/clip-media.js` and `clip/clip-content.js` into frame 0 with
 `chrome.scripting.executeScript`. Nothing is loaded into pages that are not clipped. Each
 later call checks that the injection result's `documentId` is still the frame's, so a page
 that navigated mid-clip saves nothing. A single-page app can change its address without a
@@ -495,13 +496,47 @@ cover is `og:image`, `twitter:image`, JSON-LD `image.url` or `link[rel=image_src
 site's own cover; X posts and selections have none. `metaSources` in `article.json` names the
 source of each value.
 
+A YouTube video (`watch`, `shorts` or `live` on `www.youtube.com`) is clipped from its
+player data, not its markup: YouTube keeps the current video's data in the page's own world
+(the player's `getPlayerResponse()`; the markup's `ytInitialPlayerResponse` still names the
+first video a tab opened). The worker reads it there with `chrome.scripting.executeScript`
+in the `MAIN` world (`youtube-player.js`: title, channel, description, publish date,
+thumbnail and caption tracks, bounded, only when its `videoId` is the address's) and passes
+it to the clipping script, which checks it again (`clip-media.js`). The track saved is the
+original language's own captions (the language of YouTube's automatic track), else that
+automatic track (recorded as `auto`), else the default track. Its text is requested from the
+page's own site with the page's cookies, as YouTube's player does: the track's address
+(`fmt=json3`); else the player's own request for that track, found in the page's resource
+timing (YouTube now answers caption requests only with a token the player adds, so this
+works once captions are on); else the transcript panel when the user opened it. YouTube's
+json3, srv1 and srv3 and WebVTT are read; cues become paragraphs (a new one at a chapter,
+after a pause over three seconds, at a sentence end after 30 seconds, at the latest after 90
+seconds, or 60 for automatic captions without punctuation), each starting with a link to its
+moment (`watch?v=<id>&t=<s>s`), under chapter headings when the description has chapters
+(lines starting with a timestamp, the first at 0:00, at least three, increasing). The
+description is saved before it, with its links and timestamps linked. `transcript` in
+`article.json` records the language, kind, name and source, or, when no text was available,
+why: `login` (YouTube asks to sign in or to confirm the user is not a bot: nothing is
+requested), `none`, `empty` (YouTube returned no text) or `unplayable`. Without a transcript
+the clip is `contentStatus: "notesOnly"`, and the page and reader say why. Audio is never
+transcribed.
+
+A podcast episode page (known podcast hosts, a podcast player embedded in the page, JSON-LD
+`PodcastEpisode` or an `og:type` naming an episode; a page that only offers an audio version
+of an article is not one) gets its transcript added after the show notes when the page has
+one: a block whose id or class names a transcript (also when the page keeps it collapsed),
+the part under a "Transcript" heading or `<summary>`, or a page on the same site that a
+"transcript" link leads to (requested with the page's cookies, cleaned by Defuddle without
+running it). Without one, the clip is `notesOnly`.
+
 A clip whose text is only links and at most 12 words besides, with no image (an embedded
 video turned into a link, a page whose text did not load), is `contentStatus: "linksOnly"`
 (not for selections or X posts). It is saved, but the page says that only links were saved
 instead of the usual message, the reader shows a notice and the library marks it.
 
-A coverage check guards against text the extraction drops silently (not for selections or X
-posts). It walks the copy's visible text nodes and looks for each in the extracted text (in
+A coverage check guards against text the extraction drops silently (not for selections, X
+posts, or video and podcast clips, whose text is notes and a transcript from captions or
+another page: putting a page passage back could repeat the transcript). It walks the copy's visible text nodes and looks for each in the extracted text (in
 page order, and again without spaces). The content region is the deepest element holding 95%
 of the matched text, widened to its `<article>` when that is at most half again as large.
 Inside it, navigation, forms, buttons, dialogs, comments, sharing, likes, related or
@@ -602,7 +637,8 @@ published date as the page states it (formatted in UTC from its date part, so `2
 never shown as the day before), and the cover shows above the text unless the text already
 has that image. The library shows each clip's cover from the vault when its entry comes into
 view (`libraryCover`, relayed to `vault/clip/asset/read`, which reads only images the record
-lists).
+lists), for covers up to 1 MiB: the list reads them through the vault queue that highlights
+and notes share.
 
 The reader loads the webpage reading layer (`selection-content.js`, `web-anchor.js`,
 `highlight-note.js` and `highlight-content.js`) after setting `globalThis.tabgentReadingView`

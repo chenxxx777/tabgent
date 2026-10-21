@@ -5,6 +5,7 @@
 import { cleanPageMeta, documentUrl } from './vault-client.js';
 import { fetchImages, localizeMarkdown, uploadImages } from './clip-images.js';
 import { refererFetch } from './referer.js';
+import { youtubePlayerData, youtubeVideoId } from './youtube-player.js';
 import './user-error.js';
 
 const FILES = [
@@ -13,6 +14,7 @@ const FILES = [
   'vendor/dompurify/purify.umd.js',
   'clip/sanitize-config.js',
   'clip/clip-structure.js',
+  'clip/clip-media.js',
   'clip/clip-content.js',
 ];
 export const CLIP_LIMIT = { markdown: 3 * 1024 * 1024, html: 4 * 1024 * 1024, images: 200 };
@@ -23,6 +25,14 @@ const bytes = (value) => new TextEncoder().encode(value).length;
 const t = (key, ...values) => chrome.i18n.getMessage(key, values.map(String)) || key;
 // Clip reasons the page returns. Mapped by code so a real locale shows the sentence, and a
 // test whose translator echoes the key still shows that key.
+// Why a video's or podcast's transcript was not saved.
+const TRANSCRIPT_REASON = {
+  login: 'clipTranscriptLogin',
+  none: 'clipTranscriptNone',
+  empty: 'clipTranscriptEmpty',
+  unplayable: 'clipTranscriptUnplayable',
+};
+const one = (value, list) => (list.includes(value) ? value : '');
 const CLIP_REASON = {
   'x-layout': 'clipXLayout',
   'x-not-post': 'clipXOpenPost',
@@ -100,8 +110,20 @@ export function cleanClip(result) {
     // The page's cover image (og:image and the like), saved with the clip's images.
     cover: /^https?:\/\//i.test(cover) && cover.length <= 4096 ? cover : '',
     metaSources,
-    // linksOnly: only links were found (an embedded video, a page whose text did not load).
-    contentStatus: result.contentStatus === 'linksOnly' ? 'linksOnly' : 'text',
+    // linksOnly: only links were found (an embedded video, a page whose text did not load);
+    // notesOnly: a video's description or a podcast's show notes, without a transcript.
+    contentStatus: one(result.contentStatus, ['linksOnly', 'notesOnly']) || 'text',
+    transcript:
+      result.transcript && typeof result.transcript === 'object'
+        ? {
+            status: one(result.transcript.status, ['saved', 'unavailable']) || 'unavailable',
+            reason: one(result.transcript.reason, Object.keys(TRANSCRIPT_REASON)),
+            language: text(result.transcript.language, 35),
+            kind: one(result.transcript.kind, ['manual', 'auto']),
+            name: text(result.transcript.name, 200),
+            source: one(result.transcript.source, ['captions', 'player', 'panel', 'page', 'link']),
+          }
+        : null,
     coverage: cleanCoverage(result.coverage),
   };
 }
@@ -179,7 +201,8 @@ export async function storeClip(
       },
       cover: cover ? { source: cover, file: coverFile && `assets/${coverFile}` } : null,
       metaSources: clip.metaSources || {},
-      contentStatus: clip.contentStatus === 'linksOnly' ? 'linksOnly' : 'text',
+      contentStatus: clip.contentStatus || 'text',
+      transcript: clip.transcript || null,
       ...(existing ? { replace: true, expected: existing.clippedAt } : {}),
     },
     { timeout: 60000 },
@@ -235,12 +258,32 @@ export function createClipper({ vault, changed = () => {}, fetch = globalThis.fe
       await still();
       return choice;
     };
-    const extract = async (method) =>
-      current(
+    const extract = async (method) => {
+      // A YouTube video's data (description, caption tracks) is in the page's own world, in
+      // its player; it is read there now, for this video only.
+      const videoId = method === 'selection' ? '' : youtubeVideoId(frame.url);
+      const [read] = videoId
+        ? await chrome.scripting
+            .executeScript({
+              target: { tabId, frameIds: [0] },
+              world: 'MAIN',
+              func: youtubePlayerData,
+              args: [videoId],
+            })
+            .catch(() => [])
+        : [];
+      const player = read ? current(read) : null;
+      return current(
         await inject(tabId, (o) => globalThis.tabgentClip.run(o), [
-          { mode: method, url: frame.url, ...(method === 'selection' ? { expected } : {}) },
+          {
+            mode: method,
+            url: frame.url,
+            ...(method === 'selection' ? { expected } : {}),
+            ...(player ? { player } : {}),
+          },
         ]),
       );
+    };
 
     const resolved = await vault.request('vault/document/resolve', {
       url,
@@ -297,12 +340,28 @@ export function createClipper({ vault, changed = () => {}, fetch = globalThis.fe
       return { ok: false, reason: 'conflict' };
     }
     const title = clip.title || saved.document?.title || '';
-    // Only links were found (an embedded video, a page whose text did not load): the clip is
-    // kept, but not reported as the page's text.
-    const linksOnly = clip.contentStatus === 'linksOnly';
+    // Only links were found (an embedded video, a page whose text did not load), or only a
+    // video's description or a podcast's show notes: the clip is kept, but not reported as
+    // the page's text, and a missing transcript says why.
+    const partial = clip.contentStatus !== 'text';
+    const transcript = clip.transcript;
+    const label = transcript?.name || transcript?.language || '';
     await say(tabId, {
       text: [
-        linksOnly ? t('clipLinksOnly', title) : t('clipSaved', title, clip.words),
+        clip.contentStatus === 'linksOnly'
+          ? t('clipLinksOnly', title)
+          : clip.contentStatus === 'notesOnly'
+            ? t('clipNotesOnly', title)
+            : t('clipSaved', title, clip.words),
+        transcript?.status === 'saved' && label
+          ? t(
+              'clipTranscriptSaved',
+              transcript.kind === 'auto' ? t('clipTranscriptAuto', label) : label,
+            )
+          : '',
+        transcript?.status === 'unavailable' && TRANSCRIPT_REASON[transcript.reason]
+          ? t(TRANSCRIPT_REASON[transcript.reason])
+          : '',
         kept ? t('clipImagesSaved', kept) : '',
         failed ? t('clipImagesFailed', failed) : '',
         clip.posts ? t('clipXPartial', clip.posts) : '',
@@ -312,7 +371,7 @@ export function createClipper({ vault, changed = () => {}, fetch = globalThis.fe
       ]
         .filter(Boolean)
         .join(' '),
-      tone: linksOnly ? 'warning' : 'info',
+      tone: partial ? 'warning' : 'info',
       open: true,
     });
     changed(tabId);

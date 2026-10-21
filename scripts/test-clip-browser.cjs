@@ -13,6 +13,9 @@ const assert = require('node:assert/strict'),
 const root = path.resolve(__dirname, '..'),
   { chromium } = require(root + '/node_modules/playwright');
 const extension = path.join(root, 'extension');
+const { youtubePage, youtubeCues, json3 } = require(
+  path.join(extension, 'tests/fixtures/youtube.cjs'),
+);
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 async function until(check, ms = 10000) {
   for (const end = Date.now() + ms; Date.now() < end; await wait(100)) {
@@ -95,6 +98,22 @@ const short = `<!doctype html><html><head><meta charset="utf-8"><title>Short not
   <main><p>Only a few words on this page.</p></main><aside>${paragraphs(1, 'Aside')}</aside></body></html>`;
 // The page's cover (og:image), served only with a Referer like the protected image.
 const COVER = png(40, 24);
+// YouTube watch pages, served at www.youtube.com by the test (nothing reaches YouTube): one
+// with captions of its own, one whose captions YouTube does not return.
+const VIDEOS = {
+  FIXTUREvid1: youtubePage('FIXTUREvid1', {
+    tracks: [
+      ['en', 'asr', 'English (auto-generated)'],
+      ['en', '', 'English'],
+    ],
+    description: 'A fixture talk.\n\n0:00 Opening\n0:30 Middle\n1:00 End',
+  }),
+  FIXTUREvid4: youtubePage('FIXTUREvid4', {
+    tracks: [['en', 'asr', 'English (auto-generated)']],
+    description: 'Show notes of the fixture episode, with guests and links.',
+  }),
+};
+const THUMBNAIL = png(48, 27);
 // Only an embedded player: saving the whole page keeps a link, not the page's text.
 const video = `<!doctype html><html><head><meta charset="utf-8"><title>Recorded talk</title></head><body>
   <main><h1>Recorded talk</h1><iframe src="/embed/talk" title="Talk"></iframe></main></body></html>`;
@@ -208,7 +227,8 @@ const video = `<!doctype html><html><head><meta charset="utf-8"><title>Recorded 
       }),
     );
     // Nothing leaves the machine: only the local fixture server answers.
-    const outside = [];
+    const outside = [],
+      youtubeRequests = [];
     let worker;
     async function launch() {
       context = await chromium.launchPersistentContext(profile, {
@@ -223,6 +243,33 @@ const video = `<!doctype html><html><head><meta charset="utf-8"><title>Recorded 
       });
       await context.route(/^https?:\/\/(?!127\.0\.0\.1[:/])/, (route) => {
         outside.push(route.request().url());
+        return route.abort();
+      });
+      // The fixture YouTube pages, their captions and thumbnails; nothing else of YouTube.
+      await context.route(/^https:\/\/(?:www\.youtube\.com|i\.ytimg\.com)\//, (route) => {
+        const url = new URL(route.request().url());
+        youtubeRequests.push(url.href);
+        if (
+          url.hostname === 'i.ytimg.com' &&
+          /^\/vi\/FIXTUREvid\d\/maxresdefault\.jpg$/.test(url.pathname)
+        )
+          return route.fulfill({ contentType: 'image/png', body: THUMBNAIL });
+        if (url.pathname === '/watch' && VIDEOS[url.searchParams.get('v')])
+          return route.fulfill({
+            contentType: 'text/html; charset=utf-8',
+            body: VIDEOS[url.searchParams.get('v')],
+          });
+        if (
+          url.pathname === '/api/timedtext' &&
+          url.searchParams.get('v') === 'FIXTUREvid1' &&
+          !url.searchParams.get('kind')
+        )
+          return route.fulfill({
+            contentType: 'application/json',
+            body: json3(youtubeCues(30, (i) => `Caption sentence ${i + 1} of the talk.`)),
+          });
+        if (url.pathname === '/api/timedtext') return route.fulfill({ body: '' });
+        outside.push(url.href);
         return route.abort();
       });
       worker = context.serviceWorkers()[0] || (await context.waitForEvent('serviceworker'));
@@ -875,6 +922,88 @@ print(json.dumps([m["path"] for m in found["matches"]][:3] + [read["text"][:2000
     assert(!(await promptText(page)).includes(await message('clipSaved', 'Recorded talk', '1')));
     console.log('PASS a page with only an embedded player is saved as links only, and says so');
 
+    // A YouTube video: the player's data is read in the page's own world, its own English
+    // captions (not the automatic track) are saved as a transcript with chapters and links
+    // to each moment, and its thumbnail is the cover.
+    await page.goto('https://www.youtube.com/watch?v=FIXTUREvid1');
+    await wait(800);
+    youtubeRequests.length = 0;
+    await panel(`(() => {
+      document.getElementById('readingButton').click();
+      document.getElementById('readingClip').click();
+    })()`);
+    const videoFolderOf = (id) =>
+      folders().find(
+        (name) =>
+          name.startsWith(`article-fixture-video-${id.slice(-1)}-`) &&
+          fs.existsSync(path.join(articles, name, 'article.json')),
+      );
+    const talk = await until(() => videoFolderOf('FIXTUREvid1'), 20000);
+    assert(talk, 'The video is clipped');
+    const talkRecord = record(talk);
+    assert.equal(talkRecord.origin.extractor, 'youtube');
+    assert.equal(talkRecord.contentStatus, 'text');
+    assert.deepEqual(talkRecord.transcript, {
+      status: 'saved',
+      reason: '',
+      kind: 'manual',
+      source: 'captions',
+      language: 'en',
+      name: 'English',
+    });
+    assert.equal(talkRecord.author, 'Fixture Channel');
+    assert.equal(talkRecord.publishedAt, '2026-08-14T05:00:01-07:00');
+    const talkCover = `${crypto.createHash('sha256').update(THUMBNAIL).digest('hex').slice(0, 16)}.png`;
+    assert.deepEqual(talkRecord.cover, {
+      source: 'https://i.ytimg.com/vi/FIXTUREvid1/maxresdefault.jpg',
+      file: `assets/${talkCover}`,
+    });
+    const talkMarkdown = read(talk, 'article.md');
+    const moment = (at) => `https://www.youtube.com/watch?v=FIXTUREvid1&t=${at}s`;
+    assert(talkMarkdown.includes(`## ${await message('clipTranscriptOf', 'English')}`));
+    assert(
+      talkMarkdown.includes(
+        `### [0:30](${moment(30)}) Middle\n\n[0:30](${moment(30)}) Caption sentence 11`,
+      ),
+    );
+    assert(talkMarkdown.includes(`[0:00](${moment(0)}) Caption sentence 1 of the talk.`));
+    assert.match(talkMarkdown, /Caption sentence 30 of the talk\.\n$/);
+    // Only the chosen track's text was requested, from the page.
+    assert.deepEqual(
+      youtubeRequests
+        .filter((url) => url.includes('/api/timedtext'))
+        .map((url) => new URL(url).searchParams.get('kind') || 'own'),
+      ['own'],
+    );
+    const transcriptText = await message('clipTranscriptSaved', 'English');
+    assert(
+      await until(async () => (await promptText(page)).includes(transcriptText)),
+      'The page says the transcript was saved',
+    );
+    // YouTube does not return the automatic track's text: only the description is saved,
+    // and the page says why.
+    await page.goto('https://www.youtube.com/watch?v=FIXTUREvid4');
+    await wait(800);
+    await panel(`(() => {
+      document.getElementById('readingButton').click();
+      document.getElementById('readingClip').click();
+    })()`);
+    const episodeFolder = await until(() => videoFolderOf('FIXTUREvid4'), 20000);
+    assert(episodeFolder, 'The video without caption text is clipped');
+    assert.equal(record(episodeFolder).contentStatus, 'notesOnly');
+    assert.equal(record(episodeFolder).transcript.reason, 'empty');
+    assert.match(read(episodeFolder, 'article.md'), /Show notes of the fixture episode/);
+    const notesText = [
+      await message('clipNotesOnly', 'Fixture video 4'),
+      await message('clipTranscriptEmpty'),
+    ].join(' ');
+    assert(
+      await until(async () => (await promptText(page)).startsWith(notesText)),
+      await promptText(page),
+    );
+    assert.deepEqual(outside, [], 'Nothing outside the fixtures is requested');
+    console.log('PASS a YouTube video saves its captions as a transcript, or says why it cannot');
+
     // Large images download and upload while the clip runs, one vault request at a time: a
     // highlight made meanwhile in another tab saves within two seconds.
     const other = await context.newPage();
@@ -972,6 +1101,14 @@ print(json.dumps([m["path"] for m in found["matches"]][:3] + [read["text"][:2000
       '?url=' + origin + '/video',
     );
     assert(videoMeta?.includes(linksOnlyLabel), videoMeta);
+    const episodeMeta = await library.evaluate(
+      (url) =>
+        [...document.querySelectorAll('#books li')]
+          .find((li) => li.querySelector('.item')?.getAttribute('href')?.endsWith(url))
+          ?.querySelector('.meta').textContent,
+      '?url=https://www.youtube.com/watch?v=FIXTUREvid4',
+    );
+    assert(episodeMeta?.includes(await message('libraryNotesOnly')), episodeMeta);
     assert(!entry.meta.includes(linksOnlyLabel), entry.meta);
     // Its clipped copy says it holds only links.
     const videoReader = await context.newPage();
@@ -980,6 +1117,15 @@ print(json.dumps([m["path"] for m in found["matches"]][:3] + [read["text"][:2000
     assert.equal(await videoReader.textContent('#notice'), await message('clipLinksOnlyNotice'));
     assert.equal(await videoReader.isVisible('#notice'), true);
     await videoReader.close();
+    // A video without its transcript says so, and why.
+    const episodeReader = await context.newPage();
+    await episodeReader.goto(readerPrefix + 'https://www.youtube.com/watch?v=FIXTUREvid4');
+    await episodeReader.waitForSelector('#content p');
+    assert.equal(
+      await episodeReader.textContent('#notice'),
+      [await message('clipNotesOnlyNotice'), await message('clipTranscriptEmpty')].join(' '),
+    );
+    await episodeReader.close();
     await library.click(`#books a.item[href="${entry.href}"]`);
     await library.waitForURL(readerPrefix + '**');
     await library.waitForSelector('#content p');

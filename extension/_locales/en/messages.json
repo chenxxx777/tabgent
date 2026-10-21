@@ -1228,6 +1228,42 @@
   "readingPublished": {
     "message": "Published $1"
   },
+  "clipNotesOnly": {
+    "message": "Saved “$1”, but only the show notes or description: no transcript was found."
+  },
+  "clipNotesOnlyNotice": {
+    "message": "Only the show notes or description were saved: no transcript was found."
+  },
+  "libraryNotesOnly": {
+    "message": "Show notes only"
+  },
+  "clipTranscriptSaved": {
+    "message": "Transcript: $1."
+  },
+  "clipTranscriptAuto": {
+    "message": "$1, auto-generated"
+  },
+  "clipTranscriptLogin": {
+    "message": "YouTube asked to sign in or to confirm you are not a bot, so no captions were read."
+  },
+  "clipTranscriptNone": {
+    "message": "No captions or transcript are available."
+  },
+  "clipTranscriptEmpty": {
+    "message": "YouTube returned no caption text. Turn on captions (CC) or open “Show transcript” on the video, then clip it again."
+  },
+  "clipTranscriptUnplayable": {
+    "message": "The video cannot be played here, so no captions were read."
+  },
+  "clipVideoDescription": {
+    "message": "Description"
+  },
+  "clipTranscriptHeading": {
+    "message": "Transcript"
+  },
+  "clipTranscriptOf": {
+    "message": "Transcript ($1)"
+  },
   "clipOpen": {
     "message": "Open clipped copy"
   },
