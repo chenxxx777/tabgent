@@ -746,6 +746,92 @@ print(json.dumps([m["path"] for m in found["matches"]][:3] + [read["text"][:2000
     readerPanel.close();
     console.log('PASS Ask AI in the reader saves the discussion under the page highlight');
 
+    // Comment in the clipped-page reader: cancel stores nothing; save keeps highlight and comment.
+    await reader.evaluate(() => {
+      const paragraph = (n) =>
+        [...document.querySelectorAll('#content p')].find((p) =>
+          p.textContent.includes(`Body paragraph ${n}`),
+        );
+      paragraph(6).id = 'probe6';
+      paragraph(7).id = 'probe7';
+    });
+    await reader.bringToFront();
+    await drag(reader, '#probe6', 'paragraph 6: careful');
+    const { client: toolbarClient, found: toolbarNodes } = await shadowNodes(
+      reader,
+      'tabgent-reader',
+    );
+    const toolbarActions = toolbarNodes
+      .map((node) => {
+        const attributes = node.attributes || [];
+        const at = attributes.indexOf('data-action');
+        return at >= 0 ? attributes[at + 1] : null;
+      })
+      .filter(Boolean);
+    await toolbarClient.detach();
+    assert.deepEqual(toolbarActions.slice(0, 3), ['highlight', 'comment', 'ask']);
+    const clickComment = () =>
+      clickIn(reader, 'tabgent-reader', (node) => {
+        const at = (node.attributes || []).indexOf('data-action');
+        return at >= 0 && node.attributes[at + 1] === 'comment';
+      });
+    await clickComment();
+    await reader.keyboard.press('Escape');
+    await wait(400);
+    assert.equal(anchorsOf().highlights.length, 3, 'Escape stores nothing');
+    await drag(reader, '#probe6', 'paragraph 6: careful');
+    await clickComment();
+    await reader.keyboard.press('Control+Enter');
+    await wait(400);
+    assert.equal(anchorsOf().highlights.length, 3, 'An empty comment stores nothing');
+    await reader.keyboard.press('Escape');
+    await reader.evaluate(() => getSelection()?.removeAllRanges());
+    await wait(400);
+    const comment = 'A comment from the clipped copy.';
+    await drag(reader, '#probe7', 'paragraph 7: careful');
+    await clickComment();
+    await reader.keyboard.type(comment);
+    await reader.keyboard.press('Control+Enter');
+    assert(await until(() => anchorsOf().highlights.some((h) => h.note === comment)));
+    const savedComment = anchorsOf().highlights.find((h) => h.text.includes('paragraph 7'));
+    assert.equal(savedComment.note, comment);
+    assert.match(read(folder, 'highlights.md'), /### 笔记\n\nA comment from the clipped copy\./);
+    await reader.reload();
+    assert(await until(async () => (await painted(reader)) === 4), 'Comment highlight restored');
+    await reader.bringToFront();
+    const at = await reader.evaluate(() => {
+      const node = [...document.querySelectorAll('#content p')].find((p) =>
+        p.textContent.includes('paragraph 7: careful'),
+      ).firstChild;
+      const start = node.data.indexOf('paragraph 7');
+      const range = document.createRange();
+      range.setStart(node, start);
+      range.setEnd(node, start + 4);
+      const r = range.getBoundingClientRect();
+      return { x: r.left + 3, y: r.top + r.height / 2 };
+    });
+    await reader.mouse.click(at.x, at.y);
+    await wait(300);
+    const clipClient = await reader.context().newCDPSession(reader);
+    const { root: clipRoot } = await clipClient.send('DOM.getDocument', {
+      depth: -1,
+      pierce: true,
+    });
+    let clipShadow = null;
+    (function walk(node) {
+      if (node.localName === 'tabgent-reader') clipShadow = node.shadowRoots?.[0];
+      for (const child of [...(node.children || []), ...(node.shadowRoots || [])]) walk(child);
+    })(clipRoot);
+    const { outerHTML: clipHtml } = await clipClient.send('DOM.getOuterHTML', {
+      backendNodeId: clipShadow.backendNodeId,
+    });
+    await clipClient.detach();
+    assert(clipHtml.includes(comment), 'Comment shown after reload');
+    await reader.keyboard.press('Escape');
+    console.log(
+      'PASS comment in the clipped reader saves the highlight and comment; cancel stores nothing',
+    );
+
     // The reader trusts nothing in the vault: a changed article.html is refused, and markup
     // that also changes the record is cleaned, with no script, remote load, form or frame.
     const htmlPath = path.join(articles, folder, 'article.html'),
@@ -1086,7 +1172,7 @@ print(json.dumps([m["path"] for m in found["matches"]][:3] + [read["text"][:2000
     await library.click(`#books a.item[href="${entry.href}"]`);
     await library.waitForURL(readerPrefix + '**');
     await library.waitForSelector('#content p');
-    assert(await until(async () => (await painted(library)) === 3), 'Highlights after restart');
+    assert(await until(async () => (await painted(library)) === 4), 'Highlights after restart');
     assert(
       await until(() =>
         library.evaluate(() => document.querySelector('#content img')?.naturalWidth === 32),
@@ -1101,7 +1187,7 @@ print(json.dumps([m["path"] for m in found["matches"]][:3] + [read["text"][:2000
     const deletedText = await message('clipDeleted');
     assert(await until(async () => (await library.textContent('#status')).startsWith(deletedText)));
     assert(!fs.existsSync(path.join(articles, folder, 'article.json')));
-    assert.equal(JSON.parse(read(folder, 'anchors.json')).highlights.length, 3);
+    assert.equal(JSON.parse(read(folder, 'anchors.json')).highlights.length, 4);
     console.log('PASS deleting the clipped copy keeps the highlights');
 
     assert.deepEqual(outside, [], 'No request left the machine');

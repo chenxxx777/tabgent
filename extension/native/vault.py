@@ -286,11 +286,26 @@ def resolve(settings, params):
     }
 
 
+def _optional_note(params):
+    """The note to store when creating a highlight, or None when the request omits it.
+
+    Blank text is None, so a create never clears a note. Trimming matches
+    update_highlight. The Markdown heading stays ``### 笔记``.
+    """
+    if "note" not in params:
+        return None
+    note = _string(params, "note", NOTE_LIMIT)
+    note = note.replace("\r\n", "\n").replace("\r", "\n").strip()
+    return note or None
+
+
 def create_highlight(settings, params):
     url, title, kind, meta = _source(params)
     text = _string(params, "text", TEXT_LIMIT, required=True)
     anchor = _anchor(params.get("anchor"))
     location = _label(params.get("location"), "location")
+    # A bad note fails before the lock, and only after the anchor is valid.
+    note = _optional_note(params)
     root = _root(settings)
     with _locked(root):
         _scaffold(root)
@@ -307,6 +322,7 @@ def create_highlight(settings, params):
             ),
             None,
         )
+        note_changed = False
         if item is None:
             number = data["nextHighlight"]
             for _, _, ident in _blocks(lines or [], "highlight"):
@@ -321,17 +337,33 @@ def create_highlight(settings, params):
                 "createdAt": now,
                 "updatedAt": now,
             }
+            # The note is part of the same record, so one render includes ### 笔记.
+            if note:
+                item["note"] = note
             data["highlights"].append(item)
             data["nextHighlight"] = number + 1
             data["document"]["updatedAt"] = now
             # Machine record first: a retry restores a block that failed to render.
             _save(root, data)
+        elif note and item.get("note", "") != note:
+            item["note"] = note
+            note_changed = True
         if lines is None:
             _write_lines(path, _render(data), False)
         elif not _blocks(lines, "highlight", item["id"]):
             turns = _turns(data, item["id"])
             _insert(lines, _highlight_position(lines), _highlight_lines(item, turns))
             _write_lines(path, lines, crlf)
+        elif note_changed:
+            blocks = _blocks(lines, "highlight", item["id"])
+            _set_note(lines, blocks[0][0], blocks[0][1], item)
+            _write_lines(path, lines, crlf)
+        if note_changed:
+            # Markdown first, then the machine record, so a retry repeats the same edit.
+            now = _now()
+            item["updatedAt"] = now
+            data["document"]["updatedAt"] = now
+            _save(root, data)
     return {
         "document": _public_document(
             root, data["document"], data["document"]["createdAt"]

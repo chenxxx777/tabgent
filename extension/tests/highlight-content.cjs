@@ -45,10 +45,13 @@ const assert = require('node:assert/strict'),
         if (message.type === 'highlightResolve')
           return { url, document: vault.document, highlights: vault.highlights };
         if (message.type === 'highlightCreate') {
+          if (vault.createError)
+            return { error: vault.createError, code: vault.createCode || 'io_error' };
           const highlight = {
             id: `h00${next++}`,
             text: message.text,
             anchor: message.anchor,
+            note: message.note || '',
             turnCount: 0,
           };
           vault.highlights.push(highlight);
@@ -258,7 +261,11 @@ const assert = require('node:assert/strict'),
     const focused = () => page.evaluate(() => ui.activeElement?.dataset.action || null);
     assert.equal(await focused(), 'highlight');
     await page.keyboard.press('ArrowRight');
+    assert.equal(await focused(), 'comment');
+    await page.keyboard.press('ArrowRight');
     assert.equal(await focused(), 'ask');
+    await page.keyboard.press('ArrowLeft');
+    assert.equal(await focused(), 'comment');
     await page.keyboard.press('Escape');
     await page.waitForTimeout(300);
     assert.equal(await focused(), null);
@@ -457,6 +464,94 @@ const assert = require('node:assert/strict'),
     assert.equal(await page.evaluate(() => ui.querySelector('.note').hidden), true);
     await page.keyboard.press('Escape');
     console.log('PASS keyboard Edit note, Escape discards, failed save stays open, empty removes');
+
+    // Comment on a new selection: cancel and an empty comment store nothing.
+    const beforeComment = await creates();
+    const paintedBefore = await painted();
+    await drag('#fresh', "one's own");
+    assert.deepEqual(
+      await page.evaluate(() =>
+        [...ui.querySelector('.bar').querySelectorAll('button')].map((b) => b.dataset.action),
+      ),
+      ['highlight', 'comment', 'ask'],
+    );
+    await page.mouse.click((await button('comment')).x, (await button('comment')).y);
+    assert.equal(await editorOpen(), true);
+    assert.equal(
+      await page.evaluate(() => ui.querySelector('.editor textarea').placeholder),
+      'highlightCommentPlaceholder',
+    );
+    await page.keyboard.press('Escape');
+    assert.equal(await editorOpen(), false);
+    assert.equal(await creates(), beforeComment, 'Escape stores nothing');
+    assert.equal(await painted(), paintedBefore);
+    await drag('#fresh', "one's own");
+    await page.mouse.click((await button('comment')).x, (await button('comment')).y);
+    await page.keyboard.press('Control+Enter');
+    await page.waitForFunction(() => ui.querySelector('.editor').hidden);
+    assert.equal(
+      await page.evaluate(() => ui.querySelector('.toast').textContent),
+      'highlightCommentEmpty',
+    );
+    assert.equal(await creates(), beforeComment, 'An empty comment stores nothing');
+    assert.equal(await painted(), paintedBefore);
+
+    // Save stores the highlight and the comment in one create, and a reload restores both.
+    await drag('#other', 'about the text');
+    await page.mouse.click((await button('comment')).x, (await button('comment')).y);
+    await page.keyboard.type('A comment on the text.');
+    await page.keyboard.press('Control+Enter');
+    await page.waitForFunction(() =>
+      sent.some((m) => m.type === 'highlightCreate' && m.note === 'A comment on the text.'),
+    );
+    const commented = await lastSent('highlightCreate');
+    assert.equal(commented.anchor.quote.exact, 'about the text');
+    assert.equal(commented.ask, undefined);
+    assert.equal(await painted(), paintedBefore + 1);
+    const resolves = await page.evaluate(
+      () => sent.filter((m) => m.type === 'highlightResolve').length,
+    );
+    await page.evaluate(() => history.pushState({}, '', '/away'));
+    await page.waitForFunction(
+      (count) => sent.filter((m) => m.type === 'highlightResolve').length > count,
+      resolves,
+    );
+    await page.evaluate(() => history.pushState({}, '', '/article'));
+    await page.waitForFunction(
+      (count) => sent.filter((m) => m.type === 'highlightResolve').length > count,
+      resolves + 1,
+    );
+    await page.waitForFunction(
+      (count) => CSS.highlights.get('tabgent-highlight').size >= count,
+      paintedBefore + 1,
+    );
+    const about = await box('#other', 'about the text');
+    await page.mouse.click(about.left + 4, about.y);
+    await page.waitForFunction(() => !ui.querySelectorAll('.bar')[1].hidden);
+    assert.equal(
+      await page.evaluate(() => ui.querySelector('.note').textContent),
+      'highlightNoteLabelA comment on the text.',
+    );
+    await page.keyboard.press('Escape');
+
+    // A failed save stays in the editor and paints nothing.
+    await page.evaluate(() => (vault.createError = 'Disk is busy'));
+    await drag('#fresh', 'not independence');
+    await page.mouse.click((await button('comment')).x, (await button('comment')).y);
+    await page.keyboard.type('nope');
+    await page.keyboard.press('Control+Enter');
+    await page.waitForFunction(() => !ui.querySelector('.editor .error').hidden);
+    assert.equal(
+      await page.evaluate(() => ui.querySelector('.editor .error').textContent),
+      'highlightNoteFailed:Disk is busy',
+    );
+    assert.equal(await painted(), paintedBefore + 1, 'A failed comment paints nothing');
+    await page.evaluate(() => (vault.createError = null));
+    await page.keyboard.press('Escape');
+    assert.equal(await editorOpen(), false);
+    console.log(
+      'PASS comment creates the highlight with its note; cancel and failure store nothing',
+    );
 
     await page.evaluate(() => (document.body.style.paddingBottom = '2000px'));
     await drag('#other', 'paragraph for');

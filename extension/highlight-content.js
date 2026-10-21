@@ -1,4 +1,5 @@
-// Webpage reading layer: selection toolbar, saved highlights, and highlight actions.
+// Webpage reading layer: selection toolbar (Highlight, Comment, Ask AI), saved highlights,
+// and highlight actions.
 // Highlights paint through the CSS Custom Highlight API; page markup is never wrapped.
 (() => {
   if (globalThis.tabgentHighlightsInstalled || window.top !== window || !globalThis.CSS?.highlights)
@@ -36,6 +37,7 @@
     dismissed = null,
     active = null,
     noteTarget = null,
+    pendingComment = null,
     returnFocus = null,
     pointerDown = false,
     lastInput = 'pointer',
@@ -137,6 +139,7 @@
     root.adoptedStyleSheets = [sheet];
     toolbar = bar(t('highlightToolbar'), [
       ['highlight', t('highlightAdd'), true],
+      ['comment', t('highlightNoteAdd')],
       ['ask', t('highlightAsk')],
     ]);
     popover = bar(t('highlightActions'), [
@@ -144,7 +147,7 @@
       ['note', t('highlightNoteAdd')],
       ['delete', t('highlightDelete')],
     ]);
-    // Clicking a highlight shows the user's note above its actions.
+    // Clicking a highlight shows its comment above the actions.
     notePreview = notes.preview(document, t);
     popover.classList.add('card');
     popover.prepend(notePreview);
@@ -218,12 +221,21 @@
     }, 6000);
   }
   const inUi = () => !!root?.activeElement;
+  // A new selection or highlight starts at the first action, not the last one focused.
+  function resetTabs(element) {
+    if (!element) return;
+    for (const button of element.querySelectorAll('button')) button.tabIndex = -1;
+    const first = element.querySelector('button');
+    if (first) first.tabIndex = 0;
+  }
   function hideToolbar() {
     if (toolbar) toolbar.hidden = true;
+    resetTabs(toolbar);
     draft = null;
     syncHost();
   }
   function hidePopover() {
+    resetTabs(popover);
     if (popover) popover.hidden = true;
     active = null;
     focused.clear();
@@ -252,6 +264,7 @@
     a.endContainer === b.endContainer &&
     a.endOffset === b.endOffset;
   function barKeys(event, element) {
+    if (event.isComposing || event.keyCode === 229) return;
     const buttons = [...element.querySelectorAll('button')];
     const at = buttons.indexOf(root.activeElement);
     const move = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[event.key];
@@ -374,7 +387,7 @@
     place(popover, rect);
   }
 
-  // The note editor opens where the highlight is and keeps focus until saved or closed.
+  // The comment editor opens where the highlight is and keeps focus until saved or closed.
   function openEditor(record) {
     if (!record.range) return;
     if (!inUi()) returnFocus = document.activeElement;
@@ -387,6 +400,7 @@
     noteEditor.focus();
   }
   function closeEditor(keepFocus = false) {
+    pendingComment = null;
     if (!noteEditor?.visible) return;
     if (!keepFocus) leaveUi();
     noteEditor.hide();
@@ -396,8 +410,15 @@
     syncHost();
   }
   async function saveNote(note) {
+    if (pendingComment) return saveComment(note);
     const record = noteTarget;
     if (!record?.highlight) return;
+    // Nothing to remove: an empty comment on a highlight that has none is a cancel.
+    if (!note && !record.highlight.note) {
+      closeEditor();
+      notify(t('highlightCommentEmpty'));
+      return;
+    }
     const response = await send({
       type: 'highlightNote',
       documentId: page?.documentId,
@@ -409,13 +430,105 @@
     closeEditor();
     notify(t(note ? 'highlightNoteSaved' : 'highlightNoteRemoved'));
   }
+  // One write stores the highlight and its comment. Cancel and an empty comment save nothing.
+  async function saveComment(note) {
+    const pending = pendingComment;
+    if (!pending) return;
+    if (!note) {
+      closeEditor();
+      notify(t('highlightCommentEmpty'));
+      return;
+    }
+    const url = page?.url;
+    const response = await send({
+      type: 'highlightCreate',
+      text: pending.text,
+      anchor: pending.anchor,
+      title: pageTitle(),
+      meta: pageMeta(),
+      location: pending.location,
+      note,
+    });
+    if (!response.highlight)
+      throw Object.assign(new Error(response.vaultError || 'The highlight could not be saved'), {
+        code: response.code,
+        ...(response.folder ? { folder: response.folder } : {}),
+      });
+    if (response.document?.id) page.documentId = response.document.id;
+    if (page?.url === url) {
+      const id = response.highlight.id;
+      const current = records.get(id);
+      if (current?.highlight) current.highlight = response.highlight;
+      else
+        records.set(id, {
+          highlight: response.highlight,
+          range: pending.range,
+          start: pending.start,
+          end: pending.end,
+          text: pending.indexText,
+          live: liveText(pending.range),
+        });
+      observe();
+      repaint();
+      report();
+    }
+    getSelection()?.removeAllRanges();
+    closeEditor();
+    notify(t('highlightNoteSaved'));
+  }
 
   function act(action) {
     if (action === 'highlight' || action === 'ask') return void create(action === 'ask');
+    if (action === 'comment') return void beginComment();
     if (!active) return;
     if (action === 'discuss') return void discuss(active);
     if (action === 'note') return void openEditor(active);
     if (action === 'delete') return void remove(active);
+  }
+  function prepareDraft() {
+    if (!draft) return null;
+    const { range, text } = draft;
+    const textIndex = index();
+    const anchor = anchors.describe(range, textIndex);
+    if (!anchor) return null;
+    const { start, end } = anchor.position;
+    if (end - start > limit || text.length > limit * 2) return { tooLong: true };
+    const existing = findRecord(start, end);
+    if (existing) return { existing };
+    const exactRange = textIndex.rangeFromOffsets(start, end);
+    if (!exactRange) return null;
+    return {
+      range: exactRange,
+      start,
+      end,
+      text: text.trim().slice(0, limit),
+      anchor,
+      location: sectionLabel(exactRange),
+      indexText: textIndex.text.slice(start, end),
+    };
+  }
+  // Comment does not paint a highlight until save. A passage already highlighted opens its editor.
+  function beginComment() {
+    const prepared = prepareDraft();
+    if (!prepared) return hideToolbar();
+    if (prepared.tooLong) {
+      hideToolbar();
+      return notify(t('highlightTooLong'));
+    }
+    if (prepared.existing) {
+      getSelection()?.removeAllRanges();
+      hideToolbar();
+      return openEditor(prepared.existing);
+    }
+    const rect = firstRect(prepared.range);
+    if (!inUi()) returnFocus = document.activeElement;
+    closeEditor(true);
+    hidePopover();
+    hideToolbar();
+    pendingComment = prepared;
+    noteEditor.open({ note: '', text: prepared.text, creating: true });
+    place(noteEditor.element, rect);
+    noteEditor.focus();
   }
   function findRecord(start, end) {
     for (const record of records.values())

@@ -153,7 +153,7 @@ connector process cannot interleave. Error codes are `invalid_params`, `not_foun
 Top-level HTTP(S) pages, and text files opened from the computer (see
 [Files from the computer](#files-from-the-computer)), load `web-anchor.js` and
 `highlight-content.js`. A non-empty
-selection shows a small toolbar with **Highlight** and **Ask AI**. The toolbar and the
+selection shows a small toolbar with **Highlight**, **Comment** and **Ask AI**, in that order. The toolbar and the
 highlight popover live in one closed shadow root on a top-layer `popover` host. Inline
 `!important` host styles and constructed stylesheets keep page CSS out and do not
 need the page's `style-src`. Pressing Tab while the toolbar is visible moves focus
@@ -163,8 +163,8 @@ resizing, collapsing the selection, or pressing Escape dismisses it.
 Highlights are painted with the CSS Custom Highlight API (`highlight.css`), so page
 markup is never wrapped or rewritten. Custom highlights receive no events. A click
 is hit-tested with `caretPositionFromPoint` and confirmed against the range's line
-boxes, then opens **Ask AI** (or **Open discussion** when turns exist), **Add note**
-(or **Edit note**) and **Delete**, with the user's note shown above them.
+boxes, then opens **Ask AI** (or **Open discussion** when turns exist), **Comment**
+(or **Edit comment**) and **Delete**, with the comment shown above them when there is one.
 Clicks on links and controls are left to the page. Pages can read the highlight
 registry, so a site can observe which of its passages are highlighted.
 
@@ -200,14 +200,19 @@ listener's first await: a microtask, an extension API await, or a timer loses th
 gesture. When the panel cannot open, the page asks the user to click the toolbar
 button; the quote is already waiting in the conversation.
 
-**Add note** opens a small editor from `highlight-note.js` in the same shadow root,
-at the highlight. Focus moves to its text field and stays inside the editor (Tab
-cycles through the field, Cancel and Save); Cmd/Ctrl+Enter saves, Escape cancels, and
-neither acts during an input method's composition. Keys typed there stop at the
+**Comment** on a new selection opens the editor from `highlight-note.js` beside the
+selection and does not paint a highlight until save. Save sends `highlightCreate`
+with the comment as `note`; the vault stores the highlight and its `### 笔记` part in
+one locked write. Cancel, Escape and an empty comment save nothing. On a passage that
+is already highlighted, **Comment** opens that highlight's editor. Focus moves to the
+text field and stays inside the editor (Tab cycles through the field, Cancel and
+Save); Cmd/Ctrl+Enter saves, Escape cancels, and neither acts during an input
+method's composition or while a save is in progress. Keys typed there stop at the
 editor, so page shortcuts never see them. A click elsewhere closes an unchanged editor
-and keeps one with unsaved text. Saving sends `highlightNote`; the service worker
-checks the highlight against the vault record for the sender's URL, calls
-`vault/highlight/update`, and tells the tab's side panels to refresh their list.
+and keeps one with unsaved text. Editing a saved comment sends `highlightNote`; an
+empty comment then removes it. The service worker checks the highlight against the
+vault record for the sender's URL, calls `vault/highlight/update`, and tells the tab's
+side panels to refresh their list. The Markdown heading stays `### 笔记`.
 
 Highlights cover the top frame's light DOM. Iframes and shadow DOM are not drawn; PDFs
 and EPUB books have their own reading layers, described next. Tabs opened before the extension was installed or reloaded
@@ -217,8 +222,8 @@ need a reload to show highlights.
 
 The bundled PDF.js viewer has the same reading layer as webpages. `pdf-highlights.js`
 runs in the viewer page and works inside the PDF.js frame. A text selection shows
-**Highlight** and **Ask AI**; a click on a saved highlight shows the user's note,
-**Ask AI** (or **Open discussion**), **Add note** (or **Edit note**) and **Delete**.
+**Highlight**, **Comment** and **Ask AI**; a click on a saved highlight shows the comment,
+**Ask AI** (or **Open discussion**), **Comment** (or **Edit comment**) and **Delete**.
 The note editor is the webpage one; it stops the keys typed into it, so PDF.js
 shortcuts (such as `n` for the next page) do not fire. Strings, colors, keyboard behavior, and vault
 messages are the webpage ones. `highlight.css` is linked, because the PDF.js page CSP
@@ -321,11 +326,14 @@ chapter title. A CFI is accepted only when it resolves to the quote with the sam
 context. Otherwise the quote is searched within that chapter with the webpage matcher.
 Uncertain records are listed as not found in the reader's Highlights tab, never painted,
 and reported as `codex-highlight-status`. Highlights are drawn by foliate's overlayer;
-clicking one shows the user's note and offers **Ask AI** (or **Open discussion**),
-**Add note** (or **Edit note**) and **Delete**. The note editor is part of the reader
-page, with the same keys as on webpages, and saves through `epubHighlightNote`. The
-Highlights tab shows each note under its quote. A `refresh` command on the reader port
-reloads the highlight records (notes and turn counts) after a note is saved from the
+clicking one shows the comment and offers **Ask AI** (or **Open discussion**),
+**Comment** (or **Edit comment**) and **Delete**. Left and Right move between the
+toolbar's actions. **Comment** on a new selection saves the highlight and the comment
+together through `epubHighlightCreate`; cancel and an empty comment save nothing. The
+comment editor is part of the reader page, with the same keys as on webpages. Editing
+a saved comment saves through `epubHighlightNote`. The Highlights tab shows each
+comment under its quote. The Markdown heading stays `### 笔记`. A `refresh` command on the reader port
+reloads the highlight records (comments and turn counts) after a comment is saved from the
 side panel or a turn is saved.
 
 The reader calls `chrome.sidePanel.open()` synchronously in the click, then asks the
@@ -770,7 +778,7 @@ selection script, the reading layer and its stylesheet, so open files work witho
 **Markdown, text and HTML files.** The manifest declares the selection script (top frame
 only) and the reading layer for `file:///*`, excluding URLs that end in `/`. The reading
 layer runs only when Chrome shows a text document (`text/*`, XHTML, XML or JSON), so a PDF,
-image or media file gets none. Highlights, Ask AI, notes and page conversations work as on
+image or media file gets none. Highlights, comments, Ask AI and page conversations work as on
 webpages: the worker accepts `file://` senders from the top frame of the current document,
 checked against Chrome's frame record like HTTP(S) senders, and accepts no `file://`
 subframe, because a local page can load other local files into frames. The vault document

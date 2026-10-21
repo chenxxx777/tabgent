@@ -188,6 +188,17 @@ assert.equal(createParams.kind, 'pdf');
 assert.equal(createParams.url, 'https://papers.example.test/paper.pdf?v=2');
 assert.equal(createParams.location, 'p. 3');
 assert.deepEqual(createParams.anchor, anchor, 'Only contract fields of the PDF anchor are sent');
+assert.equal(createParams.note, undefined);
+await call(
+  { type: 'highlightCreate', text: 'quoted words', anchor, title: 'A study', note: '  Mine\r\n' },
+  viewer,
+);
+assert.equal(vaultCalls().at(-1).params.note, '  Mine\r\n');
+await call(
+  { type: 'highlightCreate', text: 'quoted words', anchor, title: 'A study', note: '   ' },
+  viewer,
+);
+assert.equal(vaultCalls().at(-1).params.note, undefined);
 console.log('PASS create sends kind pdf, a cleaned pdf anchor and the page label');
 
 const asked = new Promise((resolve) =>
