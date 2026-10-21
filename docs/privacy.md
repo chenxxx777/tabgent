@@ -154,11 +154,11 @@ writes in the configured vault folder.
 PDF.js renders documents locally in an extension page. PDF scripts and automatic
 alt-text model downloads are disabled. Opening a PDF alone does not send it to
 Codex; submitting a quote or asking Agent to read it supplies that context.
-Highlights made with Tabgent's selection toolbar (**Highlight** or **Ask AI**) are
+Passages marked with Tabgent's selection toolbar (**Highlight**, **Comment**, or **Ask AI**) are
 saved to the local vault like webpage highlights, in `PDFs/` (the note and its
 discussions, and `anchors.json`): the PDF URL, its title and author from the PDF
-metadata, the host name, each highlighted passage with its page, and the saved
-discussion. A PDF opened from the web is not copied into the vault. Highlights, comments and
+metadata, the host name, each highlighted passage with its page, a comment when one was
+written, and the saved discussion. A PDF opened from the web is not copied into the vault. Highlights, comments and
 edits made with the PDF.js annotation tools are not saved to the vault; they are saved
 only when you download the edited PDF.
 

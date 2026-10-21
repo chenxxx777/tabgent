@@ -304,6 +304,57 @@ const article = () => `<!doctype html><title>Highlight fixture</title>
     assert.equal(article().anchors.highlights[1].note, undefined);
     console.log('PASS a note from the highlight popover is saved to anchors.json and the note');
 
+    // Comment on a selection saves the highlight and the comment together. Cancel stores nothing.
+    const beforeComment = article().anchors.highlights.length;
+    await drag(page, '#a', "one's own");
+    assert.match(
+      await layerHtml(page),
+      /data-action="highlight"[\s\S]*data-action="comment"[\s\S]*data-action="ask"/,
+    );
+    await press(page, 'comment');
+    await page.keyboard.press('Escape');
+    await wait(300);
+    assert.equal(article().anchors.highlights.length, beforeComment, 'Escape stores nothing');
+    await drag(page, '#a', "one's own");
+    await press(page, 'comment');
+    await page.keyboard.press('Control+Enter');
+    await wait(400);
+    assert.equal(
+      article().anchors.highlights.length,
+      beforeComment,
+      'An empty comment stores nothing',
+    );
+    const emptyHtml = await layerHtml(page);
+    assert(
+      ['The comment is empty, so nothing was saved.', '评论是空的，未保存。'].some((text) =>
+        emptyHtml.includes(text),
+      ),
+    );
+    // The empty-comment toast sits in the top layer; dismiss it before the next selection.
+    await page.keyboard.press('Escape');
+    await page.evaluate(() => getSelection()?.removeAllRanges());
+    await wait(400);
+    const comment = 'Deep reading.';
+    // The phrase sits on one line; a wrapped range's union box misses the glyphs.
+    await drag(page, '#b', 'deeply');
+    await press(page, 'comment');
+    await page.keyboard.type(comment);
+    await page.keyboard.press('Control+Enter');
+    assert(await until(() => article().anchors.highlights.length === beforeComment + 1));
+    const savedComment = article().anchors.highlights.at(-1);
+    assert.equal(savedComment.text, 'deeply');
+    assert.equal(savedComment.note, comment);
+    assert.match(article().markdown, /    - 评论：Deep reading\.\n/);
+    await page.reload();
+    assert.equal(await until(async () => (await painted(page)) === beforeComment + 1), true);
+    await clickText(page, '#b', 'deeply');
+    assert(
+      (await layerHtml(page)).includes(`<span>${comment}</span>`),
+      'Comment shown after reload',
+    );
+    await page.keyboard.press('Escape');
+    console.log('PASS comment saves the highlight and comment; cancel stores nothing');
+
     await page.evaluate(() => history.pushState({}, '', '/next?y=2'));
     await wait(1000);
     assert.equal(await painted(page), 0, 'SPA navigation clears the old page highlights');
@@ -316,10 +367,10 @@ const article = () => `<!doctype html><title>Highlight fixture</title>
     worker = await launch();
     const restored = await context.newPage();
     await restored.goto(base + '/article?x=1');
-    assert.equal(await until(async () => (await painted(restored)) === 2), true);
+    assert.equal(await until(async () => (await painted(restored)) === 3), true);
     prefix = '<p>A banner inserted above the article.</p>';
     await restored.reload();
-    assert.equal(await until(async () => (await painted(restored)) === 2), true);
+    assert.equal(await until(async () => (await painted(restored)) === 3), true);
     await restored.evaluate(() => {
       document.querySelector('#b').textContent = 'People are tenacious when they endorse it.';
     });

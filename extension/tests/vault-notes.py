@@ -206,6 +206,99 @@ with tempfile.TemporaryDirectory(prefix="tabgent-notes-") as directory:
             "PASS deleting a highlight removes its note; deleted or unknown IDs are not_found"
         )
 
+        # A comment is stored with the new highlight, in the same locked write.
+        noted = call(
+            settings,
+            "vault/highlight/create",
+            {
+                **page,
+                "text": "Created with a comment.",
+                "anchor": anchor("Created with a comment.", 80),
+                "note": "  Together.\r\n",
+            },
+        )
+        noted_id = noted["highlight"]["id"]
+        assert noted["highlight"]["note"] == "Together."
+        assert "- 评论：Together." in block(path.read_text(), noted_id)
+        assert "Together." in block(path.read_text(), noted_id)
+        files = (path.read_bytes(), anchors_path.read_bytes())
+        again = call(
+            settings,
+            "vault/highlight/create",
+            {
+                **page,
+                "text": "Created with a comment.",
+                "anchor": anchor("Created with a comment.", 80),
+                "note": "Together.",
+            },
+        )
+        assert again["highlight"]["id"] == noted_id
+        assert (path.read_bytes(), anchors_path.read_bytes()) == files
+        plain = call(
+            settings,
+            "vault/highlight/create",
+            {
+                **page,
+                "text": "Plain passage.",
+                "anchor": anchor("Plain passage.", 120),
+            },
+        )
+        plain_id = plain["highlight"]["id"]
+        assert plain["highlight"]["note"] == ""
+        assert "评论" not in block(path.read_text(), plain_id)
+        added = call(
+            settings,
+            "vault/highlight/create",
+            {
+                **page,
+                "text": "Plain passage.",
+                "anchor": anchor("Plain passage.", 120),
+                "note": "Added later.",
+            },
+        )
+        assert added["highlight"]["id"] == plain_id
+        assert added["highlight"]["note"] == "Added later."
+        assert "Added later." in block(path.read_text(), plain_id)
+        kept = call(
+            settings,
+            "vault/highlight/create",
+            {
+                **page,
+                "text": "Plain passage.",
+                "anchor": anchor("Plain passage.", 120),
+                "note": "  \n",
+            },
+        )
+        assert kept["highlight"]["note"] == "Added later."
+        omitted = call(
+            settings,
+            "vault/highlight/create",
+            {
+                **page,
+                "text": "Plain passage.",
+                "anchor": anchor("Plain passage.", 120),
+            },
+        )
+        assert omitted["highlight"]["note"] == "Added later."
+        files = (path.read_bytes(), anchors_path.read_bytes())
+        assert (
+            code(
+                settings,
+                "vault/highlight/create",
+                {
+                    **page,
+                    "text": "Plain passage.",
+                    "anchor": anchor("Plain passage.", 120),
+                    "note": 5,
+                },
+            )
+            == "invalid_params"
+        )
+        assert (path.read_bytes(), anchors_path.read_bytes()) == files
+        print(
+            "PASS create stores a note with the highlight; a blank note does not clear it"
+        )
+
         for params in [
             target,
             {**target, "note": None},

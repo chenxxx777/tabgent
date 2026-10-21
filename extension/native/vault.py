@@ -413,11 +413,26 @@ def resolve(settings, params):
     }
 
 
+def _optional_note(params):
+    """The note to store when creating a highlight, or None when the request omits it.
+
+    Blank text is None, so a create never clears a note. Trimming matches
+    update_highlight. The note shows it as the highlight's ``- 评论：`` part.
+    """
+    if "note" not in params:
+        return None
+    note = _string(params, "note", NOTE_LIMIT)
+    note = note.replace("\r\n", "\n").replace("\r", "\n").strip()
+    return note or None
+
+
 def create_highlight(settings, params):
     url, title, kind, meta = _source(params)
     text = _string(params, "text", TEXT_LIMIT, required=True)
     anchor = _anchor(params.get("anchor"))
     location = _label(params.get("location"), "location")
+    # A bad note fails before the lock, and only after the anchor is valid.
+    note = _optional_note(params)
     root = _root(settings)
     with _locked(root):
         _scaffold(root)
@@ -448,8 +463,17 @@ def create_highlight(settings, params):
                 "createdAt": now,
                 "updatedAt": now,
             }
+            # The comment is part of the same record, so one write shows it.
+            if note:
+                item["note"] = note
             data["highlights"].append(item)
             data["nextHighlight"] = number + 1
+            data["document"]["updatedAt"] = now
+        elif note and item.get("note", "") != note:
+            # A retried create with a comment sets it on the saved highlight.
+            now = _now()
+            item["note"] = note
+            item["updatedAt"] = now
             data["document"]["updatedAt"] = now
         _commit(root, data, context)
     return {

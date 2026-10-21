@@ -1426,7 +1426,7 @@ export function saveScopePreference(){}
 
         // The user's own note: add it inline, keep it across refreshes, edit and remove it.
         const noteButton = entries.nth(0).locator('.highlight-note-button');
-        assert.equal(await noteButton.textContent(), 'Add note');
+        assert.equal(await noteButton.textContent(), 'Comment');
         await noteButton.click();
         const noteInput = entries.nth(0).locator('.highlight-note-form textarea');
         assert.equal(await noteInput.evaluate((e) => e === document.activeElement), true);
@@ -1453,7 +1453,7 @@ export function saveScopePreference(){}
         await entries.nth(0).locator('.highlight-note-error').waitFor();
         assert.equal(
           await entries.nth(0).locator('.highlight-note-error').textContent(),
-          'The note could not be saved: The reading folder could not be read or written',
+          'The comment could not be saved: The reading folder could not be read or written',
         );
         await noteInput.fill('  My view: endorsement.\nSecond line.  ');
         await entries.nth(0).locator('.highlight-note-form button[type="submit"]').click();
@@ -1471,7 +1471,7 @@ export function saveScopePreference(){}
           await entries.nth(0).locator('.highlight-note').textContent(),
           'My view: endorsement.\nSecond line.',
         );
-        assert.equal(await noteButton.textContent(), 'Edit note');
+        assert.equal(await noteButton.textContent(), 'Edit comment');
         await noteButton.click();
         assert.equal(await noteInput.inputValue(), 'My view: endorsement.\nSecond line.');
         await noteInput.fill('');
@@ -1480,7 +1480,7 @@ export function saveScopePreference(){}
           () => !document.querySelector('.highlight-entry .highlight-note-form'),
         );
         assert.equal(await entries.nth(0).locator('.highlight-note').count(), 0);
-        assert.equal(await noteButton.textContent(), 'Add note');
+        assert.equal(await noteButton.textContent(), 'Comment');
         console.log('PASS highlight list notes: add, keep draft on refresh, Escape, error, remove');
 
         // Highlight IDs restart in every document: a draft on article-x h001 must not reopen

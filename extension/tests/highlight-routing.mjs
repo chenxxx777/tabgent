@@ -154,6 +154,11 @@ const createParams = vaultCalls().at(-1).params;
 assert.equal(createParams.anchor.extra, undefined);
 assert.equal(createParams.location, 'Intro');
 assert.equal(createParams.kind, 'web');
+assert.equal(createParams.note, undefined);
+await call({ type: 'highlightCreate', text: 'quoted words', anchor, note: '  Mine\r\n' }, page);
+assert.equal(vaultCalls().at(-1).params.note, '  Mine\r\n');
+await call({ type: 'highlightCreate', text: 'quoted words', anchor, note: '   ' }, page);
+assert.equal(vaultCalls().at(-1).params.note, undefined);
 assert((await call({ type: 'highlightCreate', text: 'x', anchor: { kind: 'pdf' } }, page)).error);
 console.log('PASS create sends a cleaned web anchor and does not open the side panel');
 

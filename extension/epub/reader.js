@@ -591,7 +591,17 @@ function onKey(event) {
 addEventListener('keydown', onKey);
 for (const menu of document.querySelectorAll('.floating'))
   menu.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' && !event.isComposing) hideFloating();
+    if (event.isComposing || event.keyCode === 229) return;
+    if (event.key === 'Escape') return void hideFloating();
+    if (menu.id !== 'toolbar' && menu.id !== 'highlightMenu') return;
+    const move = { ArrowRight: 1, ArrowLeft: -1 }[event.key];
+    if (!move || event.target.closest('textarea, input')) return;
+    const buttons = [...menu.querySelectorAll('button')];
+    const at = buttons.indexOf(document.activeElement);
+    if (at < 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    buttons[(at + move + buttons.length) % buttons.length].focus();
   });
 
 // Table of contents and highlight list.
@@ -822,12 +832,14 @@ function onSectionLoad({ detail: { doc, index } }) {
   doc.addEventListener('keydown', onKey);
   doc.addEventListener('pointerdown', () => {
     $('#highlightMenu').hidePopover();
-    if (!noteChanged()) closeNote();
+    if (!$('#noteSave').disabled && !noteChanged()) closeNote();
   });
 }
 
 let selectionId = null;
 function captureSelection(doc, index) {
+  // The comment editor owns the screen; a leftover selection must not reopen the toolbar.
+  if ($('#noteEditor').matches(':popover-open')) return hideToolbar();
   const selection = doc.getSelection();
   if (!selection?.rangeCount || selection.isCollapsed || !selection.toString().trim()) {
     hideToolbar();
@@ -846,7 +858,7 @@ function captureSelection(doc, index) {
     $('#toolbar').matches(':popover-open')
   )
     return;
-  state.selection = { ...described, index, text: described.anchor.quote.exact };
+  state.selection = { ...described, index, doc, text: described.anchor.quote.exact };
   place($('#toolbar'), doc, described.range);
   // Like PDF.js selections, the quote is offered to the tab's conversation.
   selectionId = crypto.randomUUID();
@@ -893,7 +905,9 @@ function hideToolbar() {
 function hideFloating() {
   hideToolbar();
   if ($('#highlightMenu').matches(':popover-open')) $('#highlightMenu').hidePopover();
-  // A note with unsaved text stays open; Cancel or Escape discards it.
+  // A comment with unsaved text stays open; Cancel or Escape discards it.
+  // An in-flight save is not discarded.
+  if ($('#noteSave').disabled) return;
   if (!noteChanged()) closeNote();
 }
 
@@ -943,7 +957,39 @@ async function createHighlight(ask) {
   }
 }
 $('#highlightAdd').onclick = () => void createHighlight(false);
+$('#highlightComment').onclick = () => openSelectionComment();
 $('#highlightAsk').onclick = () => void createHighlight(true);
+
+// Comment does not paint a highlight until save. A passage already highlighted opens its editor.
+function openSelectionComment() {
+  const selected = state.selection;
+  if (!selected?.doc || $('#noteSave').disabled) return;
+  if (selected.text.length > 20000) {
+    hideToolbar();
+    return toast(t('highlightTooLong'));
+  }
+  const existing = [...state.highlights.values()].find(
+    (entry) => entry.record && entry.cfi === selected.anchor.cfi,
+  );
+  hideToolbar();
+  closeNote();
+  if (existing)
+    return openNote({ id: existing.record.id, doc: selected.doc, range: selected.range });
+  noteFor = {
+    creating: true,
+    selection: selected,
+    initial: '',
+    returnFocus: document.activeElement,
+  };
+  $('#noteText').placeholder = t('highlightCommentPlaceholder');
+  $('#noteText').value = '';
+  $('#noteQuote').textContent = `“${selected.text.replace(/\s+/g, ' ').trim()}”`;
+  $('#noteError').hidden = true;
+  place($('#noteEditor'), selected.doc, selected.range);
+  $('#noteText').focus();
+  // A still-selected passage turns the next drag into a no-op. The editor already has the quote.
+  state.view?.deselect();
+}
 
 function showHighlightMenu({ value, index, range }) {
   const id = state.painted.get(value);
@@ -963,14 +1009,14 @@ function showHighlightMenu({ value, index, range }) {
       : { before: '', after: '' },
   };
   $('#menuAsk').textContent = t(entry.record.turnCount ? 'highlightOpen' : 'highlightAsk');
-  // The user's own note shows above the actions.
+  // The comment shows above the actions.
   $('#menuNote').hidden = !entry.record.note;
   $('#menuNoteText').textContent = entry.record.note || '';
   $('#menuNoteEdit').textContent = t(entry.record.note ? 'highlightNoteEdit' : 'highlightNoteAdd');
   place($('#highlightMenu'), doc, range);
 }
 
-// The note editor: opens at the highlight and keeps focus until saved or closed.
+// The comment editor: opens at the highlight and keeps focus until saved or closed.
 let noteFor = null;
 const noteChanged = () =>
   !!noteFor && $('#noteText').value.trim() !== (noteFor.initial || '').trim();
@@ -983,12 +1029,14 @@ function openNote(target) {
     initial: entry.record.note || '',
     returnFocus: document.activeElement,
   };
+  $('#noteText').placeholder = t('highlightNotePlaceholder');
   $('#noteText').value = entry.record.note || '';
   $('#noteQuote').textContent = `“${entry.record.text.replace(/\s+/g, ' ').trim()}”`;
   $('#noteError').hidden = true;
   place($('#noteEditor'), target.doc, target.range);
   $('#noteText').focus();
   $('#noteText').setSelectionRange($('#noteText').value.length, $('#noteText').value.length);
+  state.view?.deselect();
 }
 function closeNote() {
   if (!noteFor) return;
@@ -1008,9 +1056,50 @@ async function saveNote() {
   const target = noteFor;
   if (!target || $('#noteSave').disabled) return;
   const note = $('#noteText').value.trim();
+  const existingNote = target.id ? state.highlights.get(target.id)?.record.note : '';
+  // A new comment, or an empty save when there is no comment, stores nothing.
+  if (!note && !existingNote) {
+    closeNote();
+    toast(t('highlightCommentEmpty'));
+    return;
+  }
   $('#noteSave').disabled = $('#noteCancel').disabled = true;
   $('#noteError').hidden = true;
   try {
+    if (target.creating) {
+      const selected = target.selection;
+      const view = state.view;
+      const reply = await library.send({
+        type: 'epubHighlightCreate',
+        sha256: state.sha256,
+        title: state.title,
+        meta: state.meta,
+        text: selected.text,
+        anchor: selected.anchor,
+        context: selected.context,
+        section: chapterSection(selected.anchor.chapter.href),
+        note,
+      });
+      if (!reply.highlight)
+        throw {
+          message: reply.vaultError || 'The highlight could not be saved',
+          code: reply.code,
+          folder: reply.folder,
+        };
+      if (view === state.view) {
+        state.documentId = reply.document.id;
+        const record = reply.highlight;
+        state.highlights.set(record.id, { record, status: 'anchored', cfi: record.anchor.cfi });
+        state.painted.set(record.anchor.cfi, record.id);
+        void state.view.addAnnotation({ value: record.anchor.cfi });
+        state.view.deselect();
+        renderHighlightList();
+        reportStatus();
+      }
+      if (noteFor === target) closeNote();
+      toast(t('highlightNoteSaved'));
+      return;
+    }
     const reply = await library.send({
       type: 'epubHighlightNote',
       sha256: state.sha256,
@@ -1041,6 +1130,8 @@ $('#noteEditor').addEventListener('keydown', (event) => {
   if (event.isComposing || event.keyCode === 229) return;
   if (event.key === 'Escape') {
     event.preventDefault();
+    // An in-flight save is not discarded.
+    if ($('#noteSave').disabled) return;
     closeNote();
   } else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
     event.preventDefault();

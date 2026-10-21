@@ -253,6 +253,29 @@ assert.deepEqual(vaultCalls().findLast((m) => m.method === 'vault/highlight/crea
   anchor: cleanEpubAnchor(anchor),
   location: 'Chapter One',
 });
+await call({
+  type: 'epubHighlightCreate',
+  sha256,
+  title: 'A Small Book',
+  text: 'more persistent',
+  anchor,
+  note: '  Mine\r\n',
+});
+assert.equal(
+  vaultCalls().findLast((m) => m.method === 'vault/highlight/create').params.note,
+  '  Mine\r\n',
+);
+await call({
+  type: 'epubHighlightCreate',
+  sha256,
+  text: 'more persistent',
+  anchor,
+  note: '   ',
+});
+assert.equal(
+  vaultCalls().findLast((m) => m.method === 'vault/highlight/create').params.note,
+  undefined,
+);
 const asked = selections().at(-1);
 assert.equal(asked.text, 'more persistent');
 // The quote names the book by its vault identity, so the conversation binds to it.
