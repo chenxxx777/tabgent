@@ -1048,6 +1048,7 @@ async function handOffSelection(
 const epubMessages = new Set([
   'epubBooks',
   'libraryDocuments',
+  'librarySearch',
   'libraryCover',
   'epubSourceSave',
   'epubSourceRead',
@@ -1066,6 +1067,21 @@ async function epubMessage(msg, sender) {
   // The library lists every vault document: webpages, PDFs and books.
   if (msg.type === 'libraryDocuments')
     return vault.request('vault/documents/list', {}, { timeout: 60000 });
+  if (msg.type === 'librarySearch')
+    return vault.request(
+      'vault/library/search',
+      {
+        query: msg.query ?? '',
+        category: msg.category,
+        state: msg.state,
+        tags: msg.tags ?? [],
+        hasComments: msg.hasComments ?? false,
+        hasHighlights: msg.hasHighlights ?? false,
+        includeDiscussions: msg.includeDiscussions ?? false,
+        offset: msg.offset ?? 0,
+      },
+      { timeout: 60000 },
+    );
   // A clipped page's cover image, one of the images saved with its clip.
   if (msg.type === 'libraryCover')
     return vault.request(

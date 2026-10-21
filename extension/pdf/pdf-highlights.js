@@ -754,7 +754,8 @@ export async function startHighlights({ app, frame, source, name, onDocument }) 
     repaint();
     report();
   }
-  let attempts = 0;
+  let attempts = 0,
+    searchTarget = /^#tabgent-highlight=(h\d{3,9})$/.exec(location.hash)?.[1];
   async function load() {
     let response;
     try {
@@ -783,6 +784,11 @@ export async function startHighlights({ app, frame, source, name, onDocument }) 
     }
     for (const [id, record] of previous) if (!record.highlight) records.set(id, record);
     await anchorAll();
+    const record = searchTarget && records.get(searchTarget);
+    if (record?.segments?.length) {
+      searchTarget = null;
+      void reveal(record);
+    }
   }
 
   // The service worker asks about this viewer's highlights (reading-companion.js): reload

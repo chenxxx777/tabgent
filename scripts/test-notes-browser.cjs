@@ -196,9 +196,9 @@ for method, params in json.loads(sys.argv[3]):
     page.on('dialog', onDialog);
     await page.goto(libraryUrl);
     await page.waitForSelector('#start:not([hidden])');
-    assert(await until(async () => (await page.$$('#books li')).length === 3));
+    assert(await until(async () => (await page.$$('#books > li')).length === 3));
     const row = (title) =>
-      page.locator('#books li', { has: page.locator('.title', { hasText: title }) });
+      page.locator('#books > li', { has: page.locator('.title', { hasText: title }) });
     const chips = (title) => row(title).locator('.dn-tag-name').allTextContents();
     assert.deepEqual(await chips('On Autonomy'), ['AI学习']);
     assert.deepEqual(await chips('Other Notes'), ['其他']);
@@ -224,7 +224,7 @@ for method, params in json.loads(sys.argv[3]):
     );
     assert(!markdown.includes('tabgent:highlight '), 'Still no highlights');
     await page.reload();
-    await page.waitForSelector('#books li .dn-comment-text');
+    await page.waitForSelector('#books > li .dn-comment-text');
     assert.equal(await row('Clipped Essay').locator('.dn-comment-text').textContent(), comment);
     console.log('PASS a comment on a document without highlights is in its note after a reload');
 
@@ -251,22 +251,20 @@ for method, params in json.loads(sys.argv[3]):
     await input.press('Escape');
     console.log('PASS tags are added with suggestions, created and removed');
 
-    // A tag chip filters the library.
+    // A tag chip filters the library through the search's filter bar.
     await row('On Autonomy').locator('.dn-tag-name').click();
     const visible = () =>
-      page.$$eval('#books li:not([hidden]) .title', (titles) => titles.map((t) => t.textContent));
+      page.$$eval('#books > li .title', (titles) => titles.map((t) => t.textContent));
     assert(await until(async () => (await visible()).length === 2));
     assert.deepEqual((await visible()).sort(), ['Clipped Essay', 'On Autonomy']);
-    assert.equal(
-      await page.textContent('#tagFilterLabel'),
-      await message('libraryTagFilter', 'AI学习'),
-    );
-    await page.click('#tagFilterClear');
-    assert.equal((await visible()).length, 3);
+    assert((await page.textContent('#libraryActiveFilters')).includes('#AI学习'));
+    await page.click('#libraryClear');
+    assert(await until(async () => (await visible()).length === 3));
     if (shots) await page.screenshot({ path: path.join(shots, 'library.png') });
     console.log('PASS clicking a tag shows only the documents with it');
 
-    // A draft is not dropped silently when another document's comment opens.
+    // A draft is not dropped silently: another document's comment asks first, and a search
+    // that shows the document again keeps it.
     await row('On Autonomy').locator('.dn-comment-open').click();
     await row('On Autonomy').locator('textarea').fill('未保存的草稿');
     const discard = await message('docNotesDiscardConfirm', 'On Autonomy');
@@ -274,10 +272,20 @@ for method, params in json.loads(sys.argv[3]):
     await row('Other Notes').locator('.dn-comment-open').click();
     assert.equal(await row('On Autonomy').locator('textarea').inputValue(), '未保存的草稿');
     assert.equal(await row('Other Notes').locator('textarea').count(), 0);
+    await page.fill('#libraryQuery', 'Autonomy');
+    assert(await until(async () => (await visible()).join() === 'On Autonomy'));
+    assert.equal(await row('On Autonomy').locator('textarea').inputValue(), '未保存的草稿');
+    await page.click('#libraryClear');
+    assert(await until(async () => (await visible()).length === 3));
+    assert.equal(await row('On Autonomy').locator('textarea').inputValue(), '未保存的草稿');
+    // Returning to the window does not search again while a comment is open.
+    await page.evaluate(() => dispatchEvent(new Event('focus')));
+    await wait(500);
+    assert.equal(await row('On Autonomy').locator('textarea').inputValue(), '未保存的草稿');
     await row('On Autonomy').locator('textarea').press('Escape');
     assert.equal(await row('On Autonomy').locator('textarea').count(), 0);
     assert.equal(commentOf('tagged'), null, 'Escape saves nothing');
-    console.log('PASS switching documents asks before a draft is dropped; Escape cancels');
+    console.log('PASS drafts survive searches and ask before another opens; Escape cancels');
 
     // Tag management: rename, merge into an existing tag (its spelling), delete.
     await page.click('#tagsManage');
@@ -325,7 +333,10 @@ for method, params in json.loads(sys.argv[3]):
     );
     await page.click('#tagManagerClose');
     assert(await until(async () => (await page.$$('#books .dn-tag')).length === 0));
-    assert.equal((await visible()).length, 3, 'Deleting a tag keeps the documents');
+    assert(
+      await until(async () => (await visible()).length === 3),
+      'Deleting a tag keeps the documents',
+    );
     assert.equal(commentOf('clipped'), comment);
     console.log('PASS tags are renamed, merged and deleted in every note');
 

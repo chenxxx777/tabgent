@@ -680,6 +680,7 @@
     retries = 0,
     passTimer = null,
     observer = null;
+  let searchTarget;
   function anchorAll() {
     const started = performance.now();
     const textIndex = index();
@@ -707,6 +708,13 @@
     if (active && !active.range) hidePopover();
     repaint();
     report();
+    const target = /^#tabgent-highlight=(h\d{3,9})$/.exec(location.hash)?.[1];
+    const range = target && records.get(target)?.range;
+    if (range && searchTarget !== target) {
+      searchTarget = target;
+      const node = range.startContainer;
+      (node.nodeType === 1 ? node : node.parentElement)?.scrollIntoView({ block: 'center' });
+    }
   }
   // Late or replaced content triggers bounded re-anchoring, throttled by the last pass cost.
   function schedulePass() {
@@ -754,6 +762,7 @@
     passTimer = null;
     retries = 0;
     page = { url, documentId: null };
+    searchTarget = undefined;
     records = new Map();
     closeEditor();
     hideToolbar();

@@ -1663,15 +1663,6 @@
   "docNotesDiscardConfirm": {
     "message": "Discard your unsaved comment on “$1”?"
   },
-  "libraryTagFilter": {
-    "message": "Tag: $1"
-  },
-  "libraryTagFilterClear": {
-    "message": "Show all"
-  },
-  "libraryTagFilterEmpty": {
-    "message": "No documents have this tag."
-  },
   "tagsManage": {
     "message": "Manage tags"
   },
@@ -1716,5 +1707,86 @@
   },
   "tagsClose": {
     "message": "Close"
+  },
+  "librarySearchPlaceholder": {
+    "message": "Search titles, authors, URLs, comments, highlights and text…"
+  },
+  "libraryFilterCategory": {
+    "message": "Category"
+  },
+  "libraryAllCategories": {
+    "message": "All categories"
+  },
+  "libraryFilterState": {
+    "message": "Reading state"
+  },
+  "libraryAllStates": {
+    "message": "All reading states"
+  },
+  "libraryStateInbox": {
+    "message": "Inbox"
+  },
+  "libraryHasComments": {
+    "message": "Has comments"
+  },
+  "libraryHasHighlights": {
+    "message": "Has highlights"
+  },
+  "libraryFilterTags": {
+    "message": "Tags (match all)"
+  },
+  "libraryNoTags": {
+    "message": "No document tags yet"
+  },
+  "libraryIncludeDiscussions": {
+    "message": "Include discussions"
+  },
+  "libraryCurrentFilters": {
+    "message": "Current search and filters"
+  },
+  "libraryClearFilters": {
+    "message": "Clear all"
+  },
+  "libraryRemoveFilter": {
+    "message": "Remove filter: $1"
+  },
+  "libraryResultCount": {
+    "message": "$1 of $2 documents"
+  },
+  "libraryNoResults": {
+    "message": "No documents match. Try another search or clear the filters."
+  },
+  "librarySearchScope": {
+    "message": "Searches saved documents and available full text, including PDF pages and book chapters. Unsaved subscription items stay in Subscriptions. Discussions are excluded unless selected."
+  },
+  "libraryMatchTitle": {
+    "message": "Title"
+  },
+  "libraryMatchAuthor": {
+    "message": "Author"
+  },
+  "libraryMatchUrl": {
+    "message": "URL"
+  },
+  "libraryMatchComment": {
+    "message": "Comment"
+  },
+  "libraryMatchHighlight": {
+    "message": "Highlight"
+  },
+  "libraryMatchBody": {
+    "message": "Text"
+  },
+  "libraryMatchDiscussion": {
+    "message": "Discussion"
+  },
+  "libraryNoFullText": {
+    "message": "Full text not saved"
+  },
+  "libraryMarkdownUnavailable": {
+    "message": "Some note files are missing or unreadable"
+  },
+  "docNotesHiddenDraft": {
+    "message": "Your unsaved comment on “$1” is kept, but the current search does not show that document. Clear the search to go on editing it."
   }
 }

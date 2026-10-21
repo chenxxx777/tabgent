@@ -30,6 +30,7 @@ for (const file of [
   'vault-annotations.py',
   'epub-vault.py',
   'library-vault.py',
+  'library-search.py',
   'clip-vault.py',
   'clip-assets.py',
   'feeds-parse.py',

@@ -316,11 +316,14 @@ the title in the clipped-page reader (`clipNotes`, `clipComment`, `clipTags`, fo
 reader's own page; a feed item not saved yet is saved first), in the side panel's page
 drawer (`readingComment`, `readingTags`, `readingTagList`, for the companion tab's
 document) and under each document in the library (`libraryComment`, `libraryTags`,
-`tagsList`, `tagsRename`, `tagsDelete`). After a change the worker sends
+`tagsList`, `tagsRename`, `tagsDelete`); clicking a tag dispatches `library-filter-tag`, which adds it to
+the search filters). After a change the worker sends
 `tabgentNotesChanged` with the document's new comment and tags (`all: true` after a
 rename or delete) to extension pages and refreshes side panels, so every view of the
 document follows. A comment is a draft until saved: the reader and the library ask
-before leaving the page with one, the library before another document's editor opens,
+before leaving the page with one, the library before another document's editor opens
+(a row with an open editor keeps it across searches, and returning to the window does not
+search again while one is open),
 and the side panel keeps a draft for the document it showed when its page changes, with
 **Save it there** and **Discard**.
 
@@ -553,9 +556,44 @@ and EPUB files opened from websites or `file://` URLs are not supported.
 
 The library is the start screen of `epub/reader.html`. It opens from the toolbar
 button's context menu and from **Open library** in the side panel's Reading notes menu,
-which opens it in a tab next to the page. It lists every vault document with
-`vault/documents/list`, most recently updated first: title, kind (webpage, PDF, imported
-PDF or EPUB), author or host, highlight count and the last update. Each entry is a link:
+which opens it in a tab next to the page. It lists every vault document through
+`vault/library/search` (`vault/documents/list` remains available), most recently updated first: title, kind (webpage, PDF, imported
+PDF or EPUB), author or host, highlight count and the last update. Each entry opens the document.
+
+The library UI calls `vault/library/search` through a registered EPUB reader
+port (`librarySearch`). This is separate from `reading_vault`; its behavior and
+limits are unchanged. `native/library_search.py` reads the primary Markdown's
+metadata, `tags` front matter, highlight quotes/comments and the
+`<!-- tabgent:comment document start -->` block. It indexes every available full
+text part (including PDF pages and EPUB chapters) and, separately, discussion
+files. Only saved catalog documents enter the index, never unsaved `feeds.db`
+items. Searches exclude discussions unless explicitly requested.
+
+`.tabgent/library-search.db` is a disposable SQLite cache. Every request checks
+visible Markdown and record file mtimes, ctimes and sizes; only changed documents
+are parsed again. Ownership follows `tabgent_id` / `tabgent_part` after moves,
+without following symlinks or hidden folders. Cache loss or corruption rebuilds
+from Markdown and records. Index requests use a separate cache lock, so scanning
+full text never holds the vault mutation lock or blocks concurrent highlight saves.
+Missing or unreadable Markdown parts are skipped and flagged in the library;
+readable records remain listed and searchable by title, author and URL. Update
+times sort by their epoch instant, as in `vault/documents/list`.
+Changes outside Tabgent appear at the next request;
+the UI searches again on return to the library. SQL predicates intersect category,
+comment/highlight presence, existing reading state and every selected tag (NFC,
+casefold). An unmarked saved document has no reading state; saved feed items can
+have inbox state. Results include typed context snippets and highlight IDs, with
+100 documents per page and a total count. A missing full text is shown in the UI.
+
+System `/usr/bin/python3` 3.9.6 on the development Mac supports FTS5 (SQLite
+3.51.0), but default tokenizers do not meet arbitrary Chinese substring matching.
+The cache uses `instr` over NFKC/casefold text, with 32k-character passages and
+500-character overlap, so query matching has no tokenizer dependency. Warm
+searches scan cached text while statting files; the 502-document fixture checks a
+sub-second response. Highlight passages open with `#tabgent-highlight=hNNN`;
+web/clip, PDF and EPUB readers restore that highlight using their existing anchors.
+
+Documents open as follows:
 
 | Document     | Opens                                                        |
 | ------------ | ------------------------------------------------------------ |

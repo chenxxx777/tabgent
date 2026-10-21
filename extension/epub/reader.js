@@ -6,6 +6,7 @@ import { openBook, label } from './book.js';
 import * as epubAnchor from './anchor.js';
 import * as library from './library.js';
 import { initFeeds } from './feeds-ui.js';
+import { initLibrarySearch } from './library-search.js';
 import { pdfViewerUrl } from '../pdf-routing.js';
 import { isLocalFileUrl } from '../local-files.js';
 import { clipViewerUrl } from '../clip-routing.js';
@@ -96,11 +97,6 @@ $('#libraryTabs').addEventListener('keydown', (event) => {
 });
 function showTab(name) {
   const isFeeds = name === 'feeds';
-  // Leaving or reloading the documents drops their comment drafts: asked first.
-  if (!$('#documentsPanel').hidden && !closeEditors()) {
-    $('#documentsTab').focus();
-    return;
-  }
   $('#documentsTab').setAttribute('aria-selected', String(!isFeeds));
   $('#feedsTab').setAttribute('aria-selected', String(isFeeds));
   $('#documentsTab').tabIndex = isFeeds ? -1 : 0;
@@ -109,8 +105,10 @@ function showTab(name) {
   $('#feedsPanel').hidden = !isFeeds;
   $('#start').classList.toggle('feeds', isFeeds);
   history.replaceState(null, '', isFeeds ? '?view=feeds' : location.pathname);
-  if (isFeeds) void feeds.show();
-  else {
+  if (isFeeds) {
+    librarySearch.hide();
+    void feeds.show();
+  } else {
     feeds.hide();
     void showDocuments();
   }
@@ -124,22 +122,7 @@ async function showLibrary() {
 }
 
 async function showDocuments() {
-  const list = $('#books');
-  list.replaceChildren();
-  rows.clear();
-  for (const url of coverUrls.splice(0)) URL.revokeObjectURL(url);
-  $('#booksStatus').textContent = t('epubLoading');
-  try {
-    const [{ documents }, seen] = await Promise.all([
-      library.send({ type: 'libraryDocuments' }),
-      library.positions(),
-    ]);
-    $('#booksStatus').textContent = documents.length ? '' : t('libraryEmpty');
-    for (const item of documents) list.append(libraryItem(item, seen));
-    applyTagFilter();
-  } catch (error) {
-    $('#booksStatus').textContent = loadTimeData.getStringF('epubBooksUnavailable', shown(error));
-  }
+  return librarySearch.show();
 }
 
 const LOCAL_PDF = /^urn:sha256:[0-9a-f]{64}$/;
@@ -158,8 +141,16 @@ const host = (url) => {
 function destination(item) {
   if (item.kind === 'web' && isLocalFileUrl(item.url))
     return { label: 'libraryKindFile', href: item.url };
-  if (item.kind === 'web' && web(item.url) && item.clip?.complete)
-    return { label: 'libraryKindClipped', href: clipViewerUrl(item.url), original: item.url };
+  if (
+    item.kind === 'web' &&
+    (web(item.url) || /^urn:tabgent:feed:[0-9a-f]{64}$/.test(item.url)) &&
+    item.clip?.complete
+  )
+    return {
+      label: 'libraryKindClipped',
+      href: clipViewerUrl(item.url),
+      original: web(item.url) && item.url,
+    };
   if (item.kind === 'web') return { label: 'libraryKindWeb', href: web(item.url) && item.url };
   if (item.kind === 'pdf' && LOCAL_PDF.test(item.url))
     return { label: 'libraryKindLocalPdf', href: item.source && pdfViewerUrl(item.url) };
@@ -274,6 +265,8 @@ function libraryItem(item, seen) {
     category ? t(category) : '',
     category && PLAIN_KINDS.has(label) ? '' : t(label),
     flag ? t(flag) : '',
+    item.hasFullText === false ? t('libraryNoFullText') : '',
+    item.unavailableParts?.length ? t('libraryMarkdownUnavailable') : '',
     item.author,
     host(item.url),
     loadTimeData.getStringF('epubHighlightCount', item.highlightCount),
@@ -292,25 +285,33 @@ function libraryItem(item, seen) {
     link.textContent = `${t('clipOriginal')} ↗`;
     li.append(link);
   }
-  // The user's comment on the document and its tags, edited in place; a tag filters the list.
-  const notes = createDocumentNotes({
-    t: format,
-    compact: true,
-    save: ({ comment, base }) =>
-      library.send({ type: 'libraryComment', documentId: item.id, comment, base }),
-    tags: (change) => library.send({ type: 'libraryTags', documentId: item.id, ...change }),
-    tagList: async () => (await library.send({ type: 'tagsList' })).tags,
-    onTag: (tag) => filterByTag(tag),
-    onError: (message) => toast(message),
-    beforeEdit: () => closeEditors(item.id),
-  });
+  // The user's comment on the document and its tags, edited in place. A tag filters the list
+  // through the search's filter bar, which listens for library-filter-tag.
+  const kept = rows.get(item.id)?.notes;
+  const notes = kept?.draft()
+    ? kept
+    : createDocumentNotes({
+        t: format,
+        compact: true,
+        save: ({ comment, base }) =>
+          library.send({ type: 'libraryComment', documentId: item.id, comment, base }),
+        tags: (change) => library.send({ type: 'libraryTags', documentId: item.id, ...change }),
+        tagList: async () => (await library.send({ type: 'tagsList' })).tags,
+        onTag: (tag) =>
+          document.dispatchEvent(new CustomEvent('library-filter-tag', { detail: tag })),
+        onError: (message) => toast(message),
+        beforeEdit: () => closeEditors(item.id),
+      });
   notes.set(item);
   li.append(notes.element);
   rows.set(item.id, { li, notes, item });
   return li;
 }
 
-// The library's rows by document ID, for comment drafts, tag changes and the tag filter.
+// The library's rows by document ID, for comment drafts and tag changes. A row with an open
+// comment editor keeps it when the search shows its document again (a new query, a filter,
+// a return to the library); while an editor is open, returning to the window does not
+// search again.
 const rows = new Map();
 const format = (key, ...args) => (args.length ? loadTimeData.getStringF(key, ...args) : t(key));
 // Closes the comment editors other than the one for keep, asking before a draft is dropped.
@@ -336,45 +337,10 @@ chrome.runtime.onMessage.addListener((message, sender) => {
   if (!row) return;
   Object.assign(row.item, { comment: message.comment, tags: message.tags });
   row.notes.set(row.item);
-  applyTagFilter();
 });
-async function refreshNotes() {
-  if ($('#start').hidden || $('#documentsPanel').hidden) return;
-  try {
-    const { documents } = await library.send({ type: 'libraryDocuments' });
-    for (const item of documents) {
-      const row = rows.get(item.id);
-      if (!row) continue;
-      Object.assign(row.item, { comment: item.comment, tags: item.tags });
-      row.notes.set(row.item);
-    }
-    applyTagFilter();
-  } catch {}
-}
-
-// The simplest filter: the documents with one tag.
-let tagFilter = '';
-function filterByTag(tag) {
-  tagFilter = tag;
-  applyTagFilter();
-  $('#tagFilterClear').focus();
-}
-$('#tagFilterClear').onclick = () => {
-  tagFilter = '';
-  applyTagFilter();
-};
-function applyTagFilter() {
-  const key = tagFilter ? tagKey(tagFilter) : '';
-  let shown = 0;
-  for (const row of rows.values()) {
-    row.li.hidden = !!key && !(row.item.tags || []).some((tag) => tagKey(tag) === key);
-    if (!row.li.hidden) shown++;
-  }
-  $('#tagFilter').hidden = !key;
-  $('#tagFilterLabel').textContent = key
-    ? loadTimeData.getStringF('libraryTagFilter', tagFilter)
-    : '';
-  if (rows.size) $('#booksStatus').textContent = key && !shown ? t('libraryTagFilterEmpty') : '';
+// Tags renamed or deleted: the search runs again (rows with a draft keep it).
+function refreshNotes() {
+  if (!$('#start').hidden && !$('#documentsPanel').hidden) void librarySearch.show();
 }
 
 // Tags: each with the number of documents that have it; rename (to an existing tag merges
@@ -463,13 +429,32 @@ async function changeTags(message, from, to) {
         .filter(Boolean)
         .join(' '),
     );
-    if (tagFilter && tagKey(tagFilter) === tagKey(from)) tagFilter = to;
   } catch (error) {
     toast(loadTimeData.getStringF('docNotesTagFailed', shown(error)));
   }
   await showTagManager();
   await refreshNotes();
 }
+const librarySearch = initLibrarySearch({
+  send: library.send,
+  positions: library.positions,
+  renderItem: libraryItem,
+  explain: shown,
+  beforeRender() {
+    covers.disconnect();
+    for (const url of coverUrls.splice(0)) URL.revokeObjectURL(url);
+    for (const [id, row] of rows) if (!row.notes.draft()) rows.delete(id);
+  },
+  afterRender() {
+    // A draft whose document the search no longer shows is kept, and said so.
+    const hidden = [...rows.values()].find(
+      (row) => row.notes.dirty() && !row.notes.element.isConnected,
+    );
+    if (hidden)
+      toast(loadTimeData.getStringF('docNotesHiddenDraft', hidden.item.title || t('epubUntitled')));
+  },
+  busy: () => [...rows.values()].some((row) => row.notes.draft()),
+});
 
 // Each open (or a return to the library) supersedes the ones still loading, which stop
 // at their next step so two books never share the reader state or an upload.
@@ -609,6 +594,7 @@ async function showBook(file, sha256, token) {
     library.announce({ sha256, title: state.title });
     document.title = state.title;
     $('#bookTitle').textContent = state.title;
+    librarySearch.hide();
     $('#start').hidden = true;
     $('#viewer').hidden = $('#footer').hidden = $('#reading').hidden = false;
     $('#contentsButton').disabled = false;
@@ -645,6 +631,10 @@ async function showBook(file, sha256, token) {
     if (state.view !== view) return false;
     await view.init({ lastLocation: saved?.cfi, showTextStart: !saved?.cfi });
     if (state.view !== view) return false;
+    const target = /^#tabgent-highlight=(h\d{3,9})$/.exec(location.hash)?.[1];
+    const highlight = target && state.highlights.get(target);
+    if (highlight)
+      await navigate((view) => view.goTo(highlight.cfi || highlight.record.anchor.cfi));
     status('');
     void verifyAll();
     return true;

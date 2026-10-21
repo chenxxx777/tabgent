@@ -332,19 +332,6 @@ body.dragging #drop {
   color: var(--muted);
   font-size: 12px;
 }
-#tagFilter {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 0 0 8px;
-  padding: 6px 12px;
-  border-radius: 8px;
-  background: var(--hover);
-}
-#tagFilterLabel {
-  flex: 1;
-  font-weight: 600;
-}
 /* Tags: rename, merge and delete. */
 #tagManager {
   width: min(520px, calc(100vw - 32px));
@@ -762,4 +749,120 @@ footer {
 .feed-item .actions button[aria-pressed='true'] {
   color: var(--ink);
   font-weight: 600;
+}
+
+/* Search remains available above the document list at every query/filter state. */
+#librarySearchForm {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 12px 0;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+#libraryQuery {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+}
+#libraryFilterBar,
+.libraryFilterSummary,
+#libraryActiveFilters {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+#libraryFilterBar {
+  margin-top: 10px;
+}
+#libraryFilterBar label {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+#libraryFilterBar select {
+  max-width: 180px;
+  padding: 6px;
+  font: inherit;
+  color: var(--ink);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+#libraryTags {
+  position: relative;
+}
+#libraryTags summary {
+  cursor: pointer;
+  padding: 6px;
+}
+#libraryTagChoices {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  width: 240px;
+  max-height: 260px;
+  overflow: auto;
+  padding: 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px #0001;
+}
+#libraryTagChoices label {
+  display: flex;
+  padding: 5px;
+  overflow-wrap: anywhere;
+}
+.libraryFilterSummary {
+  margin-top: 8px;
+}
+#libraryActiveFilters button {
+  background: var(--hover);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+#libraryClear {
+  margin-left: auto;
+}
+.librarySearchScope {
+  font-size: 12px;
+  line-height: 1.5;
+}
+#documentsPanel #drop {
+  padding: 14px;
+}
+#documentsPanel #drop h1 {
+  display: none;
+}
+#documentsPanel #drop p {
+  margin-top: 0;
+}
+#books .libraryMatches {
+  padding: 0 12px 12px;
+  list-style: none;
+}
+.libraryMatch {
+  display: flex;
+  gap: 9px;
+  margin: 5px 0;
+  padding: 5px;
+  color: var(--ink);
+  text-decoration: none;
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+a.libraryMatch:hover {
+  background: var(--hover);
+  border-radius: 6px;
+}
+.matchType {
+  flex: none;
+  color: var(--muted);
 }
