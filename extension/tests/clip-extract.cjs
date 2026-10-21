@@ -633,6 +633,16 @@ function xThread() {
       /Skip to main content|Try Claude|Related articles|Trustworthy agents in practice|© 2026 Anthropic/,
     );
     assert.equal((evals.html.match(/<table>/g) || []).length, 4);
+    // Its figure captions stay under their images next to the tables (captions and tables
+    // are handled independently).
+    assert.equal((evals.html.match(/<figcaption>/g) || []).length, 5);
+    assert.equal(
+      em.match(
+        new RegExp(`!\\[[^\\]]*\\]\\(tabgent-image-${evals.imageToken}-\\d+\\)\n\\*[^\n]+\\*`, 'g'),
+      )?.length,
+      5,
+    );
+    assert.equal(evals.contentStatus, 'text');
     assert.equal(evals.coverage.ratio, 1);
     assert.equal(evals.coverage.restoredPassages, 0);
     assert.deepEqual(requests, []);
