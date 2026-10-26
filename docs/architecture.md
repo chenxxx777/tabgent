@@ -1180,9 +1180,10 @@ time; a queued request that is cancelled never starts, and a running one is inte
 next selection; a signed-out app-server is stopped at once, so signing in takes effect.
 Requests from the app-server (approvals, tool calls) are refused.
 
-Measured on a Mac with Codex 0.164 (gpt-6-luna, low, the user's fast tier), after the
-warm-up: the first characters in about 1.0–1.4 s and a sentence complete in 1.3–2.0 s; a
-cold start (process, login check, thread and warm-up turn) takes about 8 s.
+Measured on a Mac with Codex 0.164 (gpt-6-luna, low, the user's fast tier) in three runs of
+three to five sentences after the warm-up: usually the first characters in 1.0–1.4 s and a
+sentence complete in 1.3–2.0 s, with slower moments up to 2.5–5 s; a cold start (process,
+login check, thread and warm-up turn) takes 6–12 s.
 
 ## Reading conversations
 
