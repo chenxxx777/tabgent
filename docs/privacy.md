@@ -51,6 +51,21 @@ transcript was saved. Audio is never transcribed or uploaded.
 Clipping does not send anything to Codex. A message about the page names the clipped text
 (its full text file's path) in the reading context, and Codex reads it only on request.
 
+**Hover translation.** When you select English text and rest the pointer on it, the selected
+text (at most its first 2,000 characters) is sent to your configured Codex service for a
+Simplified Chinese translation. Nothing else goes with it: no page address, title, nearby
+text, notes, attachments or tools. Detecting English happens on your computer, from the
+letters in the selection; no language service is used. The connector runs a separate Codex
+app-server for translation, with your Codex login but without MCP servers, plugins, hooks,
+memories, notify programs, web search or project instructions, and asks Codex for an
+ephemeral conversation that is kept in memory only: it is never written to disk, never
+listed with your Codex conversations, and never saved to the reading vault. For speed,
+translations share that in-memory conversation (each one is translated on its own); it is
+replaced after 20 translations, when it grows, and when the translator stops after 30 idle
+minutes. The page keeps finished translations in memory until it closes, so hovering again
+sends nothing. A short warm-up request ("Hello.") is sent when the translator starts.
+Turn the feature off in the side panel's **Reading notes** menu.
+
 Browser content and selection metadata are marked as untrusted context. Do not
 assume prompt-injection defenses can make an arbitrary page safe. Scope checks
 limit which tabs tools can access; they do not validate the intentions of a page.
@@ -93,20 +108,20 @@ The workspace is `$CODEX_HOME/projects/tabgent`. On upgrade, the previous
 `browser-agent-connector` directory is moved there and kept as a compatibility
 symlink so existing attachment paths remain valid.
 
-| Location                                    | Contents                                                                |
-| ------------------------------------------- | ----------------------------------------------------------------------- |
-| `~/Library/Application Support/Tabgent/`    | Installed connector and, for normal installations, extension files.     |
-| `$CODEX_HOME/projects/tabgent/attachments/` | User-uploaded file copies, each in a generated subdirectory.            |
-| `~/Tabgent/` or the configured folder       | One note per document by category: highlights, your comments, URLs.     |
-| `Discussions/` in the vault                 | Saved discussions with Codex, one file per document.                    |
-| `Full Document Contents/` in the vault      | Clipped pages' text; imported EPUB books' chapters and PDFs' pages.     |
-| `Attachments/` in the vault                 | Clipped images and covers; copies of imported EPUB books and PDFs.      |
-| `.tabgent/documents/` in the vault          | Anchors, notes and turns; clip HTML and records; originals, SHA-256.    |
-| `.tabgent/feeds.db` in the vault            | Subscriptions; items' text, full text read, later and archive state.    |
-| Chrome extension local storage              | Note saves awaiting retry (at most 100), EPUB positions, file prompt.   |
-| `$CODEX_HOME/projects/tabgent/vault.json`   | The configured vault folder.                                            |
-| Shared Codex session storage and index      | Conversation history and project association.                           |
-| Chrome extension session storage            | Tab bindings, selection drafts, text drafts, and attachment references. |
+| Location                                    | Contents                                                                                          |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `~/Library/Application Support/Tabgent/`    | Installed connector and, for normal installations, extension files.                               |
+| `$CODEX_HOME/projects/tabgent/attachments/` | User-uploaded file copies, each in a generated subdirectory.                                      |
+| `~/Tabgent/` or the configured folder       | One note per document by category: highlights, your comments, URLs.                               |
+| `Discussions/` in the vault                 | Saved discussions with Codex, one file per document.                                              |
+| `Full Document Contents/` in the vault      | Clipped pages' text; imported EPUB books' chapters and PDFs' pages.                               |
+| `Attachments/` in the vault                 | Clipped images and covers; copies of imported EPUB books and PDFs.                                |
+| `.tabgent/documents/` in the vault          | Anchors, notes and turns; clip HTML and records; originals, SHA-256.                              |
+| `.tabgent/feeds.db` in the vault            | Subscriptions; items' text, full text read, later and archive state.                              |
+| Chrome extension local storage              | Note saves awaiting retry (at most 100), EPUB positions, file prompt, hover translation settings. |
+| `$CODEX_HOME/projects/tabgent/vault.json`   | The configured vault folder.                                                                      |
+| Shared Codex session storage and index      | Conversation history and project association.                                                     |
+| Chrome extension session storage            | Tab bindings, selection drafts, text drafts, and attachment references.                           |
 
 The vault holds one Markdown note per document, in a folder for its category
 (`Articles/`, `Tweets/`, `Videos/`, `Podcasts/`, `PDFs/`, `Books/`, `Local Files/`). The

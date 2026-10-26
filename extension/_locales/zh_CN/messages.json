@@ -1788,5 +1788,59 @@
   },
   "docNotesHiddenDraft": {
     "message": "《$1》的全文评论还没保存，已保留；当前搜索结果里没有这篇，清除搜索条件后可以继续编辑。"
+  },
+  "translateTitle": {
+    "message": "Codex 翻译"
+  },
+  "translateLoading": {
+    "message": "正在翻译…"
+  },
+  "translateCopy": {
+    "message": "复制译文"
+  },
+  "translateCopied": {
+    "message": "已复制"
+  },
+  "translateCopyFailed": {
+    "message": "无法复制"
+  },
+  "translateRetry": {
+    "message": "重新翻译"
+  },
+  "translateTruncated": {
+    "message": "原文较长，只翻译了前 $1 个字符。"
+  },
+  "translateCodexMissing": {
+    "message": "未找到 Codex。请先安装 Codex，再试一次。"
+  },
+  "translateSignedOut": {
+    "message": "Codex 未登录。请在 Tabgent 侧边栏登录后再试。"
+  },
+  "translateHostMissing": {
+    "message": "Tabgent 连接器未安装，无法连接 Codex。"
+  },
+  "translateDisconnected": {
+    "message": "Codex 未连接或连接已断开，请重试。"
+  },
+  "translateTimeout": {
+    "message": "Codex 响应超时，请重试。"
+  },
+  "translateEmpty": {
+    "message": "Codex 没有返回译文。"
+  },
+  "translateFailed": {
+    "message": "翻译失败：$1"
+  },
+  "translateSetting": {
+    "message": "悬停翻译英文"
+  },
+  "translateDelay": {
+    "message": "停留时间"
+  },
+  "translateSeconds": {
+    "message": "$1 秒"
+  },
+  "translateSettingHint": {
+    "message": "选中英文后把鼠标停在上面，就能看到 Codex（gpt-6-luna）的中文翻译。选中的原文会发送到你配置的 Codex 服务。"
   }
 }

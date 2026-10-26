@@ -8,6 +8,7 @@ import { markdownFragment } from './markdown.js';
 import { addMermaidView } from './mermaid-code.js';
 import { addStructuredView } from './structured-code.js';
 import { createReading } from './reading.js';
+import { initTranslateSettings } from './translate-settings.js';
 import {
   bridge,
   pageHistory,
@@ -402,6 +403,7 @@ const reading = createReading({
     location.reload();
   },
 });
+initTranslateSettings({ $, i18n });
 addWebUiListener('codex-reading-changed', () => void reading.refresh());
 addWebUiListener('codex-reading-saved', (value) => reading.saved(value));
 addWebUiListener('codex-highlight-status', () => void reading.refresh());

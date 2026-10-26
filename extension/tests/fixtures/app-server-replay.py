@@ -10,6 +10,12 @@ Directives in the user's text drive the rest, as a model would:
   [vault-read:N]  calls reading_vault to read page N (its section) of the full text of
                   the imported PDF named in the message's reading context.
 Each tool result is quoted in the answer, so tests can check what the tool returned.
+
+Ephemeral threads (hover translation) are never stored. Their turns stream the answer
+"译文：<text>" in three deltas, and every request on them is appended to
+fixture-translations.jsonl in CODEX_HOME, so tests can count requests and check settings.
+In the text, [translate-hold] keeps the turn running until turn/interrupt and
+[translate-fail] fails it.
 """
 
 import json
@@ -23,9 +29,12 @@ import uuid
 store = Path(os.environ["CODEX_HOME"]) / "fixture-threads.json"
 PAGE_CONTEXT = "Browser context for this message"
 READING_CONTEXT = "Reading context for this message"
+translations = Path(os.environ["CODEX_HOME"]) / "fixture-translations.jsonl"
 # Messages read while waiting for a tool result, handled after the current request.
 backlog = []
 held = None
+ephemeral = set()
+held_translation = None
 
 
 def load():
@@ -221,6 +230,66 @@ def replay(request):
     finish(turn, answer=answer)
 
 
+def record(method, params):
+    with translations.open("a") as log:
+        log.write(json.dumps({"method": method, "params": params}) + "\n")
+
+
+def translate(request):
+    global held_translation
+    params = request["params"]
+    ident = params["threadId"]
+    record("turn/start", params)
+    turn_id = "turn-" + uuid.uuid4().hex[:12]
+    running = {"id": turn_id, "status": "inProgress", "items": []}
+    send({"id": request["id"], "result": {"turn": running}})
+    send({"method": "turn/started", "params": {"threadId": ident, "turn": running}})
+    text = " ".join(part.get("text") or "" for part in params["input"])
+    if "[translate-hold]" in text:
+        held_translation = {"id": turn_id, "threadId": ident}
+        return
+    if "[translate-fail]" in text:
+        error = {"message": "Fixture translation failed"}
+        send(
+            {
+                "method": "error",
+                "params": {
+                    "threadId": ident,
+                    "turnId": turn_id,
+                    "error": error,
+                    "willRetry": False,
+                },
+            }
+        )
+        done = {"id": turn_id, "status": "failed", "items": [], "error": error}
+        send({"method": "turn/completed", "params": {"threadId": ident, "turn": done}})
+        return
+    answer = "译文：" + text
+    third = max(1, len(answer) // 3)
+    for chunk in (answer[:third], answer[third : 2 * third], answer[2 * third :]):
+        send(
+            {
+                "method": "item/agentMessage/delta",
+                "params": {
+                    "threadId": ident,
+                    "turnId": turn_id,
+                    "itemId": "m",
+                    "delta": chunk,
+                },
+            }
+        )
+        time.sleep(0.12)
+    item = {"id": "m", "type": "agentMessage", "text": answer}
+    send(
+        {
+            "method": "item/completed",
+            "params": {"threadId": ident, "turnId": turn_id, "item": item},
+        }
+    )
+    done = {"id": turn_id, "status": "completed", "items": [item]}
+    send({"method": "turn/completed", "params": {"threadId": ident, "turn": done}})
+
+
 while (request := receive()) is not None:
     if "id" not in request or "method" not in request:
         continue
@@ -245,8 +314,11 @@ while (request := receive()) is not None:
             ]
         }
     elif method == "thread/start":
-        # Like Codex, a thread is stored only once it has a turn.
+        # Like Codex, a thread is stored only once it has a turn; an ephemeral one never.
         result = {"thread": thread(str(uuid.uuid4()), []), "model": "fixture"}
+        if params.get("ephemeral"):
+            ephemeral.add(result["thread"]["id"])
+            record(method, params)
     elif method in ("thread/resume", "thread/read"):
         threads = load()
         if params.get("threadId") not in threads:
@@ -267,6 +339,9 @@ while (request := receive()) is not None:
         }
     elif method == "thread/goal/get":
         result = {"goal": None}
+    elif method == "turn/start" and params.get("threadId") in ephemeral:
+        translate(request)
+        continue
     elif method == "turn/start":
         replay(request)
         continue
@@ -284,6 +359,22 @@ while (request := receive()) is not None:
         user_item(turn, turn["id"] + "-steer", params)
         finish(turn, answer=f"Fixture answer {turn['number']} (steered).")
         continue
+    elif method == "turn/interrupt" and params.get("threadId") in ephemeral:
+        record(method, params)
+        send({"id": request["id"], "result": {}})
+        if held_translation and params.get("turnId") == held_translation["id"]:
+            done = {"id": held_translation["id"], "status": "interrupted", "items": []}
+            ident, held_translation = held_translation["threadId"], None
+            send(
+                {
+                    "method": "turn/completed",
+                    "params": {"threadId": ident, "turn": done},
+                }
+            )
+        continue
+    elif method == "thread/unsubscribe":
+        ephemeral.discard(params.get("threadId"))
+        result = {}
     elif method == "turn/interrupt":
         send({"id": request["id"], "result": {}})
         if held and params.get("turnId") == held["id"]:

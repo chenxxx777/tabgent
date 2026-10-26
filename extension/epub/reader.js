@@ -2,6 +2,7 @@ import '../vendor/foliate-js/view.js';
 import { Overlayer } from '../vendor/foliate-js/overlayer.js';
 import { localize, t, loadTimeData } from '../i18n.js';
 import '../user-error.js';
+import '../hover-translate.js';
 import { openBook, label } from './book.js';
 import * as epubAnchor from './anchor.js';
 import * as library from './library.js';
@@ -33,6 +34,13 @@ const state = {
 
 localize();
 library.connect();
+// Resting the pointer on an English selection in a book shows its Chinese translation.
+const hover = globalThis.tabgentHoverTranslate.attach({
+  doc: document,
+  t: (key, ...values) => chrome.i18n.getMessage(key, values.map(String)) || key,
+  avoid: () =>
+    $('#toolbar').matches(':popover-open') ? $('#toolbar').getBoundingClientRect() : null,
+});
 chrome.tabs.getCurrent().then((tab) => (state.tabId = tab?.id ?? null));
 
 let toastTimer;
@@ -675,6 +683,7 @@ function closeBook() {
   // The tab's conversation no longer shows this book's highlight status.
   if (state.sha256)
     void library.send({ type: 'epubHighlightStatus', sha256: null }).catch(() => {});
+  hover.select(null);
   hideToolbar();
   $('#highlightMenu').hidePopover?.();
   closeNote(); // A note belongs to the book being closed.
@@ -1001,6 +1010,7 @@ function onSectionLoad({ detail: { doc, index } }) {
     clearTimeout(timer);
     timer = setTimeout(() => captureSelection(doc, index), 150);
   };
+  hover.watch(doc);
   doc.addEventListener('selectionchange', schedule);
   doc.addEventListener('pointerup', schedule);
   doc.addEventListener('keydown', onKey);
@@ -1013,9 +1023,13 @@ function onSectionLoad({ detail: { doc, index } }) {
 let selectionId = null;
 function captureSelection(doc, index) {
   // The comment editor owns the screen; a leftover selection must not reopen the toolbar.
-  if ($('#noteEditor').matches(':popover-open')) return hideToolbar();
+  if ($('#noteEditor').matches(':popover-open')) {
+    hover.select(null);
+    return hideToolbar();
+  }
   const selection = doc.getSelection();
   if (!selection?.rangeCount || selection.isCollapsed || !selection.toString().trim()) {
+    hover.select(null);
     hideToolbar();
     if (selectionId && doc.hasFocus())
       void library.send({ type: 'pageSelectionCleared', selectionId }).catch(() => {});
@@ -1026,7 +1040,10 @@ function captureSelection(doc, index) {
     cfiOf: (range) => state.view.getCFI(index, range),
     chapter: chapterOf(index, doc),
   });
-  if (!described) return hideToolbar();
+  if (!described) {
+    hover.select(null);
+    return hideToolbar();
+  }
   if (
     state.selection?.anchor.cfi === described.anchor.cfi &&
     $('#toolbar').matches(':popover-open')
@@ -1034,6 +1051,7 @@ function captureSelection(doc, index) {
     return;
   state.selection = { ...described, index, doc, text: described.anchor.quote.exact };
   place($('#toolbar'), doc, described.range);
+  hover.select({ text: selection.toString(), range: described.range, doc });
   // Like PDF.js selections, the quote is offered to the tab's conversation.
   selectionId = crypto.randomUUID();
   const text = state.selection.text;
@@ -1077,6 +1095,7 @@ function hideToolbar() {
   if ($('#toolbar').matches(':popover-open')) $('#toolbar').hidePopover();
 }
 function hideFloating() {
+  hover.close();
   hideToolbar();
   if ($('#highlightMenu').matches(':popover-open')) $('#highlightMenu').hidePopover();
   // A comment with unsaved text stays open; Cancel or Escape discards it.
@@ -1138,6 +1157,7 @@ $('#highlightAsk').onclick = () => void createHighlight(true);
 function openSelectionComment() {
   const selected = state.selection;
   if (!selected?.doc || $('#noteSave').disabled) return;
+  hover.select(null);
   if (selected.text.length > 20000) {
     hideToolbar();
     return toast(t('highlightTooLong'));
@@ -1197,6 +1217,7 @@ const noteChanged = () =>
 function openNote(target) {
   const entry = state.highlights.get(target.id);
   if (!entry) return;
+  hover.select(null);
   $('#highlightMenu').hidePopover();
   noteFor = {
     id: target.id,

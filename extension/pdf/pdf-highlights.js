@@ -7,6 +7,7 @@ import * as anchors from './pdf-anchor.js';
 import { pdfInfo } from './pdf-info.js';
 import '../user-error.js';
 import '../highlight-note.js';
+import '../hover-translate.js';
 
 const notes = globalThis.tabgentHighlightNote;
 
@@ -58,6 +59,12 @@ export async function startHighlights({ app, frame, source, name, onDocument }) 
   sheet.rel = 'stylesheet';
   sheet.href = chrome.runtime.getURL('highlight.css');
   doc.head.append(sheet);
+  // Resting the pointer on an English selection shows its Chinese translation beside it.
+  const hover = globalThis.tabgentHoverTranslate.attach({
+    doc,
+    t,
+    avoid: () => (toolbar && !toolbar.hidden ? toolbar.getBoundingClientRect() : null),
+  });
 
   let records = new Map(),
     documentId = null,
@@ -387,10 +394,14 @@ export async function startHighlights({ app, frame, source, name, onDocument }) 
   }
   function evaluateSelection() {
     if (inUi() || pointerDown) return;
+    const none = () => {
+      hover.select(null);
+      hideToolbar();
+    };
     const selection = doc.getSelection();
-    if (!selection?.rangeCount || selection.isCollapsed) return hideToolbar();
+    if (!selection?.rangeCount || selection.isCollapsed) return none();
     const range = selection.getRangeAt(0);
-    if (dismissed && sameRange(dismissed, range)) return hideToolbar();
+    if (dismissed && sameRange(dismissed, range)) return none();
     dismissed = null;
     const inLayer = (node) =>
       !!(node.nodeType === 1 ? node : node.parentElement)?.closest('.textLayer');
@@ -399,11 +410,13 @@ export async function startHighlights({ app, frame, source, name, onDocument }) 
       !selection.toString().trim() ||
       !(inLayer(range.startContainer) || inLayer(range.endContainer))
     )
-      return hideToolbar();
+      return none();
     hidePopover();
     ensureUi();
     draft = { range: range.cloneRange() };
     place(toolbar, selectionRect(selection, range));
+    // Every PDF text line ends with a break; the translation reads the lines as sentences.
+    hover.select({ text: selection.toString(), range: draft.range, joinLines: true });
     const layers = selectedLayers(range);
     if (layers.length) prefetch([layers[0], layers.at(-1)]);
   }
@@ -481,6 +494,7 @@ export async function startHighlights({ app, frame, source, name, onDocument }) 
   function openEditor(record) {
     const rect = record.ranges?.[0]?.getBoundingClientRect();
     if (!rect) return;
+    hover.select(null);
     if (!inUi()) returnFocus = doc.activeElement;
     closeEditor(true);
     hidePopover();
@@ -566,6 +580,7 @@ export async function startHighlights({ app, frame, source, name, onDocument }) 
   // Comment does not paint a highlight until save. A passage already highlighted opens its editor.
   function beginComment() {
     if (!draft) return;
+    hover.select(null);
     const described = describeSelection(draft.range);
     const range = draft.range;
     const rect =
@@ -835,7 +850,7 @@ export async function startHighlights({ app, frame, source, name, onDocument }) 
   doc.addEventListener(
     'pointerdown',
     (event) => {
-      if (event.composedPath().includes(host)) return;
+      if (event.composedPath().includes(host) || hover.owns(event)) return;
       pointerDown = true;
       hidePopover();
       // A note with unsaved text stays open; Cancel or Escape discards it.
@@ -847,7 +862,7 @@ export async function startHighlights({ app, frame, source, name, onDocument }) 
     'pointerup',
     (event) => {
       pointerDown = false;
-      if (!event.composedPath().includes(host)) scheduleSelection(10);
+      if (!event.composedPath().includes(host) && !hover.owns(event)) scheduleSelection(10);
     },
     options,
   );
@@ -899,6 +914,7 @@ export async function startHighlights({ app, frame, source, name, onDocument }) 
     options,
   );
   const hideOnMove = () => {
+    hover.close();
     if (inUi()) return;
     hideToolbar();
     hidePopover();

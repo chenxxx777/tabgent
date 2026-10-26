@@ -15,6 +15,12 @@
   const anchors = globalThis.tabgentWebAnchor,
     notes = globalThis.tabgentHighlightNote;
   const t = (key, ...values) => chrome.i18n.getMessage(key, values.map(String)) || key;
+  // Resting the pointer on an English selection shows its Chinese translation beside it.
+  const hover = globalThis.tabgentHoverTranslate?.attach({
+    doc: document,
+    t,
+    avoid: () => (toolbar && !toolbar.hidden ? toolbar.getBoundingClientRect() : null),
+  });
   const shown = (error) => globalThis.tabgentExplainError?.(error, t) || t('errorGeneric');
   const paint = new Highlight(),
     focused = new Highlight();
@@ -304,6 +310,8 @@
   function evaluateSelection() {
     if (inUi() || pointerDown) return;
     const selection = getSelection();
+    if (!selection?.rangeCount || selection.isCollapsed || !draftable(selection))
+      hover?.select(null);
     if (!selection?.rangeCount) return hideToolbar();
     const range = selection.getRangeAt(0);
     if (selection.isCollapsed) {
@@ -329,6 +337,18 @@
     ensureUi();
     draft = { range: range.cloneRange(), text };
     place(toolbar, selectionRect(selection, range));
+    hover?.select({ text, range: draft.range });
+  }
+  // A selection the toolbar is offered for (the conditions evaluateSelection checks).
+  function draftable(selection) {
+    const range = selection.getRangeAt(0);
+    return !(
+      (dismissed && sameRange(dismissed, range)) ||
+      !selection.toString().trim() ||
+      editable(range.commonAncestorContainer) ||
+      editable(document.activeElement) ||
+      !document.body?.contains(range.commonAncestorContainer)
+    );
   }
   function scheduleSelection(delay = 150) {
     clearTimeout(selectionTimer);
@@ -390,6 +410,7 @@
   // The comment editor opens where the highlight is and keeps focus until saved or closed.
   function openEditor(record) {
     if (!record.range) return;
+    hover?.select(null);
     if (!inUi()) returnFocus = document.activeElement;
     closeEditor(true);
     hidePopover();
@@ -517,6 +538,7 @@
   }
   // Comment does not paint a highlight until save. A passage already highlighted opens its editor.
   function beginComment() {
+    hover?.select(null);
     const prepared = prepareDraft();
     if (!prepared) return hideToolbar();
     if (prepared.tooLong) {
@@ -796,6 +818,7 @@
 
   function teardown() {
     listeners.abort();
+    hover?.destroy();
     observer?.disconnect();
     clearTimeout(passTimer);
     CSS.highlights.delete('tabgent-highlight');
@@ -808,7 +831,7 @@
     'pointerdown',
     (event) => {
       lastInput = 'pointer';
-      if (event.composedPath().includes(host)) return;
+      if (event.composedPath().includes(host) || hover?.owns(event)) return;
       pointerDown = true;
       hidePopover();
       // A note with unsaved text stays open; Cancel or Escape discards it.
@@ -820,7 +843,7 @@
     'pointerup',
     (event) => {
       pointerDown = false;
-      if (!event.composedPath().includes(host)) scheduleSelection(10);
+      if (!event.composedPath().includes(host) && !hover?.owns(event)) scheduleSelection(10);
     },
     options,
   );

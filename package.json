@@ -24,6 +24,7 @@
     "test:agent-tab": "node scripts/test-agent-tab-browser.cjs",
     "test:feeds": "node scripts/test-feeds-browser.cjs",
     "test:notes": "node scripts/test-notes-browser.cjs",
+    "test:translate": "node scripts/test-translate-browser.cjs",
     "package:store": "python3 scripts/package-store.py"
   },
   "devDependencies": {
