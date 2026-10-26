@@ -16,6 +16,7 @@ import feeds
 import lineage
 import local_files
 import message_fork
+import translate
 import vault
 
 HOME = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
@@ -713,6 +714,10 @@ def warm():
         POOL.submit(session.start)
 
 
+# Hover translation has its own lean app-server, started on the first English selection.
+TRANSLATOR = translate.Translator(HOME, lambda: executable(), lambda value: send(value))
+
+
 def vault_request(message, prepared=None):
     settings = HOME / "projects/tabgent/vault.json"
     method = message.get("method")
@@ -747,6 +752,15 @@ def handle(message):
             FEED_POOL.submit(feed_request, message)
         else:
             VAULT_POOL.submit(vault_request, message)
+        return
+    if op == "translate":
+        TRANSLATOR.translate(message.get("id"), message.get("text"))
+        return
+    if op == "translateCancel":
+        TRANSLATOR.cancel(message.get("id"))
+        return
+    if op == "translateWarm":
+        TRANSLATOR.warm()
         return
     ident = message.get("session")
     if op == "warm":
@@ -839,6 +853,7 @@ def main():
         # Finish saves already received before Chrome stops the connector.
         FEED_POOL.shutdown(wait=True)
         VAULT_POOL.shutdown(wait=True)
+        TRANSLATOR.close()
         for session in list(SESSIONS.values()):
             session.close()
         POOL.shutdown(wait=False, cancel_futures=True)

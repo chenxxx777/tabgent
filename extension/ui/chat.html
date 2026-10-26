@@ -196,6 +196,18 @@
       <button id="readingClipSelection" type="button" hidden>$i18n{clipSelection}</button>
       <button id="readingClipOpen" type="button" hidden>$i18n{clipOpen}</button>
       <button id="readingLibrary" type="button">$i18n{libraryOpen}</button>
+      <div class="reading-translate">
+        <label class="reading-switch"
+          ><input id="translateHover" type="checkbox" role="switch" /><span
+            >$i18n{translateSetting}</span
+          ></label
+        >
+        <label class="reading-delay"
+          ><span>$i18n{translateDelay}</span
+          ><select id="translateDelay"></select
+        ></label>
+        <p>$i18n{translateSettingHint}</p>
+      </div>
     </div>
     <div id="scopeMenu" class="composer-menu" popover>
       <p>$i18n{scopeQuestion}</p>

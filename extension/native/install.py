@@ -46,6 +46,7 @@ shutil.copy2(root / "native/library_search.py", home / "library_search.py")
 shutil.copy2(root / "native/feeds.py", home / "feeds.py")
 shutil.copy2(root / "native/epub_text.py", home / "epub_text.py")
 shutil.copy2(root / "native/pdf_text.py", home / "pdf_text.py")
+shutil.copy2(root / "native/translate.py", home / "translate.py")
 launcher = home / "connector"
 launcher.write_text(
     "#!/bin/sh\nexport CODEX_HOME="

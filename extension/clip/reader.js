@@ -310,6 +310,7 @@ async function present({ html, title, byline, language, direction, meta, images:
   void showNotes();
   globalThis.tabgentReadingView = { name: 'clip', url: page, root: content, title, meta };
   await import('../selection-content.js');
+  await import('../hover-translate.js');
   await import('../highlight-content.js');
   await restorePosition();
   let timer;

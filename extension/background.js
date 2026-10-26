@@ -41,6 +41,7 @@ import {
   isCurrentClipSender,
 } from './clip-routing.js';
 import { createFeeds, feedMessages, feedReaderMessages } from './feeds.js';
+import { createTranslateRelay } from './translate-routing.js';
 startPdfRouting();
 // Image Referer rules of a worker that stopped mid-request.
 clearRefererRules().catch(() => {});
@@ -60,6 +61,8 @@ const agentViews = new Map(),
 let native,
   sequence = 1000;
 const vault = createVaultClient(connect);
+// Hover translation shares the connector port; its requests never touch sessions.
+const translations = createTranslateRelay(connect);
 // Vault methods follow the shared contract; they never claim or wait for a Codex session.
 const vaultRequest = (method, params) => vault.request(method, params);
 // Subscriptions are checked on a schedule; the listener is registered at startup, as MV3 needs.
@@ -384,6 +387,7 @@ function connect() {
     for (const r of requests.values()) r.reject?.(Error('Codex disconnected'));
     requests.clear();
     vault.disconnect(message);
+    translations.disconnect(message);
     const missing = /native messaging host not found/i.test(message);
     for (const s of sessions.values()) {
       s.turnPending = false;
@@ -415,7 +419,7 @@ async function receive(message) {
     chunks.delete(message.id);
     message = JSON.parse(c.join(''));
   }
-  if (vault.receive(message)) return;
+  if (vault.receive(message) || translations.receive(message)) return;
   const s = [...sessions.values()].find((s) => s.id === message.session);
   if (!s) return;
   const m = message.message;
@@ -565,6 +569,7 @@ async function receive(message) {
   broadcast(s, m);
 }
 chrome.runtime.onConnect.addListener((port) => {
+  if (translations.accept(port)) return;
   // The clipped-page reader registers itself; it carries no commands.
   if (port.name === 'clip') return void registerClipPort(port);
   if (port.name === 'pdf' || port.name === 'epub') {

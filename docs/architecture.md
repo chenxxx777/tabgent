@@ -19,6 +19,8 @@ flowchart LR
 | `extension/selection-content.js`  | Selected text, DOM endpoints, offsets, and frame-relative geometry.         |
 | `extension/highlight-content.js`  | Selection toolbar, saved webpage highlights, and highlight actions.         |
 | `extension/highlight-note.js`     | Note preview and editor shared by the webpage and PDF.js reading layers.    |
+| `extension/hover-translate.js`    | Hover translation: English check, dwell timer, card and its runtime port.   |
+| `extension/translate-routing.js`  | Hover translation port in the service worker, relayed to the connector.     |
 | `extension/web-anchor.js`         | Normalized page text, web anchors, and verified anchor restoration.         |
 | `extension/vault-client.js`       | Reading-vault requests over the native port, with ids and timeouts.         |
 | `extension/pdf/viewer.js`         | PDF.js wrapper: loading, fallback, live quotes, and Agent PDF commands.     |
@@ -48,6 +50,7 @@ flowchart LR
 | `extension/native/epub_text.py`   | EPUB chapter text for the vault, using the standard library only.           |
 | `extension/native/feeds.py`       | Feed and OPML parsing, and the subscription index `.tabgent/feeds.db`.      |
 | `extension/native/pdf_text.py`    | Imported PDF page text for the vault, read with macOS PDFKit.               |
+| `extension/native/translate.py`   | Hover translation: a lean app-server and an ephemeral gpt-6-luna thread.    |
 
 Each webpage tab owns a session. Agent tabs share that session through runtime
 ports and retain its original page context. The sidebar beside an Agent tab has
@@ -1121,6 +1124,65 @@ file. `read` covers the top frame of a local page and never its `file://` frames
 `navigate`, `open` and conversation links accept only HTTP(S) URLs, so Agent never opens a
 local file. Reading a local PDF left in Chrome's viewer fetches the file in the worker and
 uses the PDFKit path of online PDFs.
+
+## Hover translation
+
+Selecting English text and resting the pointer on it shows a Simplified Chinese translation
+beside the selection. `hover-translate.js` is shared by every reading layer: the webpage
+layer (`highlight-content.js`, so also files from the computer and the clipped-page and feed
+reader), `pdf-highlights.js` in the PDF.js frame, and the EPUB reader, whose chapters are
+frames inside the reader page. Each layer passes its current selection (`select({ text,
+range, doc })`) when it shows the toolbar, and `null` when the selection ends; the module
+owns the rest:
+
+- **English only.** A local rule on the first 2,000 characters: at least two ASCII letters,
+  at least 90% of letters Latin and 90% of those unaccented, under 5% Chinese, Japanese or
+  Korean characters. No language detector or service is used.
+- **Dwell.** Pointer moves in the selection's document (an EPUB chapter frame is followed
+  from its load) are mapped into the card's viewport. A point on the selection's client
+  rects starts the wait (default 1 s, from `chrome.storage.local` `hoverTranslate:
+{ enabled, delay }`); a move of more than 4 px restarts it, a held button stops it. The
+  card has its own closed shadow root on a manual popover host. It opens above the
+  selection, or below it (and below the toolbar there), never over the toolbar. Leaving the
+  selection and the card (after a 300 ms grace), a selection change, scrolling, resizing,
+  a click elsewhere or Escape closes it and cancels the request; after Escape the same
+  selection does not open it again.
+- **Text.** Spaces are collapsed and blank lines limited; PDF lines are joined (with
+  line-end hyphenation removed). More than 2,000 characters are cut at a sentence or word
+  near the limit, and the card says so. Finished translations are cached per document
+  (50, least recently used) by that text; **Translate again** drops the entry.
+
+Each document opens one `tabgent-translate` runtime port. The service worker accepts it
+only from Tabgent's own scripts (`translate-routing.js`) and relays `{ op: "translate", id,
+text }`, `translateCancel` and `translateWarm` on the connector port; answers come back as
+`delta`, then `done` with the whole text, or `error` with a code (`codex_missing`,
+`signed_out`, `host_missing`, `disconnected`, `timeout`, `failed`). A closed port cancels
+its requests. A selection that qualifies sends `warm` so the translator starts before the
+hover.
+
+`translate.py` runs its own `codex app-server`, separate from conversation sessions, with
+`-c` overrides that drop MCP servers, `notify`, hooks, plugins, apps, memories, goals,
+multi-agent and shell tools, web search, history, project instructions and the
+permissions, apps, collaboration and environment instructions (unknown keys are ignored,
+so other Codex versions start too), in an empty working folder
+`$CODEX_HOME/projects/tabgent/translate`. It asks for `thread/start` with `ephemeral: true`
+(Codex keeps the thread in memory, never in a rollout file or its thread index), model
+`gpt-6-luna`, short translation-only `baseInstructions`, no dynamic tools, no environments,
+read-only sandbox, and starts each turn with `effort: "low"` and no reasoning summary. The
+service tier follows the user's Codex configuration.
+
+The first turn on a thread is several times slower than later ones (no prompt cache, a new
+model connection), so translations reuse the thread: a warm-up turn ("Hello.") runs when the
+translator starts, unless a translation is already waiting, and the thread is replaced
+after 20 turns or 24,000 tokens of context, then warmed again while idle. Turns run one at a
+time; a queued request that is cancelled never starts, and a running one is interrupted
+(`turn/interrupt`). The app-server stops after 30 idle minutes and is started again on the
+next selection; a signed-out app-server is stopped at once, so signing in takes effect.
+Requests from the app-server (approvals, tool calls) are refused.
+
+Measured on a Mac with Codex 0.164 (gpt-6-luna, low, the user's fast tier), after the
+warm-up: the first characters in about 1.0–1.4 s and a sentence complete in 1.3–2.0 s; a
+cold start (process, login check, thread and warm-up turn) takes about 8 s.
 
 ## Reading conversations
 

@@ -59,6 +59,7 @@ const quote = "endorsement of one's own actions";
     'web-anchor.js',
     'user-error.js',
     'highlight-note.js',
+    'hover-translate.js',
     'vault-client.js',
     'highlight.css',
   ])

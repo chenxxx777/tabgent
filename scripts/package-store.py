@@ -90,6 +90,7 @@ with zipfile.ZipFile(
         "feeds.py",
         "epub_text.py",
         "pdf_text.py",
+        "translate.py",
     ]:
         archive.write(extension / "native" / name, "Tabgent Connector/native/" + name)
     entry = zipfile.ZipInfo("Tabgent Connector/Install Connector.command")

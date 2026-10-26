@@ -1788,5 +1788,59 @@
   },
   "docNotesHiddenDraft": {
     "message": "Your unsaved comment on “$1” is kept, but the current search does not show that document. Clear the search to go on editing it."
+  },
+  "translateTitle": {
+    "message": "Codex translation"
+  },
+  "translateLoading": {
+    "message": "Translating…"
+  },
+  "translateCopy": {
+    "message": "Copy translation"
+  },
+  "translateCopied": {
+    "message": "Copied"
+  },
+  "translateCopyFailed": {
+    "message": "Could not copy"
+  },
+  "translateRetry": {
+    "message": "Translate again"
+  },
+  "translateTruncated": {
+    "message": "The selection is long: only its first $1 characters were translated."
+  },
+  "translateCodexMissing": {
+    "message": "Codex is not installed. Install Codex, then try again."
+  },
+  "translateSignedOut": {
+    "message": "Codex is not signed in. Sign in from the Tabgent side panel, then try again."
+  },
+  "translateHostMissing": {
+    "message": "Tabgent’s connector is not installed, so Codex cannot be reached."
+  },
+  "translateDisconnected": {
+    "message": "Codex is not connected. Try again."
+  },
+  "translateTimeout": {
+    "message": "Codex took too long to answer. Try again."
+  },
+  "translateEmpty": {
+    "message": "Codex returned no translation."
+  },
+  "translateFailed": {
+    "message": "The translation failed: $1"
+  },
+  "translateSetting": {
+    "message": "Translate English on hover"
+  },
+  "translateDelay": {
+    "message": "Hover time"
+  },
+  "translateSeconds": {
+    "message": "$1 s"
+  },
+  "translateSettingHint": {
+    "message": "Select English text and rest the pointer on it to see a Chinese translation by Codex (gpt-6-luna). The selected text is sent to your Codex service."
   }
 }

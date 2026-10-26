@@ -22,6 +22,7 @@ const { chromium } = require('playwright');
     'web-anchor.js',
     'user-error.js',
     'highlight-note.js',
+    'hover-translate.js',
     'highlight.css',
   ])
     fs.copyFileSync('extension/' + name, ext + '/' + name);
