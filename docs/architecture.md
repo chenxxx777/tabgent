@@ -1150,7 +1150,9 @@ owns the rest:
 - **Text.** Spaces are collapsed and blank lines limited; PDF lines are joined (with
   line-end hyphenation removed). More than 2,000 characters are cut at a sentence or word
   near the limit, and the card says so. Finished translations are cached per document
-  (50, least recently used) by that text; **Translate again** drops the entry.
+  (50, least recently used) by that text; **Translate again** drops the entry and also works while a request runs. A request with no
+  answer for 75 s is shown as timed out (the connector itself stops a turn after 60 s and
+  answers `timeout`).
 
 Each document opens one `tabgent-translate` runtime port. The service worker accepts it
 only from Tabgent's own scripts (`translate-routing.js`) and relays `{ op: "translate", id,

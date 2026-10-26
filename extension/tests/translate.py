@@ -187,6 +187,23 @@ with tempfile.TemporaryDirectory() as home:
         assert inbox.final("i")["error"]["code"] == "too_long"
         print("PASS a failed turn and an oversized text answer with an error")
 
+        # A turn that never finishes: the translator gives up, interrupts it and says so.
+        interrupts = len([e for e in log(home) if e["method"] == "turn/interrupt"])
+        with patch.object(translate, "TURN_SECONDS", 0.5):
+            translator.translate("t", "[translate-hold] Codex never answers this.")
+            slow = inbox.final("t")
+        assert slow["error"]["code"] == "timeout", slow
+        assert not [m for m in inbox.of("t") if "delta" in m]
+        assert (
+            len([e for e in log(home) if e["method"] == "turn/interrupt"])
+            == interrupts + 1
+        )
+        translator.translate("u", "After the timeout.")
+        assert inbox.final("u")["text"] == "译文：After the timeout."
+        print(
+            "PASS a turn past the time limit is interrupted and answered with a timeout"
+        )
+
         # A long-lived thread is replaced; the old one is released.
         with patch.object(translate, "ROTATE_TURNS", translator.turns + 1):
             translator.translate("j", "Rotate after this.")

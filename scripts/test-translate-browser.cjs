@@ -156,10 +156,14 @@ const pdfBytes = textPdf(
         'tabgent-translation',
         `function () {
           const card = this.querySelector('.card'), r = card.getBoundingClientRect();
-          return { hidden: card.hidden, status: card.dataset.status,
+          const value = { hidden: card.hidden, status: card.dataset.status,
             text: this.querySelector('.text').textContent,
             problem: this.querySelector('.problem').textContent,
             rect: { left: r.left, top: r.top, right: r.right, bottom: r.bottom } };
+          const retry = this.querySelector('[data-action="translate-retry"]'),
+            b = retry.getBoundingClientRect();
+          value.retry = { disabled: retry.disabled, x: (b.left + b.right) / 2, y: (b.top + b.bottom) / 2 };
+          return value;
         }`,
       );
     const toolbar = (page) =>
@@ -245,18 +249,28 @@ const pdfBytes = textPdf(
     assert.equal(requests().length, before, 'and sends nothing');
     console.log('PASS a Chinese selection is not translated');
 
-    // A request still running is cancelled when the card closes.
+    // A request still running can be retried, and is cancelled when the card closes.
+    const holdText = '[translate-hold] This translation waits until it is cancelled.';
+    const interrupts = () => requests().filter((r) => r.method === 'turn/interrupt').length;
     const hold = await drag(page, '#hold');
     const waiting = await until(() => shown(page), 4000);
     assert.equal(waiting?.status, 'loading');
     assert.equal(waiting.text, await message('translateLoading'));
+    assert.equal(waiting.retry.disabled, false, 'Translate again works while loading');
+    assert(await until(() => asked(holdText) === 1, 4000));
+    await page.mouse.move(waiting.retry.x, waiting.retry.y, { steps: 2 });
+    await page.mouse.down();
+    await page.mouse.up();
+    assert(await until(() => asked(holdText) === 2, 4000), 'Translate again starts a new request');
+    assert.equal(interrupts(), 1, 'and interrupts the stuck one');
+    assert.equal((await shown(page))?.status, 'loading', 'The card stays open on its selection');
     await page.mouse.move(hold.x, hold.y + 300, { steps: 3 });
     assert(await until(async () => !(await shown(page)), 2000));
     assert(
-      await until(() => requests().some((r) => r.method === 'turn/interrupt'), 4000),
+      await until(() => interrupts() === 2, 4000),
       'Closing the card interrupts the Codex turn',
     );
-    console.log('PASS closing the card cancels an unfinished translation');
+    console.log('PASS a stuck translation can be retried; closing the card cancels it');
 
     // The switch in settings turns it off at once.
     await worker.evaluate(() =>

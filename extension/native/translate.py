@@ -92,6 +92,8 @@ class Job:
         self.text = text
         self.warm = warm
         self.cancelled = False
+        # Ran past TURN_SECONDS: stopped like a cancel, but the page still hears why.
+        self.timed_out = False
         self.thread_id = None
         self.turn_id = None
         self.output = ""
@@ -353,7 +355,7 @@ class Translator:
             if job.cancelled:
                 self._interrupt(job)
             if not job.done.wait(TURN_SECONDS):
-                job.cancelled = True
+                job.timed_out = True
                 self._interrupt(job)
                 job.done.wait(5)
                 raise TranslateError("timeout", "The translation timed out")
@@ -467,7 +469,7 @@ class Translator:
             delta = params.get("delta")
             if isinstance(delta, str) and delta:
                 job.output += delta
-                if not job.warm and not job.cancelled:
+                if not job.warm and not job.cancelled and not job.timed_out:
                     self._reply(job.id, delta=delta)
         elif method == "item/completed":
             item = params.get("item") or {}

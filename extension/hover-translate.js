@@ -12,6 +12,7 @@
   const DELAYS = [500, 1000, 1500, 2000, 3000];
   const PORT = 'tabgent-translate';
   const LEAVE_MS = 300;
+  const STALL_MS = 75000;
 
   const clamp = (value, low, high) => Math.max(low, Math.min(value, high));
   const settingsOf = (value) => ({
@@ -459,23 +460,45 @@
       else request();
       place(true);
     }
+    // Translate again works at any time: it drops the running request and starts over.
     function request() {
       cancel?.();
       cancel = null;
       const key = current.key;
-      let output = '';
+      let output = '',
+        settled = false,
+        stall = null;
       shown.output = '';
       render('loading');
       place();
-      cancel = client.translate(current.text, {
+      // The connector stops a turn after 60 s and says so. If nothing at all comes back
+      // (a stuck connector), the card stops waiting too, so the request can be retried.
+      const quiet = () => {
+        win.clearTimeout(stall);
+        if (settled) return;
+        stall = win.setTimeout(() => {
+          end();
+          if (cancel === end) cancel = null;
+          if (shown?.key !== key) return;
+          render('error', '', { code: 'timeout' });
+          place();
+        }, STALL_MS);
+      };
+      const settle = () => {
+        settled = true;
+        win.clearTimeout(stall);
+        if (cancel === end) cancel = null;
+      };
+      const stop = client.translate(current.text, {
         onDelta(delta) {
+          quiet();
           output += delta;
           if (shown?.key !== key) return;
           render('streaming', output);
           place();
         },
         onDone(text) {
-          cancel = null;
+          settle();
           const value = (text || output).trim();
           if (value) cache.set(key, value);
           if (shown?.key !== key) return;
@@ -484,12 +507,21 @@
           place();
         },
         onError(error) {
-          cancel = null;
+          settle();
           if (shown?.key !== key) return;
           render('error', '', error);
           place();
         },
       });
+      function end() {
+        settled = true;
+        win.clearTimeout(stall);
+        stop();
+      }
+      if (!settled) {
+        cancel = end;
+        quiet();
+      }
     }
     function close() {
       win.clearTimeout(leaveTimer);
@@ -531,7 +563,6 @@
       note.textContent = current?.truncated ? t('translateTruncated', LIMIT) : '';
       copyButton.disabled = !shown.output;
       copyButton.textContent = t('translateCopy');
-      retryButton.disabled = status === 'loading';
     }
 
     // Above the selection when it fits, else below it (and below the toolbar there).
