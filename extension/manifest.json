@@ -86,6 +86,10 @@
   ],
   "web_accessible_resources": [
     {
+      "resources": ["icons/app-16.png"],
+      "matches": ["http://*/*", "https://*/*", "file:///*"]
+    },
+    {
       "resources": ["pdf/viewer.html"],
       "matches": ["http://*/*", "https://*/*"]
     },

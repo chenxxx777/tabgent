@@ -211,7 +211,6 @@
       },
       resume() {
         suspended = false;
-        if (!destroyed) client.warm();
       },
       destroy() {
         destroyed = true;

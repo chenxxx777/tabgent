@@ -1,13 +1,24 @@
 // One owner per document. DOM events also reach an orphan's isolated world after reload.
 (() => {
   const replace = 'tabgent:replace-content';
+  // Pages may also request teardown; they can already hide our UI, so this is acceptable.
   document.dispatchEvent(new Event(replace));
   const lifetime = new AbortController();
   const cleanups = new Set();
   let stopped = false,
     replaced = false,
+    hintAttempted = false,
     hint,
     hintTimer;
+  // Capture while extension APIs still work; an orphan must not call them again.
+  let reloadHint = 'Tabgent was reloaded. Refresh this page to continue.',
+    aliveResource = '';
+  try {
+    if (globalThis.chrome?.runtime?.id) {
+      reloadHint = chrome.i18n?.getMessage('reloadHint') || reloadHint;
+      aliveResource = chrome.runtime.getURL('icons/app-16.png');
+    }
+  } catch {}
   const globals = [
     'browserAgentSelectionInstalled',
     'tabgentLocalPdf',
@@ -43,13 +54,22 @@
     stop();
     return false;
   }
-  function showHint() {
-    if (replaced || hint?.isConnected) return;
+  async function showHint() {
+    if (replaced || hintAttempted || !aliveResource) return;
+    hintAttempted = true;
+    // A missing context may mean disable/uninstall. Only a still-enabled extension can
+    // serve this resource; bypass caches so a previously loaded icon is not proof of life.
+    try {
+      const response = await fetch(aliveResource, { cache: 'no-store' });
+      if (!response.ok || replaced) return;
+    } catch {
+      return;
+    }
     hint = document.createElement('tabgent-refresh-hint');
     const root = hint.attachShadow({ mode: 'closed' });
     const message = document.createElement('div');
     message.setAttribute('role', 'status');
-    message.textContent = 'Tabgent 已更新，请刷新此页面';
+    message.textContent = reloadHint;
     message.style.cssText =
       'position:fixed;right:16px;bottom:16px;padding:10px 14px;border-radius:10px;' +
       'background:#202124;color:white;font:14px/1.5 system-ui;box-shadow:0 4px 16px #0003';
@@ -64,7 +84,7 @@
     document.addEventListener(
       type,
       () => {
-        if (!check() && getSelection()?.toString().trim()) showHint();
+        if (!check() && getSelection()?.toString().trim()) void showHint();
       },
       { capture: true, signal: lifetime.signal },
     );

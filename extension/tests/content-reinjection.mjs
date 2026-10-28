@@ -69,3 +69,28 @@ await reinjectContentScripts(api);
 console.log(
   'PASS manifest order, frame scope, file permission, exclusions and inaccessible-tab isolation',
 );
+
+let activeTabs = 0,
+  peakTabs = 0;
+const visited = [];
+api.tabs.query = async () => Array.from({ length: 25 }, (_, id) => ({ id }));
+api.webNavigation.getAllFrames = async ({ tabId }) => {
+  activeTabs++;
+  peakTabs = Math.max(peakTabs, activeTabs);
+  await new Promise((resolve) => setImmediate(resolve));
+  visited.push(tabId);
+  if (tabId === 3) {
+    activeTabs--;
+    throw Error('Tab closed');
+  }
+  return [{ frameId: 0, documentId: String(tabId), url: 'https://reader.test/article' }];
+};
+api.scripting.executeScript = async () => {
+  await new Promise((resolve) => setImmediate(resolve));
+  activeTabs--;
+};
+await reinjectContentScripts(api);
+assert.equal(peakTabs, 8, 'At most eight tabs are being reinjected');
+assert.equal(activeTabs, 0);
+assert.equal(visited.length, 25, 'A failing tab does not block later batches');
+console.log('PASS reinjection limits concurrency to eight tabs and continues after closed tabs');

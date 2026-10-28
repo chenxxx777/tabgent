@@ -25,11 +25,13 @@ function matches(pattern, address) {
 export async function reinjectContentScripts(api = chrome) {
   const scripts = api.runtime.getManifest().content_scripts || [];
   const fileAccess = await api.extension.isAllowedFileSchemeAccess();
-  const tabs = await api.tabs.query({});
-  await Promise.allSettled(
-    tabs
-      .filter((tab) => !tab.incognito && Number.isInteger(tab.id))
-      .map(async (tab) => {
+  const tabs = (await api.tabs.query({})).filter(
+    (tab) => !tab.incognito && Number.isInteger(tab.id),
+  );
+  // Bound the update spike when the browser has hundreds of open tabs.
+  for (let start = 0; start < tabs.length; start += 8) {
+    await Promise.allSettled(
+      tabs.slice(start, start + 8).map(async (tab) => {
         const frames = (await api.webNavigation.getAllFrames({ tabId: tab.id })) || [];
         await Promise.allSettled(
           frames.map(async (frame) => {
@@ -66,5 +68,6 @@ export async function reinjectContentScripts(api = chrome) {
           }),
         );
       }),
-  );
+    );
+  }
 }

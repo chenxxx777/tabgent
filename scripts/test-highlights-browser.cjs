@@ -618,6 +618,76 @@ const article = () => `<!doctype html><title>Highlight fixture</title>
     console.log(
       'PASS restart restore / inserted content re-anchors / rewritten text stays unanchored',
     );
+
+    // A disabled extension must stay quiet; after re-enabling, an orphan can verify the
+    // live extension resource without touching its invalid runtime APIs.
+    const quiet = await context.newPage();
+    const orphan = await context.newPage();
+    for (const target of [quiet, orphan]) {
+      target.on('pageerror', (error) => errors.push(error.message));
+      await target.goto(base + '/orphan');
+      assert(
+        await until(() =>
+          worker.evaluate(async (url) => {
+            const [tab] = await chrome.tabs.query({ url });
+            const [script] = await chrome.scripting.executeScript({
+              target: { tabId: tab.id },
+              func: () => !!globalThis.tabgentContentLifecycle,
+            });
+            return script.result;
+          }, target.url()),
+        ),
+      );
+    }
+    const manager = await context.newPage();
+    await manager.goto('chrome://extensions');
+    const setEnabled = (enabled) =>
+      manager.evaluate(
+        ([id, enabled]) =>
+          new Promise((resolve, reject) => {
+            chrome.management.setEnabled(id, enabled, () => {
+              const error = chrome.runtime.lastError;
+              if (error) reject(Error(error.message));
+              else resolve();
+            });
+          }),
+        [id, enabled],
+      );
+    const select = (target) =>
+      target.evaluate(() => {
+        const range = document.createRange();
+        range.selectNodeContents(document.querySelector('#a'));
+        getSelection().removeAllRanges();
+        getSelection().addRange(range);
+        document.dispatchEvent(new Event('pointerup'));
+      });
+    await setEnabled(false);
+    await select(quiet);
+    await wait(300);
+    assert.equal(
+      await quiet.locator('tabgent-refresh-hint').count(),
+      0,
+      'A disabled extension shows no hint',
+    );
+    const reenabled = context.waitForEvent('serviceworker');
+    await setEnabled(true);
+    worker = await reenabled;
+    await select(orphan);
+    await orphan.waitForSelector('tabgent-refresh-hint', { state: 'attached' });
+    await orphan.evaluate(() => {
+      document.querySelector('tabgent-refresh-hint').remove();
+      document.dispatchEvent(new Event('pointerup'));
+    });
+    await wait(100);
+    assert.equal(
+      await orphan.locator('tabgent-refresh-hint').count(),
+      0,
+      'An orphan shows the hint at most once',
+    );
+    assert.deepEqual(errors, []);
+    console.log(
+      'PASS real disable stays quiet; a live-extension orphan shows its captured hint only once',
+    );
     passed = true;
   } finally {
     await context?.close().catch(() => {});
