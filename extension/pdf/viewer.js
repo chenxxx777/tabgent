@@ -32,16 +32,20 @@ const spreadButtons = [
 ];
 let pdfSpread = 'none';
 let spreadChosen = false;
-document.querySelector('#spread').setAttribute('aria-label', t('pdfSpread'));
+// The spread buttons are optional: viewer.js also runs on copies of the toolbar
+// (file.html) that may lack one, and a missing button must not blank the page.
+const spreadGroup = document.querySelector('#spread');
+if (spreadGroup) spreadGroup.setAttribute('aria-label', t('pdfSpread'));
 for (const [id, spread, key] of spreadButtons) {
   const button = document.getElementById(id);
+  if (!button) continue;
   button.textContent = t(key);
   button.onclick = () => choosePdfSpread(spread);
 }
 function showSpread(spread) {
   pdfSpread = Object.hasOwn(SPREAD, spread) ? spread : 'none';
   for (const [id, name] of spreadButtons)
-    document.getElementById(id).setAttribute('aria-pressed', String(name === pdfSpread));
+    document.getElementById(id)?.setAttribute('aria-pressed', String(name === pdfSpread));
 }
 function choosePdfSpread(spread) {
   spreadChosen = true;

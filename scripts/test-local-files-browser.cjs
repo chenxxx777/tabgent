@@ -470,7 +470,31 @@ Short daily sessions build a durable habit.
     assert.equal(await page.evaluate(() => history.length), 2, 'No history entry for file://');
     assert.equal(await page.textContent('#title'), 'reading paper.pdf');
     assert(await page.isVisible('#native'), 'Open in Chrome viewer stays available');
-    await wait(500);
+    // The spread buttons are in file.html too, and switching works on a local PDF.
+    assert.equal(await page.isVisible('#spread'), true, 'The spread buttons are in the toolbar');
+    await page.click('#spreadOdd');
+    assert.equal(
+      await until(
+        async () => (await pdf.evaluate(() => PDFViewerApplication.pdfViewer.spreadMode)) === 1,
+      ),
+      true,
+      'A local PDF switches to two-page view',
+    );
+    assert.equal(await page.getAttribute('#spreadOdd', 'aria-pressed'), 'true');
+    await page.click('#spreadNone');
+    assert.equal(
+      await until(
+        async () => (await pdf.evaluate(() => PDFViewerApplication.pdfViewer.spreadMode)) === 0,
+      ),
+      true,
+      'A local PDF returns to one page',
+    );
+    // Switching spreads scrolls back to the start; return to page 2 for the highlight below.
+    await pdf.evaluate(() => (PDFViewerApplication.page = 2));
+    await pdf
+      .locator('.page[data-page-number="2"] .textLayer .endOfContent')
+      .waitFor({ state: 'attached' });
+    await wait(1500);
     assert.deepEqual(folders(books, 'paper-'), [], 'Opening a PDF writes nothing to the vault');
     console.log(
       'PASS a local PDF opens in Tabgent viewer without Chrome viewer or a file:// entry',

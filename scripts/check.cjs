@@ -45,6 +45,20 @@ assert.equal(
   JSON.parse(fs.readFileSync('package.json')).version,
   JSON.parse(fs.readFileSync('extension/manifest.json')).version,
 );
+// extension/pdf/file.html is a copy of viewer.html sharing viewer.js: every toolbar element
+// one has, the other must have too, or viewer.js breaks on a missing element.
+const ids = (file) =>
+  new Set([...fs.readFileSync(file, 'utf8').matchAll(/\bid="([^"]+)"/g)].map((m) => m[1]));
+const viewerIds = ids('extension/pdf/viewer.html'),
+  fileIds = ids('extension/pdf/file.html');
+assert.deepEqual(
+  {
+    missing: [...viewerIds].filter((id) => !fileIds.has(id)),
+    extra: [...fileIds].filter((id) => !viewerIds.has(id)),
+  },
+  { missing: [], extra: [] },
+  'extension/pdf/file.html and viewer.html must keep the same element ids',
+);
 console.log(
   'PASS syntax, JSON, escaped noncharacters, localization references, and release version',
 );
