@@ -6,12 +6,15 @@
   if (globalThis.tabgentLocalPdf || window !== top || document.contentType !== 'application/pdf')
     return;
   globalThis.tabgentLocalPdf = true;
+  const lifecycle = globalThis.tabgentContentLifecycle;
+  if (lifecycle ? !lifecycle.check() : !globalThis.chrome?.runtime?.id) return;
   const from = location.href;
   try {
     chrome.runtime
       .sendMessage({ type: 'localPdfOpen' })
       .then((reply) => {
-        if (reply?.url && location.href === from) location.replace(reply.url);
+        if ((!lifecycle || lifecycle.check()) && reply?.url && location.href === from)
+          location.replace(reply.url);
       })
       .catch(() => {});
   } catch {}

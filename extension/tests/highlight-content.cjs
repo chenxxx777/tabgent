@@ -678,6 +678,7 @@ const assert = require('node:assert/strict'),
         },
       };
     });
+    await prerendered.addScriptTag({ path: path.resolve(__dirname, '../content-lifecycle.js') });
     await prerendered.addScriptTag({ path: path.resolve(__dirname, '../web-anchor.js') });
     await prerendered.addScriptTag({ path: path.resolve(__dirname, '../user-error.js') });
     await prerendered.addScriptTag({ path: path.resolve(__dirname, '../highlight-note.js') });
@@ -695,6 +696,44 @@ const assert = require('node:assert/strict'),
     await prerendered.waitForFunction(() => CSS.highlights.get('tabgent-highlight').size === 1);
     assert.equal(await prerendered.evaluate(() => sent[0].type), 'highlightResolve');
     console.log('PASS prerendered pages restore highlights when activated');
+
+    const orphanErrors = [];
+    prerendered.on('pageerror', (error) => orphanErrors.push(error.message));
+    await prerendered.evaluate(() => {
+      globalThis.savedChrome = chrome;
+      const range = document.createRange();
+      range.selectNodeContents(document.querySelector('#kept'));
+      getSelection().removeAllRanges();
+      getSelection().addRange(range);
+    });
+    await prerendered.waitForSelector('tabgent-reader', { state: 'attached' });
+    await prerendered.evaluate(() => {
+      chrome = { runtime: undefined, i18n: undefined };
+      document.dispatchEvent(new Event('selectionchange'));
+      document.dispatchEvent(new Event('pointerup'));
+    });
+    await prerendered.waitForSelector('tabgent-refresh-hint', { state: 'attached' });
+    assert.equal(await prerendered.locator('tabgent-reader').count(), 0);
+    assert.equal(await prerendered.evaluate(() => CSS.highlights.has('tabgent-highlight')), false);
+    assert.deepEqual(orphanErrors, [], 'An orphan makes no invalid API calls');
+    await prerendered.evaluate(() => {
+      chrome = savedChrome;
+    });
+    for (const script of [
+      'content-lifecycle',
+      'web-anchor',
+      'user-error',
+      'highlight-note',
+      'highlight-content',
+    ])
+      await prerendered.addScriptTag({ path: path.resolve(__dirname, `../${script}.js`) });
+    await prerendered.waitForFunction(() => CSS.highlights.get('tabgent-highlight')?.size === 1);
+    assert.equal(await prerendered.locator('tabgent-refresh-hint').count(), 0);
+    await prerendered.evaluate(() => document.dispatchEvent(new Event('selectionchange')));
+    await prerendered.waitForSelector('tabgent-reader', { state: 'attached' });
+    assert.equal(await prerendered.locator('tabgent-reader').count(), 1);
+    assert.deepEqual(orphanErrors, []);
+    console.log('PASS an orphan quietly stops, shows one refresh hint and can be replaced');
   } finally {
     await browser.close();
   }

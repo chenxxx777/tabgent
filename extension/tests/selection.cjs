@@ -14,7 +14,7 @@ const assert = require('node:assert/strict'),
     async function setup(frame) {
       await frame.evaluate(() => {
         globalThis.captured = [];
-        globalThis.chrome = { runtime: { sendMessage: async (m) => captured.push(m) } };
+        globalThis.chrome = { runtime: { id: 'test', sendMessage: async (m) => captured.push(m) } };
       });
       await frame.addScriptTag({ path: path.resolve(__dirname, '../selection-content.js') });
     }

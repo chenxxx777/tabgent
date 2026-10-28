@@ -42,6 +42,7 @@ import {
 } from './clip-routing.js';
 import { createFeeds, feedMessages, feedReaderMessages } from './feeds.js';
 import { createTranslateRelay } from './translate-routing.js';
+import { reinjectContentScripts } from './content-reinjection.js';
 startPdfRouting();
 // Image Referer rules of a worker that stopped mid-request.
 clearRefererRules().catch(() => {});
@@ -819,6 +820,7 @@ chrome.runtime.onConnect.addListener((port) => {
     }
   });
   port.onDisconnect.addListener(() => {
+    void globalThis.chrome?.runtime?.lastError;
     session?.ports.delete(port);
     for (const [id, request] of requests) if (request.port === port) requests.delete(id);
   });
@@ -1898,6 +1900,8 @@ loaded.then(() => {
 
 // Native PDF selections are exposed by Chrome's selection context menu.
 chrome.runtime.onInstalled.addListener(() => {
+  // Existing documents keep their old scripts when an extension is updated or reloaded.
+  void reinjectContentScripts().catch(() => {});
   void feeds.start().catch(console.warn);
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({

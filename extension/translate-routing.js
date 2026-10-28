@@ -58,6 +58,7 @@ export function createTranslateRelay(connect, { extensionId = chrome.runtime.id 
       }
     });
     port.onDisconnect.addListener(() => {
+      void globalThis.chrome?.runtime?.lastError;
       for (const ident of own.values()) {
         routes.delete(ident);
         post({ op: 'translateCancel', id: ident });

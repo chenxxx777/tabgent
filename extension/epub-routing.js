@@ -78,6 +78,7 @@ export function registerEpubPort(port) {
     }
   });
   port.onDisconnect.addListener(() => {
+    void globalThis.chrome?.runtime?.lastError;
     if (views.get(tab.id) === view) views.delete(tab.id);
     for (const pending of view.pending.values()) {
       clearTimeout(pending.timer);

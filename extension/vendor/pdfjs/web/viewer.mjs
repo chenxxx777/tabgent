@@ -8911,7 +8911,7 @@ class PDFPrintService {
       renderProgress(index, pageCount);
       renderPage(this, this.pdfDocument, index + 1, this.pagesOverview[index], this._printResolution, this._optionalContentConfigPromise, this._printAnnotationStoragePromise).then(this.useRenderedPage.bind(this)).then(function () {
         renderNextPage(resolve, reject);
-      }, reject);
+      }, reject).catch(reject);
     };
     return new Promise(renderNextPage);
   }

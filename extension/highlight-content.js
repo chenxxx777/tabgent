@@ -14,7 +14,10 @@
   globalThis.tabgentHighlightsInstalled = true;
   const anchors = globalThis.tabgentWebAnchor,
     notes = globalThis.tabgentHighlightNote;
-  const t = (key, ...values) => chrome.i18n.getMessage(key, values.map(String)) || key;
+  const lifecycle = globalThis.tabgentContentLifecycle;
+  const contextValid = () => (lifecycle ? lifecycle.check() : !!globalThis.chrome?.runtime?.id);
+  const t = (key, ...values) =>
+    (contextValid() && globalThis.chrome?.i18n?.getMessage(key, values.map(String))) || key;
   // Resting the pointer on an English selection shows its Chinese translation beside it.
   const hover = globalThis.tabgentHoverTranslate?.attach({
     doc: document,
@@ -67,10 +70,11 @@
   async function send(message) {
     let response;
     try {
+      if (!contextValid()) throw Error('Extension context invalidated');
       response = await chrome.runtime.sendMessage(message);
     } catch (error) {
       // The extension was reloaded or removed; this copy of the script is orphaned.
-      if (!chrome.runtime?.id) teardown();
+      if (!contextValid()) teardown();
       throw error;
     }
     if (!response) throw Error('No response');
@@ -216,6 +220,7 @@
     element.style.left = `${clamp(rect.left + rect.width / 2 - width / 2, 8, innerWidth - width - 8)}px`;
   }
   function notify(message) {
+    if (signal.aborted || !contextValid()) return;
     ensureUi();
     toast.textContent = message;
     toast.hidden = false;
@@ -308,6 +313,7 @@
     return backward ? rects[0] : rects.at(-1);
   }
   function evaluateSelection() {
+    if (!contextValid() || signal.aborted) return;
     if (inUi() || pointerDown) return;
     const selection = getSelection();
     if (!selection?.rangeCount || selection.isCollapsed || !draftable(selection))
@@ -672,6 +678,7 @@
   }
 
   function repaint() {
+    if (signal.aborted) return;
     paint.clear();
     for (const record of records.values())
       if (record.range && !record.range.collapsed) paint.add(record.range);
@@ -681,7 +688,7 @@
   }
   let reported = '';
   function report() {
-    if (!page) return;
+    if (!page || signal.aborted) return;
     const saved = [...records.values()].filter((record) => record.highlight);
     const unanchored = saved.filter((record) => !record.range).map((r) => r.highlight.id);
     const status = {
@@ -761,7 +768,7 @@
     anchorAll();
   }
   function observe() {
-    if (observer || !records.size) return;
+    if (signal.aborted || observer || !records.size) return;
     observer = new MutationObserver((mutations) => {
       if (mutations.every((m) => m.target === host || [...m.addedNodes].includes(host))) return;
       schedulePass();
@@ -776,6 +783,7 @@
   let loading = 0,
     loadAttempts = 0;
   async function load() {
+    if (signal.aborted || !contextValid()) return;
     const url = pageUrl(),
       generation = ++loading;
     observer?.disconnect();
@@ -817,14 +825,20 @@
   }
 
   function teardown() {
+    if (signal.aborted) return;
+    ++loading;
     listeners.abort();
     hover?.destroy();
     observer?.disconnect();
     clearTimeout(passTimer);
+    clearTimeout(selectionTimer);
+    clearTimeout(toastTimer);
+    clearTimeout(flash);
     CSS.highlights.delete('tabgent-highlight');
     CSS.highlights.delete('tabgent-highlight-active');
     host?.remove();
   }
+  lifecycle?.add(teardown);
 
   const options = { capture: true, signal };
   document.addEventListener(
@@ -915,7 +929,7 @@
         title: pageTitle(),
         meta: pageMeta(),
       });
-      if (page?.url !== url || response.url !== url) return;
+      if (signal.aborted || page?.url !== url || response.url !== url) return;
       page.documentId ||= response.document?.createdAt ? response.document.id : null;
       for (const highlight of response.highlights || []) {
         const record = records.get(highlight.id);
@@ -926,7 +940,12 @@
   // Side panel actions arrive through the service worker, never from page scripts.
   let flash;
   function onExtensionMessage(message, sender, reply) {
-    if (sender.id !== chrome.runtime.id || sender.tab || message?.type !== 'tabgentHighlight')
+    if (
+      !contextValid() ||
+      sender.id !== chrome.runtime.id ||
+      sender.tab ||
+      message?.type !== 'tabgentHighlight'
+    )
       return;
     if (message.action === 'refresh') return void refresh();
     const record = records.get(message.highlightId);
@@ -949,10 +968,14 @@
       reply({ found: true });
     }
   }
-  chrome.runtime.onMessage.addListener(onExtensionMessage);
-  signal.addEventListener('abort', () =>
-    chrome.runtime.onMessage.removeListener(onExtensionMessage),
-  );
+  if (!contextValid()) return;
+  const messages = chrome.runtime.onMessage;
+  messages.addListener(onExtensionMessage);
+  signal.addEventListener('abort', () => {
+    try {
+      messages.removeListener(onExtensionMessage);
+    } catch {}
+  });
   // A prerendered document is not the primary frame yet, so the worker would reject it.
   if (document.prerendering)
     document.addEventListener('prerenderingchange', () => void load(), { once: true, signal });

@@ -74,10 +74,14 @@ const article = () => `<!doctype html><title>Highlight fixture</title>
         headless: true,
         channel: 'chromium',
         viewport: { width: 1100, height: 800 },
+        ignoreDefaultArgs: ['--disable-back-forward-cache'],
+        env: { ...process.env, HOME: home, CODEX_HOME: path.join(home, 'codex') },
         args: [
           `--disable-extensions-except=${extension}`,
           `--load-extension=${extension}`,
           '--remote-debugging-port=0',
+          '--headless=new',
+          '--use-mock-keychain',
         ],
       });
       return context.serviceWorkers()[0] || context.waitForEvent('serviceworker');
@@ -199,6 +203,214 @@ const article = () => `<!doctype html><title>Highlight fixture</title>
     assert.equal(fs.existsSync(path.join(vault, 'AGENTS.md')), true);
     assert.equal(await until(async () => (await painted(page)) === 1), true);
     console.log('PASS isolated content script saves to the vault files and paints a highlight');
+
+    // Enable developer reloads only in this disposable Chrome profile. Chrome 151 otherwise
+    // disables command-line unpacked extensions on runtime.reload().
+    const extensions = await context.newPage();
+    await extensions.goto('chrome://extensions');
+    await extensions.evaluate(() =>
+      chrome.developerPrivate.updateProfileConfiguration({ inDeveloperMode: true }),
+    );
+    await extensions.close();
+    const errors = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+    const cdp = await context.newCDPSession(page);
+    await cdp.send('Runtime.enable');
+    cdp.on('Runtime.exceptionThrown', ({ exceptionDetails }) =>
+      errors.push(exceptionDetails.exception?.description || exceptionDetails.text),
+    );
+    cdp.on('Runtime.consoleAPICalled', (event) => {
+      if (event.type === 'error') errors.push(JSON.stringify(event.args));
+    });
+    const tabIdForReload = await worker.evaluate(
+      async (url) => (await chrome.tabs.query({ url }))[0].id,
+      base + '/article?x=1*',
+    );
+    await page.evaluate((base) => {
+      globalThis.documentBeforeReload = document;
+      const frame = document.createElement('iframe');
+      frame.src = base + '/frame';
+      document.body.append(frame);
+    }, base);
+    assert(await until(() => page.frames().length === 2));
+    await page.frames()[1].waitForLoadState();
+    assert.equal(await worker.evaluate(() => chrome.extension.isAllowedFileSchemeAccess()), true);
+    const local = await context.newPage();
+    const localFile = path.join(temp, 'reload.html');
+    fs.writeFileSync(
+      localFile,
+      '<!doctype html><title>Local reload</title><p id="b">People are more persistent when they endorse what they do.</p>',
+    );
+    await local.goto(require('node:url').pathToFileURL(localFile).href);
+    await local.evaluate(() => {
+      globalThis.documentBeforeReload = document;
+    });
+    const localTab = await worker.evaluate(
+      async (url) => (await chrome.tabs.query({ url }))[0].id,
+      local.url(),
+    );
+    await worker.evaluate(
+      (tabId) =>
+        chrome.scripting.executeScript({
+          target: { tabId },
+          func: () =>
+            tabgentContentLifecycle.add(() => {
+              document.documentElement.dataset.oldDisposed = 'yes';
+            }),
+        }),
+      localTab,
+    );
+    await page.evaluate(() => getSelection()?.removeAllRanges());
+    await drag(page, '#a', 'endorsement');
+    const oldHost = await page.$('tabgent-reader');
+    await worker.evaluate(
+      (tabId) =>
+        chrome.scripting.executeScript({
+          target: { tabId, allFrames: true },
+          func: () => {
+            globalThis.reloadProbe = 'old';
+            tabgentContentLifecycle.add(() => {
+              document.documentElement.dataset.oldDisposed = 'yes';
+              document.documentElement.dataset.oldRuntime = String(chrome.runtime?.id);
+            });
+          },
+        }),
+      tabIdForReload,
+    );
+    const nextWorker = context.waitForEvent('serviceworker');
+    await worker.evaluate(() => chrome.runtime.reload()).catch(() => {});
+    worker = await nextWorker;
+    assert(
+      await until(() =>
+        page.evaluate(() => document.documentElement.dataset.oldDisposed === 'yes'),
+      ),
+    );
+    assert.equal(
+      await page.evaluate(() => document === documentBeforeReload),
+      true,
+      'The document did not refresh',
+    );
+    assert.equal(
+      await oldHost.evaluate((host) => host.isConnected),
+      false,
+      'The old shadow host was removed',
+    );
+    assert.equal(
+      await page.evaluate(() => document.documentElement.dataset.oldRuntime),
+      'undefined',
+    );
+    const worlds = await worker.evaluate(
+      (tabId) =>
+        chrome.scripting.executeScript({
+          target: { tabId, allFrames: true },
+          func: () => ({
+            previous: globalThis.reloadProbe || null,
+            selection: !!globalThis.browserAgentSelectionInstalled,
+            disposed: document.documentElement.dataset.oldDisposed,
+          }),
+        }),
+      tabIdForReload,
+    );
+    assert.equal(worlds.length, 2, 'The existing subframe was reinjected too');
+    for (const { result } of worlds)
+      assert.deepEqual(result, { previous: null, selection: true, disposed: 'yes' });
+    assert(
+      await until(async () => (await painted(page)) === 1),
+      'Saved highlights restore without refresh',
+    );
+    await page.evaluate(() => getSelection()?.removeAllRanges());
+    await drag(page, '#a', 'endorsement');
+    assert.equal(await page.locator('tabgent-reader').count(), 1);
+    assert((await layerHtml(page)).includes('data-action="highlight"'), 'The new toolbar opens');
+    assert(
+      await until(() =>
+        local.evaluate(() => document.documentElement.dataset.oldDisposed === 'yes'),
+      ),
+    );
+    assert.equal(await local.evaluate(() => document === documentBeforeReload), true);
+    await drag(local, '#b', 'more persistent');
+    assert.equal(
+      await local.locator('tabgent-reader').count(),
+      1,
+      'Allowed local files also recover',
+    );
+    await local.close();
+
+    // A second injection in the *same* live world also replaces the owner and libraries.
+    const hostAfterReload = await page.$('tabgent-reader');
+    await worker.evaluate(
+      (tabId) =>
+        chrome.scripting.executeScript({
+          target: { tabId },
+          func: () => {
+            globalThis.oldHelpers = [
+              tabgentWebAnchor,
+              tabgentHighlightNote,
+              tabgentHoverTranslate,
+              tabgentExplainError,
+            ];
+          },
+        }),
+      tabIdForReload,
+    );
+    await worker.evaluate(
+      (tabId) =>
+        chrome.scripting.executeScript({
+          target: { tabId },
+          files: [
+            ...new Set(chrome.runtime.getManifest().content_scripts.flatMap((entry) => entry.js)),
+          ],
+        }),
+      tabIdForReload,
+    );
+    assert.equal(await hostAfterReload.evaluate((host) => host.isConnected), false);
+    const [helpers] = await worker.evaluate(
+      (tabId) =>
+        chrome.scripting.executeScript({
+          target: { tabId },
+          func: () =>
+            oldHelpers.every(
+              (old, i) =>
+                old !==
+                [
+                  tabgentWebAnchor,
+                  tabgentHighlightNote,
+                  tabgentHoverTranslate,
+                  tabgentExplainError,
+                ][i],
+            ),
+        }),
+      tabIdForReload,
+    );
+    assert.equal(helpers.result, true, 'Same-world handoff replaces every shared helper');
+    await page.evaluate(() => getSelection()?.removeAllRanges());
+    await drag(page, '#a', 'endorsement');
+    assert.equal(await page.locator('tabgent-reader').count(), 1);
+    assert(await until(async () => (await painted(page)) === 1));
+    assert.deepEqual(errors, [], 'Reload and repeated injection have no unhandled errors');
+    await cdp.detach();
+    console.log(
+      'PASS real extension reload replaces isolated worlds, restores highlights and frame selection without refreshing',
+    );
+
+    // A BFCache lifecycle closes the translation port and reconnects on restoration.
+    await page.evaluate(() => {
+      globalThis.bfcacheShows = [];
+      addEventListener('pageshow', (event) => bfcacheShows.push(event.persisted));
+    });
+    await page.goto(base + '/elsewhere');
+    await page.goBack({ waitUntil: 'commit' });
+    assert.equal(
+      await page.evaluate(() => document === documentBeforeReload),
+      true,
+      'Back restores the cached document',
+    );
+    assert.deepEqual(await page.evaluate(() => bfcacheShows), [true]);
+    await page.evaluate(() => getSelection()?.removeAllRanges());
+    await drag(page, '#a', 'endorsement');
+    assert.equal(await page.locator('tabgent-reader').count(), 1);
+    assert(await until(async () => (await painted(page)) === 1));
+    console.log('PASS BFCache restores the toolbar and saved highlights');
 
     assert.match(
       await worker.evaluate(async () => {
@@ -358,6 +570,7 @@ const article = () => `<!doctype html><title>Highlight fixture</title>
     await page.evaluate(() => history.pushState({}, '', '/next?y=2'));
     await wait(1000);
     assert.equal(await painted(page), 0, 'SPA navigation clears the old page highlights');
+    await page.evaluate(() => getSelection()?.removeAllRanges());
     await drag(page, '#a', 'endorsement');
     await press(page, 'highlight');
     assert(await until(() => docs().some((d) => d.anchors.document.url === base + '/next?y=2')));

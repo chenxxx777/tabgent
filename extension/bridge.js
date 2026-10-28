@@ -60,6 +60,7 @@ export async function startBridge() {
     else pending.push(event);
   });
   port.onDisconnect.addListener(() => {
+    void globalThis.chrome?.runtime?.lastError;
     rejectAttach(Error('Agent disconnected'));
     const fn = listeners.get('codex-message');
     fn?.({ method: 'bridge/closed', params: { messageKey: 'disconnectedDraft' } });
