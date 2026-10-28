@@ -92,5 +92,42 @@ api.scripting.executeScript = async () => {
 await reinjectContentScripts(api);
 assert.equal(peakTabs, 8, 'At most eight tabs are being reinjected');
 assert.equal(activeTabs, 0);
-assert.equal(visited.length, 25, 'A failing tab does not block later batches');
+assert.equal(visited.length, 25, 'A failing tab does not block the remaining queue');
 console.log('PASS reinjection limits concurrency to eight tabs and continues after closed tabs');
+
+// One executeScript waits for document_idle forever. The other seven slots must keep
+// taking new tabs before that tab's timeout, and the whole sweep must still complete.
+const completed = new Set();
+let finishOthers;
+const othersDone = new Promise((resolve) => {
+  finishOthers = resolve;
+});
+api.webNavigation.getAllFrames = async ({ tabId }) => [
+  { frameId: 0, documentId: String(tabId), url: 'https://reader.test/article' },
+];
+api.scripting.executeScript = async ({ target }) => {
+  if (target.tabId === 0) return new Promise(() => {});
+  completed.add(target.tabId);
+  if (completed.size === 24) finishOthers();
+};
+let timeoutPassed = false,
+  watchdog;
+const timeout = setTimeout(() => {
+  timeoutPassed = true;
+}, 20);
+try {
+  const sweep = reinjectContentScripts(api, { timeoutMs: 20 });
+  const limit = new Promise((_, reject) => {
+    watchdog = setTimeout(() => reject(Error('A slow tab blocked the queue')), 1000);
+  });
+  await Promise.race([othersDone, limit]);
+  assert.equal(timeoutPassed, false, 'Later tabs finish before the stalled tab times out');
+  await Promise.race([sweep, limit]);
+  assert.equal(completed.size, 24, 'An unresolved injection does not prevent sweep completion');
+} finally {
+  clearTimeout(timeout);
+  clearTimeout(watchdog);
+}
+console.log(
+  'PASS a stalled tab neither blocks slot refill nor prevents the timed sweep from finishing',
+);
