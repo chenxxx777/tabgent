@@ -287,6 +287,21 @@
   "epubPaginated": {
     "message": "分页"
   },
+  "epubSpread": {
+    "message": "页面"
+  },
+  "epubSpreadSingle": {
+    "message": "单页"
+  },
+  "epubSpreadDouble": {
+    "message": "双页"
+  },
+  "epubSpreadAuto": {
+    "message": "自动"
+  },
+  "epubSpreadNarrow": {
+    "message": "窗口较窄，已改为单页。"
+  },
   "epubLibrary": {
     "message": "资料库"
   },
@@ -768,6 +783,18 @@
   },
   "pdfOpenNative": {
     "message": "用 Chrome 阅读器打开"
+  },
+  "pdfSpread": {
+    "message": "页面"
+  },
+  "pdfSpreadSingle": {
+    "message": "单页"
+  },
+  "pdfSpreadOdd": {
+    "message": "双页"
+  },
+  "pdfSpreadEven": {
+    "message": "双页（封面单独）"
   },
   "pdfLoading": {
     "message": "正在加载 PDF…"

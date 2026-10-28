@@ -204,6 +204,24 @@ async function until(check, ms = 10000) {
       return groups;
     }
     const paintedIs = (count) => until(async () => (await painted()) === count);
+    // 2 when one visible page is a facing spread. The iframe is as wide as the whole
+    // chapter, and a single column is narrower than the book, so compare a column
+    // with the paginator's visible container.
+    async function columns(target = page) {
+      const frame = target.frames().find((frame) => frame.url() === 'about:srcdoc');
+      if (!frame) return null;
+      try {
+        const measured = await frame.evaluate(() => {
+          const columnWidth = parseFloat(getComputedStyle(document.documentElement).columnWidth);
+          const visible = frameElement?.parentElement?.parentElement?.clientWidth || 0;
+          if (!(columnWidth > 0) || !(visible > 0)) return 0;
+          return visible > columnWidth * 1.6 ? 2 : 1;
+        });
+        return measured || null;
+      } catch {
+        return null;
+      }
+    }
     // Opening or closing the contents drawer reflows the book; measure once it is still.
     async function settled() {
       let last = '';
@@ -367,6 +385,10 @@ async function until(check, ms = 10000) {
       fs.readFileSync(book),
     );
     console.log('PASS file import renders the book and saves it with its full text');
+    // Keep the rest of this book on one page. Auto would use two pages at this width.
+    await page.click('#spreadSingle');
+    assert.equal(await page.getAttribute('#spreadSingle', 'aria-pressed'), 'true');
+    assert.equal(await until(async () => (await columns()) === 1), true);
     if (shots) await page.screenshot({ path: path.join(shots, 'reader.png') });
 
     // Book scripts and remote resources are inert.
@@ -521,6 +543,96 @@ async function until(check, ms = 10000) {
     await page.click('#flow');
     console.log('PASS font size and scrolled/paginated modes');
     if (shots) await page.screenshot({ path: path.join(shots, 'chapter-two.png') });
+
+    // Facing pages: two columns when the window is wide, one page when it is not, remembered.
+    await page.setViewportSize({ width: 1400, height: 900 });
+    await page.click('#spreadAuto');
+    assert.equal(
+      await until(async () => (await columns()) === 2),
+      true,
+      'Auto uses two pages on a wide window',
+    );
+    await page.setViewportSize({ width: 1000, height: 800 });
+    assert.equal(
+      await until(async () => (await columns()) === 1),
+      true,
+      'Auto uses one page below its width',
+    );
+    await page.click('#flow');
+    assert(await page.isDisabled('#spreadDouble'), 'Scroll mode disables the page view');
+    await page.click('#flow');
+    assert(await page.isEnabled('#spreadDouble'));
+    await page.setViewportSize({ width: 1280, height: 860 });
+    await page.click('#spreadDouble');
+    assert.equal(await page.getAttribute('#spreadDouble', 'aria-pressed'), 'true');
+    assert.equal(
+      await until(async () => (await columns()) === 2),
+      true,
+      'Two pages forces a spread',
+    );
+    // Remember the choice while this page is still on chapter two, so the other
+    // reader's position write cannot replace the chapter the reopen test expects.
+    const again = await context.newPage();
+    await again.setViewportSize({ width: 1400, height: 900 });
+    await again.goto(readerUrl + '?book=' + encodeURIComponent(documentId));
+    await again.waitForSelector('#viewer:not([hidden])');
+    assert.equal(
+      await until(
+        async () => (await again.getAttribute('#spreadDouble', 'aria-pressed')) === 'true',
+        20000,
+      ),
+      true,
+    );
+    assert.equal(
+      await until(async () => (await columns(again)) === 2, 20000),
+      true,
+      'A new visit keeps two pages',
+    );
+    await again.close();
+    await wait(600);
+    await page.bringToFront();
+    const place = await page.textContent('#location');
+    const progress = await page.textContent('#percent');
+    await page.keyboard.press('ArrowRight');
+    assert.notEqual(
+      await until(async () => {
+        const location = await page.textContent('#location');
+        const percent = await page.textContent('#percent');
+        return (location && location !== place) || (percent && percent !== progress)
+          ? 'turned'
+          : null;
+      }),
+      null,
+      'One key turn leaves the spread',
+    );
+    await page.setViewportSize({ width: 800, height: 700 });
+    assert.equal(
+      await until(async () => (await columns()) === 1),
+      true,
+      'Two pages falls back when the window is narrow',
+    );
+    assert.equal(
+      await until(async () => {
+        const text = await page
+          .locator('#toast')
+          .evaluate((el) => (el.matches(':popover-open') ? el.textContent : ''));
+        return text || null;
+      }),
+      await message('epubSpreadNarrow'),
+    );
+    assert.equal(
+      await page.evaluate(
+        async () => (await chrome.storage.local.get('epubSettings')).epubSettings.spread,
+      ),
+      'double',
+    );
+    await page.click('#spreadSingle');
+    await page.setViewportSize({ width: 1200, height: 820 });
+    await page.click('#contentsButton');
+    await page.click('#toc button:text-is("Chapter Two: Repetition")');
+    await page.click('#contentsButton');
+    assert(await until(async () => (await chapterTitle()) === 'Chapter Two: Repetition'));
+    console.log('PASS two-page view, narrow fallback, and remembered setting');
 
     // Reopen from the vault: no file picker; position and highlights are restored.
     await wait(600); // The position is saved after a short debounce.
