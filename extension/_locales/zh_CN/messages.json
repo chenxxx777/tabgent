@@ -1,4 +1,7 @@
 {
+  "reloadHint": {
+    "message": "Tabgent 已重新加载，请刷新此页面后继续使用。"
+  },
   "extensionName": {
     "message": "Tabgent"
   },

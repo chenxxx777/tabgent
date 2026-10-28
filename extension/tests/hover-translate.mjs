@@ -216,6 +216,31 @@ orphaned.translate('Text.', handlers('e'));
 assert.deepEqual(events.at(-1), ['e', 'error', 'disconnected']);
 console.log('PASS the page client streams, cancels and reports a lost connection');
 
+// BFCache suspends an open document without leaking its port or pending translation.
+let disconnected = 0;
+pagePort.disconnect = () => disconnected++;
+client.suspend();
+assert.equal(disconnected, 1);
+assert.equal(client.size, 0);
+assert.deepEqual(events.at(-1), ['d', 'error', 'disconnected']);
+client.warm();
+assert.equal(connects, 2, 'No connection opens while the document is cached');
+pagePort = fakePort();
+client.resume();
+assert.equal(connects, 2, 'BFCache restore alone never starts the translator, even when disabled');
+assert.deepEqual(pagePort.sent, []);
+client.translate('After going back.', handlers('restored'));
+assert.equal(connects, 3, 'The next selection reconnects on demand');
+const restoredRequest = pagePort.sent.at(-1);
+pagePort.emit({ id: restoredRequest.id, done: true, text: '恢复' });
+assert.deepEqual(events.at(-1), ['restored', 'done', '恢复']);
+client.destroy();
+client.resume();
+assert.equal(connects, 3, 'A replaced client never reconnects');
+console.log(
+  'PASS BFCache disconnects pending work and reconnects on restore; replaced clients stay closed',
+);
+
 // The service worker relay: requests reach the connector, answers return to their port.
 const native = { sent: [] };
 let nativeBroken = false;

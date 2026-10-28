@@ -70,6 +70,7 @@ function connect() {
     }),
   );
   current.onDisconnect.addListener(() => {
+    void globalThis.chrome?.runtime?.lastError;
     ready = null;
     setTimeout(connect, 500);
   });

@@ -22,6 +22,8 @@ for (const file of [
   'feeds-routing.mjs',
   'local-file-routing.mjs',
   'hover-translate.mjs',
+  'content-reinjection.mjs',
+  'pdf-print.cjs',
   'attachments.py',
   'local-files.py',
   'vault.py',

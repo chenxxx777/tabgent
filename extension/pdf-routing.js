@@ -141,6 +141,7 @@ export function startPdfRouting() {
       else p.resolve(message.result);
     });
     port.onDisconnect.addListener(() => {
+      void globalThis.chrome?.runtime?.lastError;
       if (views.get(tab.id) === view) views.delete(tab.id);
       for (const p of view.pending.values()) {
         clearTimeout(p.timer);

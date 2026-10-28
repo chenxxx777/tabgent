@@ -1,0 +1,133 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { reinjectContentScripts } from '../content-reinjection.js';
+
+const manifest = JSON.parse(fs.readFileSync(new URL('../manifest.json', import.meta.url)));
+const frames = [
+  { frameId: 0, documentId: 'main', url: 'https://reader.test/article' },
+  { frameId: 1, documentId: 'child', url: 'http://other.test/frame' },
+  { frameId: 2, documentId: 'blank', url: 'about:blank' },
+  { frameId: 3, documentId: 'cached', url: 'https://reader.test/old', documentLifecycle: 'cached' },
+];
+const calls = [];
+let fileAccess = false;
+const api = {
+  runtime: { getManifest: () => manifest },
+  extension: { isAllowedFileSchemeAccess: async () => fileAccess },
+  tabs: { query: async () => [1, 2, 3, 4, 5].map((id) => ({ id })) },
+  webNavigation: {
+    getAllFrames: async ({ tabId }) => {
+      if (tabId === 1) return frames;
+      if (tabId === 2) return [{ frameId: 0, documentId: 'file', url: 'file:///tmp/article.html' }];
+      if (tabId === 3) return [{ frameId: 0, url: 'file:///tmp/' }];
+      if (tabId === 4) return [{ frameId: 0, url: 'chrome://extensions/' }];
+      throw Error('Tab closed during enumeration');
+    },
+  },
+  scripting: Object.fromEntries(
+    ['executeScript', 'removeCSS', 'insertCSS'].map((method) => [
+      method,
+      async (options) => calls.push({ method, ...options }),
+    ]),
+  ),
+};
+await reinjectContentScripts(api);
+let injected = calls.filter((call) => call.method === 'executeScript');
+const main = injected.find((call) => call.target.documentIds[0] === 'main');
+const child = injected.find((call) => call.target.documentIds[0] === 'child');
+assert.equal(injected.length, 2);
+assert.deepEqual(main.target, { tabId: 1, documentIds: ['main'] });
+assert.deepEqual(main.files, [
+  'content-lifecycle.js',
+  'selection-content.js',
+  'web-anchor.js',
+  'user-error.js',
+  'highlight-note.js',
+  'hover-translate.js',
+  'highlight-content.js',
+]);
+assert.deepEqual(child.files, ['content-lifecycle.js', 'selection-content.js']);
+assert.equal(calls.filter((call) => call.method === 'insertCSS').length, 1);
+
+calls.length = 0;
+fileAccess = true;
+await reinjectContentScripts(api);
+injected = calls.filter((call) => call.method === 'executeScript');
+assert.equal(
+  injected.length,
+  3,
+  'File access includes files, excludes directories and restricted URLs',
+);
+assert(
+  injected.find((call) => call.target.documentIds?.[0] === 'file').files.includes('local-pdf.js'),
+);
+
+api.scripting.executeScript = async () => {
+  throw Error('Cannot access this restricted page');
+};
+await reinjectContentScripts(api);
+console.log(
+  'PASS manifest order, frame scope, file permission, exclusions and inaccessible-tab isolation',
+);
+
+let activeTabs = 0,
+  peakTabs = 0;
+const visited = [];
+api.tabs.query = async () => Array.from({ length: 25 }, (_, id) => ({ id }));
+api.webNavigation.getAllFrames = async ({ tabId }) => {
+  activeTabs++;
+  peakTabs = Math.max(peakTabs, activeTabs);
+  await new Promise((resolve) => setImmediate(resolve));
+  visited.push(tabId);
+  if (tabId === 3) {
+    activeTabs--;
+    throw Error('Tab closed');
+  }
+  return [{ frameId: 0, documentId: String(tabId), url: 'https://reader.test/article' }];
+};
+api.scripting.executeScript = async () => {
+  await new Promise((resolve) => setImmediate(resolve));
+  activeTabs--;
+};
+await reinjectContentScripts(api);
+assert.equal(peakTabs, 8, 'At most eight tabs are being reinjected');
+assert.equal(activeTabs, 0);
+assert.equal(visited.length, 25, 'A failing tab does not block the remaining queue');
+console.log('PASS reinjection limits concurrency to eight tabs and continues after closed tabs');
+
+// One executeScript waits for document_idle forever. The other seven slots must keep
+// taking new tabs before that tab's timeout, and the whole sweep must still complete.
+const completed = new Set();
+let finishOthers;
+const othersDone = new Promise((resolve) => {
+  finishOthers = resolve;
+});
+api.webNavigation.getAllFrames = async ({ tabId }) => [
+  { frameId: 0, documentId: String(tabId), url: 'https://reader.test/article' },
+];
+api.scripting.executeScript = async ({ target }) => {
+  if (target.tabId === 0) return new Promise(() => {});
+  completed.add(target.tabId);
+  if (completed.size === 24) finishOthers();
+};
+let timeoutPassed = false,
+  watchdog;
+const timeout = setTimeout(() => {
+  timeoutPassed = true;
+}, 20);
+try {
+  const sweep = reinjectContentScripts(api, { timeoutMs: 20 });
+  const limit = new Promise((_, reject) => {
+    watchdog = setTimeout(() => reject(Error('A slow tab blocked the queue')), 1000);
+  });
+  await Promise.race([othersDone, limit]);
+  assert.equal(timeoutPassed, false, 'Later tabs finish before the stalled tab times out');
+  await Promise.race([sweep, limit]);
+  assert.equal(completed.size, 24, 'An unresolved injection does not prevent sweep completion');
+} finally {
+  clearTimeout(timeout);
+  clearTimeout(watchdog);
+}
+console.log(
+  'PASS a stalled tab neither blocks slot refill nor prevents the timed sweep from finishing',
+);

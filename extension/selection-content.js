@@ -2,6 +2,8 @@
 (() => {
   if (globalThis.browserAgentSelectionInstalled) return;
   globalThis.browserAgentSelectionInstalled = true;
+  const lifecycle = globalThis.tabgentContentLifecycle;
+  const listeners = new AbortController();
   let timer,
     last = '',
     selectionId;
@@ -29,6 +31,7 @@
   }
   const rect = (r) => ({ x: r.x, y: r.y, width: r.width, height: r.height });
   function capture() {
+    if (lifecycle ? !lifecycle.check() : !globalThis.chrome?.runtime?.id) return;
     if (document.activeElement?.matches('input,textarea')) return;
     const selection = window.getSelection();
     const text = selection?.toString() || '';
@@ -79,11 +82,19 @@
         .catch(() => {});
     } catch {}
   }
-  document.addEventListener('selectionchange', () => {
+  lifecycle?.add(() => {
+    listeners.abort();
     clearTimeout(timer);
-    timer = setTimeout(capture, 120);
   });
-  document.addEventListener('pointerup', capture);
-  document.addEventListener('keyup', capture);
+  document.addEventListener(
+    'selectionchange',
+    () => {
+      clearTimeout(timer);
+      timer = setTimeout(capture, 120);
+    },
+    { signal: listeners.signal },
+  );
+  document.addEventListener('pointerup', capture, { signal: listeners.signal });
+  document.addEventListener('keyup', capture, { signal: listeners.signal });
   capture();
 })();

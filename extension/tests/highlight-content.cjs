@@ -645,14 +645,31 @@ const assert = require('node:assert/strict'),
       }),
     );
     await prerendered.goto('https://reader.test/prerendered');
-    await prerendered.evaluate(() => {
+    let resourceState = 'enabled',
+      resourceRequests = 0;
+    const aliveUrl = 'https://reader.test/extension-alive';
+    await prerendered.route(aliveUrl, (route) => {
+      resourceRequests++;
+      return resourceState === 'uninstalled'
+        ? route.abort()
+        : route.fulfill({ status: resourceState === 'enabled' ? 200 : 404, body: '' });
+    });
+    const englishHint = require('../_locales/en/messages.json').reloadHint.message;
+    await prerendered.evaluate((reloadHint) => {
+      const attach = Element.prototype.attachShadow;
+      Element.prototype.attachShadow = function (init) {
+        const root = attach.call(this, init);
+        if (this.localName === 'tabgent-refresh-hint') globalThis.hintRoot = root;
+        return root;
+      };
       globalThis.prerendering = true;
       Object.defineProperty(document, 'prerendering', { get: () => globalThis.prerendering });
       globalThis.sent = [];
       globalThis.chrome = {
-        i18n: { getMessage: (key) => key },
+        i18n: { getMessage: (key) => (key === 'reloadHint' ? reloadHint : key) },
         runtime: {
           id: 'test',
+          getURL: () => 'https://reader.test/extension-alive',
           onMessage: { addListener() {}, removeListener() {} },
           sendMessage: async (message) => {
             sent.push(message);
@@ -677,7 +694,8 @@ const assert = require('node:assert/strict'),
           },
         },
       };
-    });
+    }, englishHint);
+    await prerendered.addScriptTag({ path: path.resolve(__dirname, '../content-lifecycle.js') });
     await prerendered.addScriptTag({ path: path.resolve(__dirname, '../web-anchor.js') });
     await prerendered.addScriptTag({ path: path.resolve(__dirname, '../user-error.js') });
     await prerendered.addScriptTag({ path: path.resolve(__dirname, '../highlight-note.js') });
@@ -695,6 +713,94 @@ const assert = require('node:assert/strict'),
     await prerendered.waitForFunction(() => CSS.highlights.get('tabgent-highlight').size === 1);
     assert.equal(await prerendered.evaluate(() => sent[0].type), 'highlightResolve');
     console.log('PASS prerendered pages restore highlights when activated');
+
+    const orphanErrors = [];
+    prerendered.on('pageerror', (error) => orphanErrors.push(error.message));
+    await prerendered.evaluate(() => {
+      globalThis.savedChrome = chrome;
+      const range = document.createRange();
+      range.selectNodeContents(document.querySelector('#kept'));
+      getSelection().removeAllRanges();
+      getSelection().addRange(range);
+    });
+    await prerendered.waitForSelector('tabgent-reader', { state: 'attached' });
+    await prerendered.evaluate(() => {
+      chrome = { runtime: undefined, i18n: undefined };
+      document.dispatchEvent(new Event('selectionchange'));
+      document.dispatchEvent(new Event('pointerup'));
+    });
+    await prerendered.waitForSelector('tabgent-refresh-hint', { state: 'attached' });
+    assert.equal(await prerendered.evaluate(() => hintRoot.textContent), englishHint);
+    assert.equal(await prerendered.locator('tabgent-reader').count(), 0);
+    assert.equal(await prerendered.evaluate(() => CSS.highlights.has('tabgent-highlight')), false);
+    assert.deepEqual(orphanErrors, [], 'An orphan makes no invalid API calls');
+    await prerendered.evaluate(() => {
+      document.querySelector('tabgent-refresh-hint').remove();
+      document.dispatchEvent(new Event('pointerup'));
+    });
+    await prerendered.waitForTimeout(100);
+    assert.equal(
+      await prerendered.locator('tabgent-refresh-hint').count(),
+      0,
+      'The hint never repeats',
+    );
+    assert.equal(resourceRequests, 1, 'Only one liveness check per orphaned document');
+    await prerendered.evaluate(() => {
+      chrome = savedChrome;
+    });
+    for (const script of [
+      'content-lifecycle',
+      'web-anchor',
+      'user-error',
+      'highlight-note',
+      'highlight-content',
+    ])
+      await prerendered.addScriptTag({ path: path.resolve(__dirname, `../${script}.js`) });
+    await prerendered.waitForFunction(() => CSS.highlights.get('tabgent-highlight')?.size === 1);
+    assert.equal(await prerendered.locator('tabgent-refresh-hint').count(), 0);
+    await prerendered.evaluate(() => document.dispatchEvent(new Event('selectionchange')));
+    await prerendered.waitForSelector('tabgent-reader', { state: 'attached' });
+    assert.equal(await prerendered.locator('tabgent-reader').count(), 1);
+    assert.deepEqual(orphanErrors, []);
+    console.log('PASS an orphan quietly stops, shows one refresh hint and can be replaced');
+
+    const chineseHint = require('../_locales/zh_CN/messages.json').reloadHint.message;
+    await prerendered.evaluate((reloadHint) => {
+      chrome = savedChrome;
+      chrome.i18n.getMessage = (key) => (key === 'reloadHint' ? reloadHint : key);
+    }, chineseHint);
+    await prerendered.addScriptTag({ path: path.resolve(__dirname, '../content-lifecycle.js') });
+    await prerendered.evaluate(() => {
+      chrome = {};
+      document.dispatchEvent(new Event('pointerup'));
+    });
+    await prerendered.waitForSelector('tabgent-refresh-hint', { state: 'attached' });
+    assert.equal(await prerendered.evaluate(() => hintRoot.textContent), chineseHint);
+    for (resourceState of ['disabled', 'uninstalled']) {
+      await prerendered.evaluate(() => {
+        chrome = savedChrome;
+      });
+      await prerendered.addScriptTag({ path: path.resolve(__dirname, '../content-lifecycle.js') });
+      const checked = prerendered.waitForEvent(
+        resourceState === 'disabled' ? 'response' : 'requestfailed',
+        { predicate: (request) => request.url() === aliveUrl },
+      );
+      await prerendered.evaluate(() => {
+        chrome = {};
+        document.dispatchEvent(new Event('pointerup'));
+      });
+      await checked;
+      await prerendered.waitForTimeout(100);
+      assert.equal(
+        await prerendered.locator('tabgent-refresh-hint').count(),
+        0,
+        `${resourceState} must stay quiet`,
+      );
+    }
+    assert.deepEqual(orphanErrors, []);
+    console.log(
+      'PASS hints capture English/Chinese while valid and stay quiet after disable/uninstall',
+    );
   } finally {
     await browser.close();
   }

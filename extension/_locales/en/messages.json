@@ -1,4 +1,7 @@
 {
+  "reloadHint": {
+    "message": "Tabgent was reloaded. Refresh this page to continue."
+  },
   "newChat": {
     "message": "New chat"
   },

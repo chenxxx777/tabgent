@@ -6,6 +6,7 @@
 // Loaded as a content script and imported by extension pages; it only sets a global.
 (() => {
   if (globalThis.tabgentHoverTranslate) return;
+  const lifecycle = globalThis.tabgentContentLifecycle;
   const LIMIT = 2000;
   const KEY = 'hoverTranslate';
   const DEFAULTS = Object.freeze({ enabled: true, delay: 1000 });
@@ -131,11 +132,33 @@
 
   // Requests over one runtime port per document; the service worker relays them to the
   // connector. translate() returns a function that cancels the request.
-  function createClient(connect = () => chrome.runtime.connect({ name: PORT })) {
+  function createClient(
+    connect = () => {
+      if (lifecycle ? !lifecycle.check() : !globalThis.chrome?.runtime?.id)
+        throw Error('Extension context invalidated');
+      return chrome.runtime.connect({ name: PORT });
+    },
+  ) {
     let port = null,
-      sequence = 0;
+      sequence = 0,
+      suspended = false,
+      destroyed = false;
     const pending = new Map();
+    function finish() {
+      const entries = [...pending.values()];
+      pending.clear();
+      for (const entry of entries) entry.onError?.({ code: 'disconnected' });
+    }
+    function close() {
+      const previous = port;
+      port = null;
+      finish();
+      try {
+        previous?.disconnect();
+      } catch {}
+    }
     function open() {
+      if (suspended || destroyed) throw Error('Translation client is inactive');
       if (port) return port;
       const opened = connect();
       opened.onMessage.addListener((message) => {
@@ -148,15 +171,14 @@
       });
       opened.onDisconnect.addListener(() => {
         void globalThis.chrome?.runtime?.lastError;
-        if (port === opened) port = null;
-        const entries = [...pending.values()];
-        pending.clear();
-        for (const entry of entries) entry.onError?.({ code: 'disconnected' });
+        if (port !== opened) return;
+        port = null;
+        finish();
       });
       port = opened;
       return port;
     }
-    return {
+    const client = {
       warm() {
         try {
           open().postMessage({ type: 'warm' });
@@ -183,7 +205,20 @@
       get size() {
         return pending.size;
       },
+      suspend() {
+        suspended = true;
+        close();
+      },
+      resume() {
+        suspended = false;
+      },
+      destroy() {
+        destroyed = true;
+        close();
+      },
     };
+    lifecycle?.add(() => client.destroy());
+    return client;
   }
 
   const styles = `
@@ -243,21 +278,43 @@
       copiedTimer = null;
     const watched = new WeakSet();
     const dwell = createDwell({ delay: () => settings.delay, fire: open, timers: win });
+    const usable = () => !signal.aborted && (!lifecycle || lifecycle.check());
 
-    storage?.local
+    (usable() ? storage : null)?.local
       ?.get(KEY)
       .then((value) => {
+        if (!usable()) return;
         settings = settingsOf(value?.[KEY]);
         if (!settings.enabled) forget();
       })
       .catch(() => {});
     const onSettings = (changes, area) => {
+      if (!usable()) return;
       if (area !== 'local' || !changes[KEY]) return;
       settings = settingsOf(changes[KEY].newValue);
       if (!settings.enabled) forget();
     };
-    storage?.onChanged?.addListener(onSettings);
-    signal.addEventListener('abort', () => storage?.onChanged?.removeListener(onSettings));
+    if (usable()) storage?.onChanged?.addListener(onSettings);
+    signal.addEventListener('abort', () => {
+      try {
+        storage?.onChanged?.removeListener(onSettings);
+      } catch {}
+    });
+    win.addEventListener(
+      'pagehide',
+      () => {
+        forget();
+        client.suspend?.();
+      },
+      { signal },
+    );
+    win.addEventListener(
+      'pageshow',
+      (event) => {
+        if (event.persisted && usable()) client.resume?.();
+      },
+      { signal },
+    );
 
     function ensureCard() {
       if (host?.isConnected) return;
@@ -420,6 +477,7 @@
     }
 
     function moved(event, target) {
+      if (!usable()) return;
       if (event.pointerType === 'touch') return;
       const at = offset(target);
       if (!at) return;
@@ -450,6 +508,7 @@
     }
 
     function open() {
+      if (!usable()) return;
       if (!current || shown || !settings.enabled || !onSelection(pointer)) return;
       ensureCard();
       shown = { key: current.key, output: '' };
@@ -648,6 +707,7 @@
     return {
       // The reading layer's current selection, { text, range, doc?, joinLines? }, or null.
       select(selection) {
+        if (!usable()) return;
         if (!selection?.range || !settings.enabled) return void forget();
         const target = selection.doc || doc;
         const prepared = prepare(selection.text, { joinLines: !!selection.joinLines });
@@ -673,6 +733,7 @@
       },
       destroy() {
         forget();
+        win.clearTimeout(copiedTimer);
         listeners.abort();
         host?.remove();
       },

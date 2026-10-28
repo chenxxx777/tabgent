@@ -64,6 +64,7 @@ export function registerClipPort(port) {
     else entry.resolve(message.result ?? null);
   });
   port.onDisconnect.addListener(() => {
+    void globalThis.chrome?.runtime?.lastError;
     if (views.get(tab.id) === view) views.delete(tab.id);
     for (const entry of view.pending.values()) {
       clearTimeout(entry.timer);
