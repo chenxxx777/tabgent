@@ -425,6 +425,7 @@ export class Paginator extends HTMLElement {
     static observedAttributes = [
         'flow', 'gap', 'margin',
         'max-inline-size', 'max-block-size', 'max-column-count',
+        'max-column-count-portrait',
     ]
     #root = this.attachShadow({ mode: 'closed' })
     #observer = new ResizeObserver(() => this.render())
@@ -487,7 +488,9 @@ export class Paginator extends HTMLElement {
                 minmax(0, var(--_max-height))
                 minmax(var(--_margin), 1fr);
             &.vertical {
-                --_max-column-count-spread: var(--_max-column-count-portrait);
+                /* The portrait count makes a horizontal spread. On a vertical book it
+                   splits one page into two half-height pages, so keep a single column. */
+                --_max-column-count-spread: 1;
                 --_max-width: var(--_max-block-size);
                 --_max-height: calc(var(--_max-inline-size) * var(--_max-column-count-spread));
             }
@@ -496,7 +499,7 @@ export class Paginator extends HTMLElement {
                     --_max-column-count-spread: var(--_max-column-count-portrait);
                 }
                 &.vertical {
-                    --_max-column-count-spread: var(--_max-column-count);
+                    --_max-column-count-spread: 1;
                 }
             }
         }
@@ -635,6 +638,7 @@ export class Paginator extends HTMLElement {
             case 'margin':
             case 'max-block-size':
             case 'max-column-count':
+            case 'max-column-count-portrait':
                 this.#top.style.setProperty('--_' + name, value)
                 break
             case 'max-inline-size':

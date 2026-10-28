@@ -22,6 +22,41 @@ if (source && !local && !file) {
 }
 const native = document.querySelector('#native');
 native.textContent = t('pdfOpenNative');
+// PDF.js spread modes: none, odd pages paired, even pages paired (cover alone).
+const PDF_SETTINGS = 'pdfSettings';
+const SPREAD = { none: 0, odd: 1, even: 2 };
+const spreadButtons = [
+  ['spreadNone', 'none', 'pdfSpreadSingle'],
+  ['spreadOdd', 'odd', 'pdfSpreadOdd'],
+  ['spreadEven', 'even', 'pdfSpreadEven'],
+];
+let pdfSpread = 'none';
+let spreadChosen = false;
+document.querySelector('#spread').setAttribute('aria-label', t('pdfSpread'));
+for (const [id, spread, key] of spreadButtons) {
+  const button = document.getElementById(id);
+  button.textContent = t(key);
+  button.onclick = () => choosePdfSpread(spread);
+}
+function showSpread(spread) {
+  pdfSpread = Object.hasOwn(SPREAD, spread) ? spread : 'none';
+  for (const [id, name] of spreadButtons)
+    document.getElementById(id).setAttribute('aria-pressed', String(name === pdfSpread));
+}
+function choosePdfSpread(spread) {
+  spreadChosen = true;
+  showSpread(spread);
+  if (app?.pdfViewer) app.pdfViewer.spreadMode = SPREAD[pdfSpread];
+  void chrome.storage.local.set({ [PDF_SETTINGS]: { spread: pdfSpread } });
+}
+function spreadFromMode(mode) {
+  return mode === SPREAD.odd ? 'odd' : mode === SPREAD.even ? 'even' : 'none';
+}
+const spreadReady = chrome.storage.local.get(PDF_SETTINGS).then(({ [PDF_SETTINGS]: saved }) => {
+  if (spreadChosen) return;
+  if (saved?.spread === 'none' || saved?.spread === 'odd' || saved?.spread === 'even')
+    showSpread(saved.spread);
+});
 frame.title = t('pdfFrameTitle');
 // Chrome's viewer needs a web address; an imported PDF has none.
 native.hidden = local;
@@ -309,6 +344,10 @@ document.addEventListener('webviewerloaded', async (event) => {
   let name;
   try {
     await app.initializedPromise;
+    await spreadReady;
+    // Open on one page. Applying a spread while PDF.js is still measuring the
+    // viewer freezes the page, and a stored per-file spread would do that here.
+    options.set('spreadModeOnLoad', SPREAD.none);
     if (local || file) {
       const loaded = await localFile;
       name = loaded.name;
@@ -323,6 +362,24 @@ document.addEventListener('webviewerloaded', async (event) => {
     ready = true;
     clearTimeout(timer);
     status.textContent = '';
+    // Ignore the single-page open. documentinit runs after setInitialView; apply the
+    // remembered choice on the next frame, once that layout pass has measured the page.
+    let spreadSettled = false;
+    app.eventBus.on('spreadmodechanged', ({ mode }) => {
+      if (!spreadSettled) return;
+      const next = spreadFromMode(mode);
+      if (next === pdfSpread) return;
+      spreadChosen = true;
+      showSpread(next);
+      void chrome.storage.local.set({ [PDF_SETTINGS]: { spread: pdfSpread } });
+    });
+    app.eventBus.on('documentinit', () => {
+      requestAnimationFrame(() => {
+        spreadSettled = true;
+        if (app.pdfViewer.spreadMode !== SPREAD[pdfSpread])
+          app.pdfViewer.spreadMode = SPREAD[pdfSpread];
+      });
+    });
     document.title = name;
     document.querySelector('#title').textContent = name;
     const doc = frame.contentDocument;

@@ -106,6 +106,7 @@ const fixture = textPdf(
           `--disable-extensions-except=${extension}`,
           `--load-extension=${extension}`,
           '--remote-debugging-port=0',
+          '--use-mock-keychain',
         ],
       });
       const worker = context.serviceWorkers()[0] || (await context.waitForEvent('serviceworker'));
@@ -544,6 +545,91 @@ const fixture = textPdf(
     await wait(300);
     assert((await layerHtml()).includes(comment), 'Comment shown after reload');
     console.log('PASS PDF comment saves the highlight and comment; cancel stores nothing');
+
+    // Spread mode is on the toolbar, remembered, and still accepts highlights.
+    const spreads = () =>
+      pdf.evaluate(() =>
+        [...document.querySelectorAll('.pdfViewer .spread')].map((el) =>
+          [...el.children]
+            .filter((child) => child.classList.contains('page'))
+            .map((child) => Number(child.dataset.pageNumber)),
+        ),
+      );
+    await page.click('#spreadEven');
+    assert.equal(
+      await until(() => pdf.evaluate(() => PDFViewerApplication.pdfViewer.spreadMode === 2)),
+      true,
+    );
+    assert.deepEqual((await spreads())[0], [1], 'Even spreads leave the cover alone');
+    await page.click('#spreadNone');
+    assert.equal(
+      await until(() => pdf.evaluate(() => PDFViewerApplication.pdfViewer.spreadMode === 0)),
+      true,
+    );
+    assert.equal((await spreads()).length, 0);
+    await page.click('#spreadOdd');
+    assert.equal(
+      await until(() => pdf.evaluate(() => PDFViewerApplication.pdfViewer.spreadMode === 1)),
+      true,
+    );
+    assert.deepEqual((await spreads())[0], [1, 2], 'Odd spreads pair the first two pages');
+    await pdf.evaluate(() => {
+      PDFViewerApplication.pdfViewer.currentScaleValue = 'page-width';
+      PDFViewerApplication.page = 2;
+    });
+    await pdf.locator('.page[data-page-number="2"] .textLayer .endOfContent').waitFor({
+      state: 'attached',
+    });
+    const spreadWord = 'persist';
+    // Fit the facing pages, then center the line so the drag stays on the text.
+    assert.equal(
+      await pdf.evaluate((needle) => {
+        const layer = document.querySelector('.page[data-page-number="2"] .textLayer');
+        const walker = document.createTreeWalker(layer, NodeFilter.SHOW_TEXT);
+        while (walker.nextNode()) {
+          if (!walker.currentNode.data.includes(needle)) continue;
+          (walker.currentNode.parentElement || layer).scrollIntoView({
+            block: 'center',
+            inline: 'center',
+            behavior: 'instant',
+          });
+          return true;
+        }
+        return false;
+      }, spreadWord),
+      true,
+      'The spread line is in the text layer',
+    );
+    await wait(200);
+    const beforeSpread = saved();
+    await drag(spreadWord);
+    const selected = await pdf.evaluate(() => getSelection()?.toString() || '');
+    assert.ok(selected.includes(spreadWord), `selection was ${JSON.stringify(selected)}`);
+    await press('highlight');
+    assert(await until(() => saved() === beforeSpread + 1));
+    assert(
+      await until(async () => (await painted()).includes(spreadWord)),
+      'A highlight created on a spread is shown',
+    );
+    assert.equal(
+      await page.evaluate(
+        async () => (await chrome.storage.local.get('pdfSettings')).pdfSettings.spread,
+      ),
+      'odd',
+    );
+    await page.close();
+    await open('');
+    assert.equal(
+      await until(() => pdf.evaluate(() => PDFViewerApplication.pdfViewer.spreadMode === 1)),
+      true,
+      'The spread is restored',
+    );
+    assert.deepEqual((await spreads())[0], [1, 2]);
+    assert(
+      await until(async () => (await painted()).includes(spreadWord)),
+      'The spread highlight is restored',
+    );
+    console.log('PASS PDF spread mode is remembered and highlights still work');
     passed = true;
   } finally {
     await context?.close().catch(() => {});

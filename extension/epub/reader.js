@@ -29,8 +29,12 @@ const state = {
   painted: new Map(), // painted CFI → highlight id
   selection: null,
   menuFor: null,
-  settings: { fontSize: 100, flow: 'paginated' },
+  vertical: false,
+  settings: { fontSize: 100, flow: 'paginated', spread: 'auto' },
 };
+// Two pages need a wide window; below that, Two pages falls back to one page.
+const SPREAD_DOUBLE_MIN = 900;
+const SPREAD_AUTO_MIN = 1100;
 
 localize();
 library.connect();
@@ -698,6 +702,7 @@ function closeBook() {
     documentId: null,
     source: null,
     selection: null,
+    vertical: false,
   });
   state.highlights.clear();
   state.painted.clear();
@@ -708,18 +713,89 @@ function closeBook() {
   $('#highlightList').replaceChildren();
 }
 
+function spreadMode() {
+  return state.settings.spread === 'single' || state.settings.spread === 'double'
+    ? state.settings.spread
+    : 'auto';
+}
+// One viewport is one page turn, so two columns means the next click moves both pages.
+function spreadColumns() {
+  const width = window.innerWidth;
+  const mode = spreadMode();
+  if (mode === 'single') return 1;
+  if (mode === 'double') return width >= SPREAD_DOUBLE_MIN ? 2 : 1;
+  return width >= SPREAD_AUTO_MIN ? 2 : 1;
+}
+// Half the reading area, stepped so a resize of a few pixels does not reflow forever.
+function columnInline(columns) {
+  if (columns < 2) return 720;
+  const width = $('#book').clientWidth || window.innerWidth;
+  const raw = Math.min(760, Math.floor(width / 2) - 32);
+  return Math.max(160, Math.floor(raw / 40) * 40);
+}
+let spreadNarrowShown = false;
+function noteSpreadNarrow(narrow) {
+  if (!narrow) {
+    spreadNarrowShown = false;
+    return;
+  }
+  if (spreadNarrowShown) return;
+  spreadNarrowShown = true;
+  toast(t('epubSpreadNarrow'));
+}
+function verticalWriting(doc) {
+  // Layout probes can throw; leave that failure to the paginator.
+  try {
+    const mode = doc.defaultView.getComputedStyle(doc.body).writingMode;
+    return mode === 'vertical-rl' || mode === 'vertical-lr';
+  } catch {
+    return false;
+  }
+}
 function applySettings() {
   const renderer = state.view?.renderer;
   const { fontSize, flow } = state.settings;
+  const paged = flow !== 'scrolled';
+  const mode = spreadMode();
+  const requested = paged ? spreadColumns() : 1;
+  // A vertical book stays one full-height page. Two columns would split that page in half.
+  const columns = state.vertical ? 1 : requested;
+  const fixed = renderer?.localName === 'foliate-fxl';
   $('#fontSize').textContent = `${fontSize}%`;
-  $('#flow').textContent = t(flow === 'scrolled' ? 'epubPaginated' : 'epubScrolled');
-  $('#prev').hidden = $('#next').hidden = flow === 'scrolled';
-  if (!renderer) return;
+  $('#flow').textContent = t(paged ? 'epubScrolled' : 'epubPaginated');
+  $('#prev').hidden = $('#next').hidden = !paged;
+  for (const button of $('#spread').querySelectorAll('button')) {
+    button.disabled = !paged || !!fixed;
+    button.setAttribute('aria-pressed', String(button.dataset.spread === mode));
+  }
+  if (!renderer) {
+    noteSpreadNarrow(false);
+    return;
+  }
   renderer.setAttribute('flow', flow);
   renderer.setAttribute('margin', '36px');
   renderer.setAttribute('gap', '6%');
-  renderer.setAttribute('max-inline-size', '720px');
-  renderer.setAttribute('max-column-count', '2');
+  if (renderer.localName === 'foliate-paginator') {
+    // Only an open paginated book. The library and fixed-layout books have no spread.
+    noteSpreadNarrow(paged && mode === 'double' && requested === 1 && !state.vertical);
+    const inline = paged ? columnInline(columns) : 720;
+    const signature = `${flow}:${columns}:${inline}`;
+    // Font size changes the styles below without rebuilding the columns.
+    if (renderer.dataset.layout !== signature) {
+      renderer.dataset.layout = signature;
+      const inlineAttr = `${inline}px`;
+      const inlineChanged = renderer.getAttribute('max-inline-size') !== inlineAttr;
+      renderer.setAttribute('max-column-count', String(columns));
+      // Portrait windows otherwise lock a horizontal spread to one column.
+      renderer.setAttribute('max-column-count-portrait', String(columns));
+      renderer.setAttribute('max-inline-size', inlineAttr);
+      if (!inlineChanged) renderer.render?.();
+    }
+  } else {
+    noteSpreadNarrow(false);
+    renderer.setAttribute('max-inline-size', '720px');
+    renderer.setAttribute('max-column-count', '2');
+  }
   renderer.setStyles?.(`
     html { color-scheme: light; font-size: ${fontSize}% !important; }
     body { font-size: 1rem !important; }
@@ -731,6 +807,8 @@ function applySettings() {
 chrome.storage.local.get(SETTINGS).then(({ [SETTINGS]: saved }) => {
   if (saved?.fontSize >= 70 && saved.fontSize <= 200) state.settings.fontSize = saved.fontSize;
   if (saved?.flow === 'scrolled') state.settings.flow = 'scrolled';
+  if (saved?.spread === 'single' || saved?.spread === 'double' || saved?.spread === 'auto')
+    state.settings.spread = saved.spread;
   applySettings();
 });
 function changeSettings(change) {
@@ -744,6 +822,16 @@ $('#larger').onclick = () =>
   changeSettings({ fontSize: Math.min(200, state.settings.fontSize + 10) });
 $('#flow').onclick = () =>
   changeSettings({ flow: state.settings.flow === 'scrolled' ? 'paginated' : 'scrolled' });
+for (const button of $('#spread').querySelectorAll('button'))
+  button.onclick = () => {
+    if (button.disabled) return;
+    changeSettings({ spread: button.dataset.spread });
+  };
+let spreadResize;
+new ResizeObserver(() => {
+  clearTimeout(spreadResize);
+  spreadResize = setTimeout(applySettings, 150);
+}).observe($('#book'));
 $('#prev').onclick = () => navigate((view) => view.goLeft());
 $('#next').onclick = () => navigate((view) => view.goRight());
 $('#progress').oninput = () => navigate((view) => view.goToFraction(Number($('#progress').value)));
@@ -1005,6 +1093,12 @@ function reportStatus() {
 }
 
 function onSectionLoad({ detail: { doc, index } }) {
+  const vertical = verticalWriting(doc);
+  if (vertical !== state.vertical) {
+    state.vertical = vertical;
+    // This event runs before the section's column layout. Reflow after that layout.
+    queueMicrotask(() => applySettings());
+  }
   let timer;
   const schedule = () => {
     clearTimeout(timer);

@@ -406,6 +406,18 @@
   "pdfOpenNative": {
     "message": "Open in Chrome viewer"
   },
+  "pdfSpread": {
+    "message": "Page view"
+  },
+  "pdfSpreadSingle": {
+    "message": "Single page"
+  },
+  "pdfSpreadOdd": {
+    "message": "Two pages"
+  },
+  "pdfSpreadEven": {
+    "message": "Cover alone"
+  },
   "pdfLoading": {
     "message": "Loading PDF…"
   },
@@ -1065,6 +1077,21 @@
   },
   "epubPaginated": {
     "message": "Pages"
+  },
+  "epubSpread": {
+    "message": "Page view"
+  },
+  "epubSpreadSingle": {
+    "message": "Single page"
+  },
+  "epubSpreadDouble": {
+    "message": "Two pages"
+  },
+  "epubSpreadAuto": {
+    "message": "Auto"
+  },
+  "epubSpreadNarrow": {
+    "message": "The window is too narrow for two pages, so one page is shown."
   },
   "epubLibrary": {
     "message": "Library"

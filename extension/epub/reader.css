@@ -101,6 +101,13 @@ header {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
+#spread button {
+  padding: 6px 8px;
+}
+#spread button[aria-pressed='true'] {
+  background: var(--hover);
+  font-weight: 600;
+}
 main {
   flex: 1;
   min-height: 0;
