@@ -14,8 +14,13 @@
   </head>
   <body>
     <header>
-      <span id="title">PDF</span><span id="status" role="status"></span
-      ><button id="native" data-i18n="pdfOpenNative"></button>
+      <span id="title">PDF</span><span id="status" role="status"></span>
+      <div id="spread" role="group">
+        <button id="spreadNone" type="button" aria-pressed="true"></button>
+        <button id="spreadOdd" type="button" aria-pressed="false"></button>
+        <button id="spreadEven" type="button" aria-pressed="false"></button>
+      </div>
+      <button id="native" type="button" data-i18n="pdfOpenNative"></button>
     </header>
     <iframe id="viewer" title="PDF document"></iframe>
     <script type="module" src="viewer.js"></script>
