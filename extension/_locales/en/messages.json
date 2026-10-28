@@ -416,7 +416,7 @@
     "message": "Two pages"
   },
   "pdfSpreadEven": {
-    "message": "Two pages (cover alone)"
+    "message": "Cover alone"
   },
   "pdfLoading": {
     "message": "Loading PDF…"

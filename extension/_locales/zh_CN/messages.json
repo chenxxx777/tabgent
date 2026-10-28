@@ -794,7 +794,7 @@
     "message": "双页"
   },
   "pdfSpreadEven": {
-    "message": "双页（封面单独）"
+    "message": "封面单页"
   },
   "pdfLoading": {
     "message": "正在加载 PDF…"

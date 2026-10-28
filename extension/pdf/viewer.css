@@ -12,12 +12,15 @@ body {
 header {
   display: flex;
   align-items: center;
-  gap: 16px;
+  flex-wrap: wrap;
+  gap: 8px 16px;
   padding: 5px 12px;
   min-height: 28px;
   border-bottom: 1px solid #ddd;
 }
 #title {
+  flex: 1 1 8em;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

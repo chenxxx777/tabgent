@@ -29,6 +29,7 @@ const state = {
   painted: new Map(), // painted CFI → highlight id
   selection: null,
   menuFor: null,
+  vertical: false,
   settings: { fontSize: 100, flow: 'paginated', spread: 'auto' },
 };
 // Two pages need a wide window; below that, Two pages falls back to one page.
@@ -701,6 +702,7 @@ function closeBook() {
     documentId: null,
     source: null,
     selection: null,
+    vertical: false,
   });
   state.highlights.clear();
   state.painted.clear();
@@ -741,25 +743,41 @@ function noteSpreadNarrow(narrow) {
   spreadNarrowShown = true;
   toast(t('epubSpreadNarrow'));
 }
+function verticalWriting(doc) {
+  // Layout probes can throw; leave that failure to the paginator.
+  try {
+    const mode = doc.defaultView.getComputedStyle(doc.body).writingMode;
+    return mode === 'vertical-rl' || mode === 'vertical-lr';
+  } catch {
+    return false;
+  }
+}
 function applySettings() {
   const renderer = state.view?.renderer;
   const { fontSize, flow } = state.settings;
   const paged = flow !== 'scrolled';
   const mode = spreadMode();
-  const columns = paged ? spreadColumns() : 1;
+  const requested = paged ? spreadColumns() : 1;
+  // A vertical book stays one full-height page. Two columns would split that page in half.
+  const columns = state.vertical ? 1 : requested;
+  const fixed = renderer?.localName === 'foliate-fxl';
   $('#fontSize').textContent = `${fontSize}%`;
   $('#flow').textContent = t(paged ? 'epubScrolled' : 'epubPaginated');
   $('#prev').hidden = $('#next').hidden = !paged;
   for (const button of $('#spread').querySelectorAll('button')) {
-    button.disabled = !paged;
+    button.disabled = !paged || !!fixed;
     button.setAttribute('aria-pressed', String(button.dataset.spread === mode));
   }
-  noteSpreadNarrow(paged && mode === 'double' && columns === 1);
-  if (!renderer) return;
+  if (!renderer) {
+    noteSpreadNarrow(false);
+    return;
+  }
   renderer.setAttribute('flow', flow);
   renderer.setAttribute('margin', '36px');
   renderer.setAttribute('gap', '6%');
   if (renderer.localName === 'foliate-paginator') {
+    // Only an open paginated book. The library and fixed-layout books have no spread.
+    noteSpreadNarrow(paged && mode === 'double' && requested === 1 && !state.vertical);
     const inline = paged ? columnInline(columns) : 720;
     const signature = `${flow}:${columns}:${inline}`;
     // Font size changes the styles below without rebuilding the columns.
@@ -768,12 +786,13 @@ function applySettings() {
       const inlineAttr = `${inline}px`;
       const inlineChanged = renderer.getAttribute('max-inline-size') !== inlineAttr;
       renderer.setAttribute('max-column-count', String(columns));
-      // Portrait windows otherwise lock the spread to one column.
+      // Portrait windows otherwise lock a horizontal spread to one column.
       renderer.setAttribute('max-column-count-portrait', String(columns));
       renderer.setAttribute('max-inline-size', inlineAttr);
       if (!inlineChanged) renderer.render?.();
     }
   } else {
+    noteSpreadNarrow(false);
     renderer.setAttribute('max-inline-size', '720px');
     renderer.setAttribute('max-column-count', '2');
   }
@@ -1074,6 +1093,12 @@ function reportStatus() {
 }
 
 function onSectionLoad({ detail: { doc, index } }) {
+  const vertical = verticalWriting(doc);
+  if (vertical !== state.vertical) {
+    state.vertical = vertical;
+    // This event runs before the section's column layout. Reflow after that layout.
+    queueMicrotask(() => applySettings());
+  }
   let timer;
   const schedule = () => {
     clearTimeout(timer);

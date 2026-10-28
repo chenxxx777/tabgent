@@ -626,6 +626,17 @@ async function until(check, ms = 10000) {
       ),
       'double',
     );
+    const shelf = await context.newPage();
+    await shelf.setViewportSize({ width: 800, height: 700 });
+    await shelf.goto(readerUrl);
+    await shelf.waitForSelector('#choose');
+    await wait(600);
+    assert.equal(
+      await shelf.locator('#toast').evaluate((el) => el.matches(':popover-open')),
+      false,
+      'The library does not warn that the window is narrow',
+    );
+    await shelf.close();
     await page.click('#spreadSingle');
     await page.setViewportSize({ width: 1200, height: 820 });
     await page.click('#contentsButton');
@@ -1074,6 +1085,8 @@ async function until(check, ms = 10000) {
       fs.readFileSync(fixed),
     );
     assert(await hasChapter('Chapter One: Beginnings'));
+    assert(await page.isDisabled('#spreadDouble'), 'Fixed layout disables the page view');
+    assert(await page.isDisabled('#spreadAuto'));
     await page.click('#contentsButton');
     await page.click('#toc button:text-is("Chapter Two: Repetition")');
     assert(await hasChapter('Chapter Two: Repetition'));
