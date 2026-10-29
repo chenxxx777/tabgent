@@ -223,7 +223,8 @@ export function saveScopePreference(){}
       }
       if (mode === 'setup-running') {
         await page.waitForFunction(() => !!setupTest.releaseModels);
-        await page.locator('[data-message-id="running-tool"]').waitFor();
+        // The running tool lives inside the (collapsed) worklog, so it only needs to be attached.
+        await page.locator('[data-message-id="running-tool"]').waitFor({ state: 'attached' });
         assert.equal(
           await page.locator('.message.activity[data-status="running"]').count(),
           1,
@@ -1043,7 +1044,17 @@ export function saveScopePreference(){}
           });
         });
         assert(await page.locator('.worklog').isVisible());
-        assert((await page.locator('.worklog').innerText()).includes('Checking the page'));
+        // The worklog starts collapsed; the activity text is still in the DOM, and
+        // the live turn-status line below it keeps showing progress.
+        assert.equal(
+          await page.locator('.worklog').getAttribute('open'),
+          null,
+          'The worklog stays collapsed while work is running',
+        );
+        await page.waitForFunction(() =>
+          document.querySelector('.worklog')?.textContent.includes('Checking the page'),
+        );
+        assert((await page.locator('.turn-status').innerText()).length > 0);
         // Desktop defaults to queueing; Steer belongs to the queued-message strip.
         await page.locator('#prompt').fill('Focus on the introduction');
         // The composer ignores Enter until the previous send is acknowledged, as its disabled

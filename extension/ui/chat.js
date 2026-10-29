@@ -180,7 +180,6 @@ function activityLog() {
   if (!worklog) {
     worklog = node('details', null, $('messages'));
     worklog.className = 'worklog';
-    worklog.open = true;
     const summary = node('summary', i18n('working'), worklog);
     const log = worklog;
     summary.onclick = () => {
@@ -1685,7 +1684,6 @@ addWebUiListener('codex-message', (message) => {
         );
         node('span', step.step, li);
       }
-      record.el.open = true;
       break;
     }
     case 'item/plan/delta': {
