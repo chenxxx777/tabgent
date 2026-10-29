@@ -162,15 +162,20 @@ function copyToVault(problem) {
       });
       if (!reply.complete && reply.received <= offset) throw Error('The vault stopped the copy');
     }
-    // Page text that cannot be read while this viewer is open is reported once.
-    const reading = !!reply.source?.textPending;
+    // The copy is done. Page text that cannot be read while this viewer is open is
+    // reported once; a check that fails only ends the wait (the connector retries later).
+    if (!reply.source?.textPending) return;
     for (let wait = 2000, end = Date.now() + 5 * 60000; reply.source?.textPending;) {
       if (Date.now() > end) return;
       await pause(wait);
       wait = Math.min(wait * 1.5, 15000);
-      reply = await viewerRequest({ ...base, offset: 0, data: '' });
+      try {
+        reply = await viewerRequest({ ...base, offset: 0, data: '' });
+      } catch (error) {
+        return void console.warn('The PDF text status is unknown', error);
+      }
     }
-    if (reading && reply.source?.pageError)
+    if (reply.source?.pageError)
       problem?.(reply.source.textRetry ? 'pdfTextRetry' : 'pdfTextFailed', {
         message: reply.source.pageError,
       });

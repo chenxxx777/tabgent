@@ -778,6 +778,10 @@ def read_source(settings, params):
     record = _source_record(root, data)
     if record is None:
         raise VaultError("not_found", f"Document {ident} has no imported original")
+    # A viewer reopening the original (an imported PDF) is its check: text a stopped
+    # connector or a failed reading left unwritten is written now, in the background.
+    if offset == 0:
+        record = _resume_text(root, data, record)
     path = _original_path(root, data, record)
     try:
         with open(path, "rb") as file:
@@ -2829,12 +2833,7 @@ def _ensure_full(root, data, record):
     if record.get("textPending"):
         return record
     error = "pageError" if kind == "pdf" else "chapterError"
-    retry = record.get("pageRetry")
-    if error in record and not (
-        isinstance(retry, (int, float))
-        and not isinstance(retry, bool)
-        and time.time() >= retry
-    ):
+    if error in record and not _retry_due(record):
         return record
     context = _context(root, data)
     full = context.files.get("full") or []
@@ -2879,13 +2878,88 @@ TEXT_POOL = concurrent.futures.ThreadPoolExecutor(
 )
 _TEXT_JOBS = {}
 _TEXT_JOBS_LOCK = threading.Lock()
+# Vaults checked for unwritten text since the connector started, and documents whose text
+# job failed outside reading the PDF (monotonic time before which it is not run again).
+_TEXT_SWEPT = set()
+_TEXT_BACKOFF = {}
+
+
+def _retry_due(record):
+    """Whether a failed reading of the text may be tried again now (pageRetry)."""
+    retry = record.get("pageRetry")
+    return (
+        isinstance(retry, (int, float))
+        and not isinstance(retry, bool)
+        and time.time() >= retry
+    )
+
+
+def _resume_text(root, data, record):
+    """Starts writing an original's text that a stopped connector (textPending) or a
+    failed reading whose retry time has come left unwritten. Returns the record."""
+    ident = data["document"]["id"]
+    if data["document"]["kind"] not in BACKGROUND_TEXT or not (
+        record.get("textPending") or _retry_due(record)
+    ):
+        return record
+    with _TEXT_JOBS_LOCK:
+        if (str(root), ident) in _TEXT_JOBS:
+            return record
+    with _locked(root):
+        fresh = _load(root, ident)
+        current = fresh and _source_record(root, fresh)
+        if not current:
+            return record
+        record = _ensure_full(root, fresh, current)
+    if record.get("textPending"):
+        _schedule_text(root, ident, record["sha256"])
+    return record
+
+
+def resume_text(settings):
+    """Once per vault and connector: writes in the background the text of the originals
+    a stopped connector left unwritten (a connector that starts after one was stopped).
+    """
+    try:
+        root = _root(Path(settings))
+    except (VaultError, OSError):
+        return
+    with _TEXT_JOBS_LOCK:
+        if str(root) in _TEXT_SWEPT:
+            return
+        _TEXT_SWEPT.add(str(root))
+        try:
+            _TEXT_JOBS[(str(root), "")] = TEXT_POOL.submit(_sweep_text, root)
+        except RuntimeError:
+            pass
+
+
+def _sweep_text(root):
+    prefixes = tuple(KINDS[kind] + "-" for kind in BACKGROUND_TEXT)
+    try:
+        for ident in _record_ids(root):
+            if not ident.startswith(prefixes):
+                continue
+            try:
+                data = _load(root, ident)
+                record = data and _source_record(root, data)
+                if record:
+                    _resume_text(root, data, record)
+            except Exception as error:
+                print(
+                    f"The text of {ident} was not checked: {error!r}", file=sys.stderr
+                )
+    finally:
+        with _TEXT_JOBS_LOCK:
+            _TEXT_JOBS.pop((str(root), ""), None)
 
 
 def _schedule_text(root, ident, digest):
-    """Writes the document's text in the background, once at a time per document."""
+    """Writes the document's text in the background, once at a time per document, and
+    not again soon after a failure that left it unwritten (_TEXT_BACKOFF)."""
     key = (str(root), ident)
     with _TEXT_JOBS_LOCK:
-        if key in _TEXT_JOBS:
+        if key in _TEXT_JOBS or time.monotonic() < _TEXT_BACKOFF.get(key, 0):
             return
         try:
             _TEXT_JOBS[key] = TEXT_POOL.submit(_text_job, root, ident, digest)
@@ -2920,18 +2994,37 @@ def _text_job(root, ident, digest):
             context.source = record
             _commit(root, data, context)
     except Exception as error:
-        # textPending stays, so the next check of the original tries again.
+        # Writing failed (for example a note that cannot be written): the failure is
+        # recorded like a reading that took too long, so checks do not read the whole PDF
+        # again and again; it is tried again after TEXT_RETRY_AFTER.
         print(f"The text of {ident} was not written: {error!r}", file=sys.stderr)
+        with _TEXT_JOBS_LOCK:
+            _TEXT_BACKOFF[(str(root), ident)] = time.monotonic() + TEXT_RETRY_AFTER
+        reason = getattr(error, "message", None) or str(error) or repr(error)
+        with contextlib.suppress(Exception), _locked(root):
+            record = pending(_load(root, ident))
+            if record is not None:
+                record = {k: v for k, v in record.items() if k != "textPending"}
+                record.update(
+                    pages=[],
+                    pageError=f"Could not write the text: {reason}"[:500],
+                    pageRetry=int(time.time()) + TEXT_RETRY_AFTER,
+                )
+                _write(_record_folder(root, ident) / "source.json", _json(record))
     finally:
         with _TEXT_JOBS_LOCK:
             _TEXT_JOBS.pop((str(root), ident), None)
 
 
 def wait_for_text(timeout=None):
-    """Waits for the background text writes started so far (a stopping connector, tests)."""
-    with _TEXT_JOBS_LOCK:
-        jobs = list(_TEXT_JOBS.values())
-    concurrent.futures.wait(jobs, timeout=timeout)
+    """Waits for the background text writes, and those they start (tests)."""
+    end = time.monotonic() + (60 if timeout is None else timeout)
+    while time.monotonic() < end:
+        with _TEXT_JOBS_LOCK:
+            jobs = list(_TEXT_JOBS.values())
+        if not jobs:
+            return
+        concurrent.futures.wait(jobs, timeout=max(0, end - time.monotonic()))
 
 
 _SOURCE_ERRORS = {

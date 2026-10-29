@@ -778,6 +778,100 @@ with tempfile.TemporaryDirectory(prefix="tabgent-library-background-") as direct
 print("PASS a PDF's page text is read in the background without holding the vault")
 
 
+# Text a stopped connector left unwritten (textPending in source.json) is written for an
+# imported PDF when its viewer reads it back, and by the next connector's first request.
+# A text job that fails outside PDFKit is recorded and not read again at every check.
+with tempfile.TemporaryDirectory(prefix="tabgent-library-resume-") as directory:
+    base = Path(directory)
+    settings = base / "codex/projects/tabgent/vault.json"
+    root = base / "Tabgent"
+    reads = []
+
+    def counted(path):
+        reads.append(path)
+        return {
+            "count": 1,
+            "pages": [{"page": 1, "text": "Resumed."}],
+            "truncated": False,
+        }
+
+    def stored(title):
+        data = text_pdf.build([[title + " page."]])
+        digest = hashlib.sha256(data).hexdigest()
+        params = {
+            "url": "urn:sha256:" + digest,
+            "title": title,
+            "kind": "pdf",
+            "sha256": digest,
+            "size": len(data),
+            "offset": 0,
+            "data": b64(data),
+            "name": title + ".pdf",
+        }
+        ident = call(settings, "vault/source/save", params)["document"]["id"]
+        vault.wait_for_text(30)
+        return ident, params
+
+    def cut_short(ident):
+        # As a connector stopped while it read: the record says the text is still to write.
+        source = root / ".tabgent/documents" / ident / "source.json"
+        record = json.loads(source.read_text())
+        for key in ("pages", "sections", "parts", "pageCount"):
+            record.pop(key, None)
+        source.write_text(json.dumps({**record, "textPending": True}))
+        return source
+
+    with patch.object(vault, "default_path", lambda: root), patch.object(
+        pdf_text, "extract", counted
+    ):
+        imported, _ = stored("Imported")
+        source = cut_short(imported)
+        before = len(reads)
+        read = call(
+            settings,
+            "vault/source/read",
+            {"documentId": imported, "offset": 0, "length": 64},
+        )
+        assert read["source"]["textPending"] is True and read["offset"] == 0
+        vault.wait_for_text(30)
+        assert len(reads) == before + 1
+        record = json.loads(source.read_text())
+        assert "textPending" not in record and record["pages"][0]["page"] == 1
+        # Later chunks of the same read do not check again.
+        call(settings, "vault/source/read", {"documentId": imported, "offset": 64})
+        vault.wait_for_text(30)
+        assert len(reads) == before + 1
+
+        # The next connector finds it at its first vault request.
+        swept, _ = stored("Swept")
+        source = cut_short(swept)
+        before = len(reads)
+        vault.resume_text(settings)
+        vault.wait_for_text(30)
+        assert len(reads) == before + 1
+        assert "textPending" not in json.loads(source.read_text())
+        vault.resume_text(settings)
+        vault.wait_for_text(30)
+        assert len(reads) == before + 1, "Once per connector"
+
+        # Writing the text fails (here: the note cannot be written): recorded, retried later.
+        def broken(*args, **kwargs):
+            raise vault.VaultError("io_error", "Disk is busy")
+
+        with patch.object(vault, "_write_source_text", broken):
+            failing, params = stored("Failing")
+        check = {**params, "data": ""}
+        before = len(reads)
+        failed = call(settings, "vault/source/save", check)
+        assert failed["source"]["textPending"] is False
+        assert failed["source"]["textRetry"] is True
+        assert failed["source"]["pageError"] == "Could not write the text: Disk is busy"
+        call(settings, "vault/source/save", check)
+        vault.wait_for_text(30)
+        assert len(reads) == before, "A failed write is not read again at every check"
+print("PASS text left unwritten is written for imported PDFs and by the next connector")
+
+
 # pdf_text bounds and reports what PDFKit returns, without running it here.
 def finished(stdout="", stderr="", returncode=0):
     return lambda *args, **kwargs: SimpleNamespace(
