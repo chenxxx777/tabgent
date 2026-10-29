@@ -341,15 +341,16 @@ const paper = textPdf(
     await ask(agent, 'Only search my reading notes.', /Fixture answer 2\./);
     let saved = anchors(articleFolder).turns;
     assert.equal(saved.length, 2, 'The follow-up is saved');
+    // Without a quote it is about the whole page: saved in its discussion, same thread.
     assert.deepEqual(
       [saved[1].highlightId, saved[1].threadId, saved[1].user],
-      ['h001', webThread, 'Only search my reading notes.'],
+      [null, webThread, 'Only search my reading notes.'],
     );
     let contexts = lastContexts(webThread);
     assert.equal(contexts.page.closed, true);
     assert.equal(contexts.page.url, articleUrl);
-    assert.equal(contexts.reading.saving, 'highlight');
-    assert.equal(contexts.reading.highlight.id, 'h001');
+    assert.equal(contexts.reading.saving, 'document');
+    assert.equal(contexts.reading.highlight, undefined);
     console.log('PASS webpage: the Agent tab keeps asking and saving after its page closes');
     if (shots) await agent.screenshot({ path: path.join(shots, 'web-after-close.png') });
 
@@ -393,7 +394,8 @@ const paper = textPdf(
     );
     assert.deepEqual(quote, { disabled: true, title: await message('highlightPageClosed') });
     saved = anchors(articleFolder).turns;
-    assert(saved.every((turn) => turn.threadId === webThread && turn.highlightId === 'h001'));
+    assert(saved.every((turn) => turn.threadId === webThread));
+    assert.equal(saved[0].highlightId, 'h001');
     await closeLastAgentTab(agent, webThread);
     console.log('PASS webpage: history and highlights remain; the final Agent tab closes it');
 
@@ -465,14 +467,11 @@ const paper = textPdf(
     );
     saved = anchors(paperFolder).turns;
     assert.equal(saved.length, 2, 'The follow-up is saved to the imported PDF');
-    assert.deepEqual(
-      [saved[1].highlightId, saved[1].threadId],
-      [anchors(paperFolder).highlights[0].id, pdfThread],
-    );
+    assert.deepEqual([saved[1].highlightId, saved[1].threadId], [null, pdfThread]);
     contexts = lastContexts(pdfThread);
     assert.equal(contexts.page.closed, true);
     assert.match(contexts.page.url, /^urn:sha256:[0-9a-f]{64}/);
-    assert.equal(contexts.reading.saving, 'highlight');
+    assert.equal(contexts.reading.saving, 'document');
     assert.equal(contexts.reading.document.fullText, docOf(paperFolder).fullTextPath);
     assert.match(
       docOf(paperFolder).discussions,

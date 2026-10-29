@@ -316,30 +316,41 @@ try {
   assert.equal(discussion.turns[0].assistant, '**Endorsement** is the key.');
   console.log('PASS completed turns save user text + final answer once per (thread, turn)');
 
-  // The panel closes; a follow-up turn still saves to the same highlight.
+  // A follow-up without a quote is about the whole document: it is saved in the
+  // document's discussion, from the same conversation, with the side panel closed.
   const followup = await sendMessage(view, 'thread-a', 'Give an example.');
-  assert.deepEqual(readingPart(followup).highlight, {
-    id: 'h001',
-    location: 'Chapter 3',
-    text: 'Autonomy is endorsement',
-  });
+  assert.equal(readingPart(followup).highlight, undefined);
+  assert.equal(readingPart(followup).saving, 'document');
+  assert.equal(readingPart(followup).document.id, documentId);
   view.port.onDisconnect.listeners[0]();
   await completeTurn(view.session, 'thread-a', followup, 'A student who chooses to study.');
   await until(() => appends().length === 3);
+  assert.deepEqual(
+    [appends()[2].params.highlightId, appends()[2].params.threadId],
+    [null, 'thread-a'],
+  );
   await wait(50);
   discussion = await direct('vault/discussion/get', { documentId, highlightId: 'h001' });
   assert.deepEqual(
     discussion.turns.map((t) => t.user),
-    ['Why is autonomy not independence?', 'Give an example.'],
+    ['Why is autonomy not independence?'],
+  );
+  discussion = await direct('vault/discussion/get', { documentId, highlightId: null });
+  assert.deepEqual(
+    discussion.turns.map((t) => [t.threadId, t.user]),
+    [['thread-a', 'Give an example.']],
   );
   const markdown = await discussionsFile('https://example.test/article?id=7');
   assert.match(markdown, /## 高亮 001[\s\S]*Autonomy is endorsement[\s\S]*\*\*我\*\*/);
-  assert.match(markdown, /Give an example\.[\s\S]*A student who chooses to study\./);
+  assert.match(
+    markdown,
+    /## 关于整篇[\s\S]*Give an example\.[\s\S]*A student who chooses to study\./,
+  );
   assert.match(
     await highlightsFile('https://example.test/article?id=7'),
-    /\^h001\n[\s\S]*讨论 2 条\]\]/,
+    /\^h001\n[\s\S]*讨论 1 条\]\]/,
   );
-  console.log('PASS follow-ups save to the bound highlight with the side panel closed');
+  console.log('PASS a follow-up without a quote saves on the document, side panel closed');
 
   // Interrupted turns and commentary-only replies are not saved.
   view = await attach(1);
@@ -364,9 +375,12 @@ try {
   assert.equal(resumed.state.selection.highlight.highlightId, 'h001');
   assert.equal(resumed.state.selection.text, 'Autonomy is endorsement');
   assert.equal(sent.findLast((m) => m.op === 'claim').threadId, 'thread-a');
-  console.log('PASS Open discussion resumes the highlight thread with the quote attached');
+  // The panel scrolls to the highlight's latest turn in it.
+  assert.equal(resumed.state.focusTurn.turnId, 'turn-a1');
+  console.log('PASS Open discussion resumes the highlight thread at its turn, quote attached');
 
-  // A new highlight starts its own conversation instead of joining thread-a.
+  // Ask AI on a second highlight of the same document continues the same conversation;
+  // each turn is saved under the highlight its message quotes.
   const second = await call(
     {
       type: 'highlightCreate',
@@ -379,13 +393,54 @@ try {
     page(1),
   );
   assert.equal(second.highlight.id, 'h002');
-  assert.equal(resumed.events('codex-view-changed').length, 1);
+  assert.equal(resumed.events('codex-view-changed').length, 0, 'The conversation stays');
+  const secondSelection = resumed.events('codex-selection').at(-1);
+  assert.equal(secondSelection.highlight.highlightId, 'h002');
+  const persistQuestion = await sendMessage(
+    resumed,
+    'thread-a',
+    'Why do they persist?',
+    secondSelection,
+  );
+  assert.deepEqual(readingPart(persistQuestion).highlight, { id: 'h002', attached: true });
+  assert.equal(readingPart(persistQuestion).saving, 'highlight');
+  await completeTurn(resumed.session, 'thread-a', persistQuestion, 'They endorse the goal.');
+  await until(() => appends().length === 4);
+  discussion = await direct('vault/discussion/get', { documentId, highlightId: 'h002' });
+  assert.deepEqual(
+    discussion.turns.map((t) => [t.threadId, t.user]),
+    [['thread-a', 'Why do they persist?']],
+  );
+  discussion = await direct('vault/discussion/get', { documentId, highlightId: 'h001' });
+  assert.deepEqual(
+    discussion.turns.map((t) => t.threadId),
+    ['thread-a'],
+  );
+  assert.match(
+    await discussionsFile('https://example.test/article?id=7'),
+    /## 高亮 001[\s\S]*## 高亮 002[\s\S]*Why do they persist\?/,
+  );
+  console.log('PASS two highlights of a document share its conversation; turns save under each');
+
+  // "New conversation": the document's next Ask AI goes there, and earlier discussion of a
+  // highlight from other conversations is included once per conversation, bounded.
+  await call({ type: 'newConversation', conversationKey: resumed.state.conversationKey }, panel);
   const separate = await attach(1);
   assert.equal(separate.state.threadId, undefined);
-  assert.equal(separate.state.selection.highlight.highlightId, 'h002');
-  console.log('PASS a new highlight gets a new conversation when the current one is in use');
-
-  // Earlier notes from other threads are included once and bounded.
+  const third = await call(
+    {
+      type: 'highlightCreate',
+      ask: true,
+      text: 'Daily sessions',
+      anchor: anchor('Daily sessions', 90),
+      title: 'Article',
+      context: { before: '', after: '' },
+    },
+    page(1),
+  );
+  assert.equal(third.highlight.id, 'h003');
+  assert.equal(separate.events('codex-view-changed').length, 0, 'The new conversation stays');
+  assert.equal(separate.events('codex-selection').at(-1).highlight.highlightId, 'h003');
   await separate.port.onMessage.listeners[0]({ type: 'bind', threadId: 'thread-c' });
   const again = await sendMessage(separate, 'thread-c', 'Compare with earlier.', {
     ...resumed.state.selection,
@@ -393,14 +448,21 @@ try {
   const notes = readingPart(again).earlierNotes;
   assert.deepEqual(
     notes.map((n) => n.user),
-    ['Why is autonomy not independence?', 'Give an example.'],
+    ['Why is autonomy not independence?'],
   );
   assert(JSON.stringify(notes).length < 8000);
   await completeTurn(separate.session, 'thread-c', again, 'Stopped', { status: 'interrupted' });
   const later = await sendMessage(separate, 'thread-c', 'And now?');
   assert.equal(readingPart(later).earlierNotes, undefined, 'Earlier notes are sent once');
   await completeTurn(separate.session, 'thread-c', later, 'Stopped', { status: 'interrupted' });
-  console.log('PASS earlier discussion of the highlight is included once, bounded');
+  const quotedAgain = await sendMessage(separate, 'thread-c', 'Back to the first one.', {
+    ...resumed.state.selection,
+  });
+  assert.equal(readingPart(quotedAgain).earlierNotes, undefined, 'Not again in this thread');
+  await completeTurn(separate.session, 'thread-c', quotedAgain, 'Stopped', {
+    status: 'interrupted',
+  });
+  console.log('PASS New conversation takes the next Ask AI; earlier notes once per thread');
 
   // Turning saving off stops saving, even for a highlight conversation.
   const off = await call(
@@ -412,7 +474,7 @@ try {
   assert.equal(readingPart(unsaved).saving, 'off');
   await completeTurn(separate.session, 'thread-c', unsaved, 'Not saved');
   await wait(50);
-  assert.equal(appends().length, 3);
+  assert.equal(appends().length, 4);
   console.log('PASS the save toggle turns saving off');
 
   // Document-level: a page without vault notes is not saved until the user opts in.
@@ -423,7 +485,7 @@ try {
   assert.equal(readingPart(automation).highlight, undefined);
   await completeTurn(other.session, 'thread-d', automation, 'Done');
   await wait(50);
-  assert.equal(appends().length, 3, 'Unrelated browser chats are not saved');
+  assert.equal(appends().length, 4, 'Unrelated browser chats are not saved');
   const state = await call(
     { type: 'readingState', conversationKey: other.state.conversationKey, companionTabId: 2 },
     panel,
@@ -438,10 +500,10 @@ try {
   const question = await sendMessage(other, 'thread-d', 'What is the main argument?');
   assert.equal(readingPart(question).saving, 'document');
   await completeTurn(other.session, 'thread-d', question, 'The page argues X.');
-  await until(() => appends().length === 4);
+  await until(() => appends().length === 5);
   assert.deepEqual(
     (({ highlightId, url, title, kind }) => ({ highlightId, url, title, kind }))(
-      appends()[3].params,
+      appends()[4].params,
     ),
     { highlightId: null, url: 'https://example.test/other', title: 'Other page', kind: 'web' },
   );
@@ -493,8 +555,9 @@ try {
   assert.deepEqual(
     panelState.highlights.map(({ id, anchored, turnCount }) => ({ id, anchored, turnCount })),
     [
-      { id: 'h001', anchored: true, turnCount: 2 },
-      { id: 'h002', anchored: false, turnCount: 0 },
+      { id: 'h001', anchored: true, turnCount: 1 },
+      { id: 'h002', anchored: false, turnCount: 1 },
+      { id: 'h003', anchored: true, turnCount: 0 },
     ],
   );
   assert.equal(panelState.vault.path, vaultPath);
@@ -606,7 +669,10 @@ try {
   );
   assert.equal(fromPanel.highlights.find((h) => h.id === 'h002').note, '');
   assert.equal(refreshes(), refreshed + 1, 'The page shows the new note');
-  const bounded = await sendMessage(listed, 'thread-a', 'And this one?');
+  // Each message quoting the highlight carries its note, read fresh.
+  const bounded = await sendMessage(listed, 'thread-a', 'And this one?', {
+    ...listed.state.selection,
+  });
   const userNote = readingPart(bounded).highlight.userNote;
   assert.equal(userNote.length, 2000);
   assert(userNote.startsWith('Long note. ') && userNote.endsWith('…'));
@@ -640,7 +706,9 @@ try {
     },
     panel,
   );
-  const cleared = await sendMessage(listed, 'thread-a', 'Without a note?');
+  const cleared = await sendMessage(listed, 'thread-a', 'Without a note?', {
+    ...listed.state.selection,
+  });
   assert.equal(readingPart(cleared).highlight.userNote, undefined);
   await completeTurn(listed.session, 'thread-a', cleared, 'Stopped', { status: 'interrupted' });
   assert.doesNotMatch(await highlightsFile('https://example.test/article?id=7'), /- 评论：/);
@@ -671,10 +739,12 @@ try {
     },
   });
   await until(() => restored.events('codex-reading-changed').length);
+  // Its document: a follow-up without a quote is saved in the document's discussion.
   const recovered = await sendMessage(restored, 'thread-a', 'Continuing after a restart');
-  assert.equal(readingPart(recovered).saving, 'highlight');
-  assert.equal(readingPart(recovered).highlight.id, 'h001');
-  console.log('PASS a resumed highlight thread recovers its binding from its history');
+  assert.equal(readingPart(recovered).saving, 'document');
+  assert.equal(readingPart(recovered).document.id, documentId);
+  assert.equal(readingPart(recovered).highlight, undefined);
+  console.log('PASS a resumed highlight thread recovers its document from its history');
 
   // Quotes after history.pushState carry the current frame URL, not the stale sender URL.
   tabs.set(1, { ...tabs.get(1), url: 'https://example.test/next?page=2' });
@@ -686,7 +756,7 @@ try {
   console.log('PASS page selections use the current frame URL after pushState');
 
   // An Agent tab of a highlight discussion outlives the page (B2): with the page closed,
-  // follow-ups still bind to the highlight and save to the same document and thread.
+  // follow-ups still save to the same document and thread.
   tabs.set(3, {
     id: 3,
     windowId: 1,
@@ -747,19 +817,15 @@ try {
     title: 'Closing page',
     closed: true,
   });
-  assert.equal(readingPart(z2).saving, 'highlight');
-  assert.deepEqual(readingPart(z2).highlight, {
-    id: 'h001',
-    location: 'Epilogue',
-    text: 'Last words',
-  });
+  assert.equal(readingPart(z2).saving, 'document');
+  assert.equal(readingPart(z2).highlight, undefined);
   assert.equal(readingPart(z2).document.id, closingDocument);
   await completeTurn(closing.session, 'thread-z', z2, 'Found it in the vault.');
   await until(() => appends().filter((m) => m.params.threadId === 'thread-z').length === 2);
   const closedSave = appends().at(-1).params;
   assert.deepEqual(
     [closedSave.documentId, closedSave.highlightId, closedSave.threadId],
-    [closingDocument, 'h001', 'thread-z'],
+    [closingDocument, null, 'thread-z'],
   );
   await until(() =>
     agentView.events('codex-reading-saved').some((value) => value.ok && !value.queued),
@@ -776,10 +842,10 @@ try {
     closed: true,
   });
   assert.equal(closedState.binding.highlightId, 'h001');
-  assert.equal(closedState.save.target, 'highlight');
+  assert.equal(closedState.save.target, 'document');
   assert.deepEqual(
     closedState.highlights.map(({ id, turnCount, anchored }) => ({ id, turnCount, anchored })),
-    [{ id: 'h001', turnCount: 2, anchored: null }],
+    [{ id: 'h001', turnCount: 1, anchored: null }],
   );
   const closedNote = await call(
     {
@@ -909,16 +975,17 @@ try {
     },
     page(7),
   );
+  // Ask AI on it continues the document's conversation (thread-gone).
   const lostView = await attach(7);
-  await lostView.port.onMessage.listeners[0]({ type: 'bind', threadId: 'thread-lost' });
+  assert.equal(lostView.state.threadId, 'thread-gone');
   const lostInput = await sendMessage(
     lostView,
-    'thread-lost',
+    'thread-gone',
     'Still there?',
-    lostView.events('codex-selection').at(-1),
+    lostView.state.selection,
   );
   fs.rmSync(path.join(vaultPath, '.tabgent/documents', lost.document.id), { recursive: true });
-  await completeTurn(lostView.session, 'thread-lost', lostInput, 'Saved anyway.');
+  await completeTurn(lostView.session, 'thread-gone', lostInput, 'Saved anyway.');
   await until(() => lostView.events('codex-reading-saved').length === 1);
   assert.equal(lostView.events('codex-reading-saved')[0].fallback, 'document');
   const recreated = await direct('vault/document/resolve', {
@@ -935,6 +1002,66 @@ try {
     ['> Another passage\n\nStill there?'],
   );
   console.log('PASS a turn whose highlight or document is gone is saved on the document');
+
+  // Another document in the same tab gets its own conversation; back on the first one,
+  // Ask AI resumes the first document's conversation. With its tab gone, the document's
+  // latest saved thread is resumed from the vault.
+  tabs.set(9, { id: 9, windowId: 1, url: 'https://example.test/alpha', title: 'Alpha' });
+  const visit = async (url, title) => {
+    Object.assign(tabs.get(9), { url, title });
+    for (const listen of chrome.webNavigation.onCommitted.listeners)
+      await listen({ tabId: 9, frameId: 0, url });
+  };
+  const askOn = (tabId, text, start, title) =>
+    call(
+      {
+        type: 'highlightCreate',
+        ask: true,
+        text,
+        anchor: anchor(text, start),
+        title,
+        context: { before: '', after: '' },
+      },
+      page(tabId),
+    );
+  let alpha = await attach(9);
+  await askOn(9, 'Alpha one', 3, 'Alpha');
+  await alpha.port.onMessage.listeners[0]({ type: 'bind', threadId: 'thread-alpha' });
+  const alphaInput = await sendMessage(
+    alpha,
+    'thread-alpha',
+    'About alpha?',
+    alpha.events('codex-selection').at(-1),
+  );
+  await completeTurn(alpha.session, 'thread-alpha', alphaInput, 'Alpha answer.');
+  await until(() => appends().some((m) => m.params.threadId === 'thread-alpha'));
+  await visit('https://example.test/beta', 'Beta');
+  await askOn(9, 'Beta one', 3, 'Beta');
+  assert.equal(alpha.events('codex-view-changed').length, 1, 'Beta gets its own conversation');
+  const beta = await attach(9);
+  assert.equal(beta.state.threadId, undefined);
+  await beta.port.onMessage.listeners[0]({ type: 'bind', threadId: 'thread-beta' });
+  const betaInput = await sendMessage(beta, 'thread-beta', 'About beta?', beta.state.selection);
+  await completeTurn(beta.session, 'thread-beta', betaInput, 'Beta answer.');
+  await until(() => appends().some((m) => m.params.threadId === 'thread-beta'));
+  await visit('https://example.test/alpha', 'Alpha');
+  await askOn(9, 'Alpha two', 20, 'Alpha');
+  assert.equal(beta.events('codex-view-changed').length, 1, 'Back to the alpha conversation');
+  alpha = await attach(9);
+  assert.equal(alpha.state.threadId, 'thread-alpha');
+  assert.equal(alpha.state.selection.text, 'Alpha two');
+  tabs.delete(9);
+  for (const listen of chrome.tabs.onRemoved.listeners) await listen(9);
+  tabs.set(10, { id: 10, windowId: 1, url: 'https://example.test/alpha', title: 'Alpha' });
+  const reopenedAlpha = await attach(10);
+  assert.equal(reopenedAlpha.state.threadId, undefined);
+  await askOn(10, 'Alpha three', 40, 'Alpha');
+  assert.equal(reopenedAlpha.events('codex-view-changed').length, 1);
+  const fromVault = await attach(10);
+  assert.equal(fromVault.state.threadId, 'thread-alpha', 'The saved thread is resumed');
+  await fromVault.ui('codexConnect');
+  assert.equal(sent.findLast((m) => m.op === 'claim').threadId, 'thread-alpha');
+  console.log('PASS a document resumes its conversation after another one, and from the vault');
 } finally {
   python.stdin.end();
   fs.rmSync(temp, { recursive: true, force: true });

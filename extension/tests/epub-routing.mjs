@@ -498,11 +498,23 @@ assert.deepEqual(posted.findLast((m) => m.type === 'command').command, {
   action: 'refresh',
 });
 saved.note = 'Mine';
-// Messages from the reader tab carry a reading context that names the book's full text.
+// Messages from the reader tab carry a reading context that names the book's full text;
+// one quoting the highlight carries the user's note on it.
 await chat.onMessage.listeners[0]({
   type: 'ui',
   name: 'codexRpc',
-  args: [{ id: 50, method: 'turn/start', params: { input: [{ type: 'text', text: 'Why?' }] } }],
+  args: [
+    {
+      id: 50,
+      method: 'turn/start',
+      params: {
+        input: [{ type: 'text', text: 'Why?' }],
+        additionalContext: {
+          pageSelection: { kind: 'untrusted', value: JSON.stringify(opened) },
+        },
+      },
+    },
+  ],
 });
 const turn = await until(() =>
   sent.findLast((m) => m.op === 'rpc' && m.message.method === 'turn/start'),
@@ -581,8 +593,9 @@ const afterReloadReading = JSON.parse(
     .find((p) => p.text?.startsWith(readingContextPrefix))
     .text.slice(readingContextPrefix.length),
 );
-assert.equal(afterReloadReading.saving, 'highlight');
-assert.equal(afterReloadReading.highlight.id, 'h001');
+// A follow-up without a quote is saved in the book's discussion.
+assert.equal(afterReloadReading.saving, 'document');
+assert.equal(afterReloadReading.highlight, undefined);
 assert.deepEqual(
   (({ url, kind, fullText }) => ({ url, kind, fullText }))(afterReloadReading.document),
   { url: 'urn:sha256:' + sha256, kind: 'epub', fullText: fullTextPath },

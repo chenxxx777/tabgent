@@ -2263,3 +2263,10 @@ body.history-open {
   border-radius: 6px;
   font-size: 11px;
 }
+
+/* The turn a highlight's discussion opened at. */
+.message.focused {
+  outline: 2px solid var(--accent, #8ab4f8);
+  outline-offset: 4px;
+  border-radius: 8px;
+}
