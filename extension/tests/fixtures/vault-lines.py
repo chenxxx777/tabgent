@@ -16,5 +16,8 @@ for line in sys.stdin:
         reply = feeds.handle(settings, method, message.get("params"))
     else:
         reply = vault.handle(settings, method, message.get("params"))
+    # A PDF's page text is written in the background: tests see it written, and nothing
+    # writes to their temporary folder after the reply.
+    vault.wait_for_text(60)
     sys.stdout.write(json.dumps({"id": message.get("id"), **reply}) + "\n")
     sys.stdout.flush()
