@@ -92,6 +92,24 @@
   "highlightTooLong": {
     "message": "选中的内容太长，无法高亮。"
   },
+  "highlightSaving": {
+    "message": "正在保存高亮…"
+  },
+  "highlightSavePending": {
+    "message": "连接器暂时没有回应，高亮可能仍在保存，保存后会自动显示在这里。"
+  },
+  "highlightAskUnsaved": {
+    "message": "高亮未能保存：$1。引用已发到侧边栏，讨论会存为整篇文档的讨论。"
+  },
+  "pdfCopyFailed": {
+    "message": "这份 PDF 未能复制到阅读笔记：$1。高亮已保存，下次打开时会重试。"
+  },
+  "pdfTextRetry": {
+    "message": "这份 PDF 的全文暂未能存入阅读笔记：$1。高亮和讨论不受影响，下次打开时会重试。"
+  },
+  "pdfTextFailed": {
+    "message": "这份 PDF 的全文未能存入阅读笔记：$1。高亮和讨论不受影响。"
+  },
   "highlightSaveFailed": {
     "message": "无法保存高亮：$1"
   },
@@ -196,6 +214,9 @@
   },
   "readingSaveFailed": {
     "message": "未能保存到阅读笔记：$1"
+  },
+  "readingSavedOnDocument": {
+    "message": "这条高亮已不在阅读笔记里，本轮讨论已改存为整篇文档的讨论。"
   },
   "readingSaveQueued": {
     "message": "尚未保存到阅读笔记（$1），Tabgent 会重试。"
@@ -1620,6 +1641,9 @@
   },
   "errorIo": {
     "message": "无法读写资料库"
+  },
+  "errorSavePending": {
+    "message": "连接器暂时没有回应，可能仍在保存"
   },
   "errorTimeout": {
     "message": "连接器响应超时"

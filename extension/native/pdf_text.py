@@ -25,7 +25,11 @@ CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 
 
 class PdfError(Exception):
-    pass
+    """A PDF whose text cannot be read. transient: reading again later may work."""
+
+    def __init__(self, message, transient=False):
+        super().__init__(message)
+        self.transient = transient
 
 
 def extract(path):
@@ -41,7 +45,7 @@ def extract(path):
     except FileNotFoundError:
         raise PdfError("Reading PDF text needs macOS PDFKit")
     except subprocess.TimeoutExpired:
-        raise PdfError("Reading the PDF text took too long")
+        raise PdfError("Reading the PDF text took too long", transient=True)
     if done.returncode:
         # osascript reports "execution error: Error: Error: <reason> (-2700)".
         reasons = re.findall(r"(?:Error: )+([^()\n]+?) \(-?\d+\)", done.stderr)

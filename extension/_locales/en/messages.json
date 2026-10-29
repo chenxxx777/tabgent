@@ -886,6 +886,24 @@
   "highlightTooLong": {
     "message": "This selection is too long to highlight."
   },
+  "highlightSaving": {
+    "message": "Saving the highlight…"
+  },
+  "highlightSavePending": {
+    "message": "The connector has not answered yet. The highlight may still be saving; it shows here once saved."
+  },
+  "highlightAskUnsaved": {
+    "message": "The highlight was not saved: $1. The quote was sent to the side panel; its discussion is saved on the document."
+  },
+  "pdfCopyFailed": {
+    "message": "The PDF was not copied into your reading notes: $1. Its highlights are saved; Tabgent tries again the next time it opens."
+  },
+  "pdfTextRetry": {
+    "message": "The text of this PDF could not be added to your reading notes yet: $1. Its highlights and discussions are saved; Tabgent tries again the next time it opens."
+  },
+  "pdfTextFailed": {
+    "message": "The text of this PDF could not be added to your reading notes: $1. Its highlights and discussions are saved."
+  },
   "highlightSaveFailed": {
     "message": "The highlight could not be saved: $1"
   },
@@ -990,6 +1008,9 @@
   },
   "readingSaveFailed": {
     "message": "Not saved to reading notes: $1"
+  },
+  "readingSavedOnDocument": {
+    "message": "This highlight is no longer in your reading notes, so this turn was saved to the document's discussion instead."
   },
   "readingSaveQueued": {
     "message": "Not saved to reading notes yet ($1). Tabgent will retry."
@@ -1620,6 +1641,9 @@
   },
   "errorIo": {
     "message": "The reading folder could not be read or written"
+  },
+  "errorSavePending": {
+    "message": "the connector has not answered yet; it may still be saving"
   },
   "errorTimeout": {
     "message": "The connector took too long to answer"

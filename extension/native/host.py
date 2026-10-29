@@ -720,6 +720,8 @@ TRANSLATOR = translate.Translator(HOME, lambda: executable(), lambda value: send
 
 def vault_request(message, prepared=None):
     settings = HOME / "projects/tabgent/vault.json"
+    # The first vault request finds text an earlier connector left unwritten.
+    vault.resume_text(settings)
     method = message.get("method")
     if isinstance(method, str) and method.startswith("vault/feeds/"):
         reply = feeds.handle(settings, method, message.get("params"), prepared)
@@ -853,6 +855,9 @@ def main():
         # Finish saves already received before Chrome stops the connector.
         FEED_POOL.shutdown(wait=True)
         VAULT_POOL.shutdown(wait=True)
+        # A PDF's text read in the background is written too; one cut short is written
+        # when its viewer opens it again, or by the next connector (vault.resume_text).
+        vault.TEXT_POOL.shutdown(wait=True)
         TRANSLATOR.close()
         for session in list(SESSIONS.values()):
             session.close()

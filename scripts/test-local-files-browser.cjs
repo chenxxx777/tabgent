@@ -109,14 +109,18 @@ Short daily sessions build a durable habit.
     `#!/bin/sh\nexec '${python}' '${path.join(extension, 'tests/fixtures/app-server-tools.py')}' "$@"\n`,
     { mode: 0o700 },
   );
-  // The real host.py, with Codex discovery pointed at the fixture app-server.
+  // The real host.py, with Codex discovery pointed at the fixture app-server. Reading a PDF's
+  // page text can be made slow, as PDFKit is on a long book: the slow file holds the seconds.
+  const slowText = path.join(temp, 'slow-pdf-text');
   const start =
-    'import sys; native, codex = sys.argv[1:3]; del sys.argv[1:3]; sys.path.insert(0, native); ' +
+    'import os, sys, time; native, codex, slow = sys.argv[1:4]; del sys.argv[1:4]; ' +
+    'sys.path.insert(0, native); import pdf_text; read = pdf_text.extract; ' +
+    'pdf_text.extract = lambda p: (os.path.exists(slow) and time.sleep(float(open(slow).read())), read(p))[1]; ' +
     'import host; host.executable = lambda: codex; host.main()';
   const connector = path.join(temp, 'connector');
   fs.writeFileSync(
     connector,
-    `#!/bin/sh\nexport HOME='${home}' CODEX_HOME='${codexHome}'\nexec '${python}' -c '${start}' '${path.join(extension, 'native')}' '${codex}' "$@" 2>>'${temp}/host.err'\n`,
+    `#!/bin/sh\nexport HOME='${home}' CODEX_HOME='${codexHome}'\nexec '${python}' -c '${start}' '${path.join(extension, 'native')}' '${codex}' '${slowText}' "$@" 2>>'${temp}/host.err'\n`,
     { mode: 0o700 },
   );
   // Chrome reads <user-data-dir>/NativeMessagingHosts, so nothing is installed globally.
@@ -517,7 +521,14 @@ Short daily sessions build a durable habit.
     assert.equal(data.highlights[0].anchor.page, 2);
     assert(await paintedAre(pdf, [first]), 'The highlight is painted');
     const original = path.join(books, paper, 'original.pdf');
-    assert(await until(() => fs.existsSync(path.join(books, paper, 'source.json'))));
+    // The copy is stored at once; its page text follows in the background.
+    const sourceFile = path.join(books, paper, 'source.json');
+    assert(
+      await until(
+        () =>
+          fs.existsSync(sourceFile) && !JSON.parse(fs.readFileSync(sourceFile, 'utf8')).textPending,
+      ),
+    );
     assert.deepEqual(fs.readFileSync(original), paperPdf, 'The vault copy is byte-identical');
     const record = JSON.parse(fs.readFileSync(path.join(books, paper, 'source.json'), 'utf8'));
     assert.deepEqual(
@@ -944,6 +955,115 @@ Short daily sessions build a durable habit.
     assert.equal(contexts.reading.document.fullText, docOf(paper).fullTextPath);
     await agent.close();
     console.log('PASS Agent tabs keep asking and saving after a local file or PDF closes');
+
+    // 9. A long PDF from the computer whose page text takes PDFKit longer than a request may
+    // wait (20 s here): its first Ask AI, Highlight and Comment are saved and painted at
+    // once, the question about it is saved under the highlight, and another tab's highlight
+    // is not held up. The page text follows in the background.
+    fs.writeFileSync(slowText, '20');
+    const filler = Array.from(
+      { length: 30 },
+      (_, n) => `Line ${n + 1}: careful readers return to difficult passages again.`,
+    );
+    const longPdf = (title) =>
+      textPdf(
+        Array.from({ length: 300 }, (_, i) =>
+          i === 1
+            ? [
+                `Chapter 2. ${title}`,
+                "Autonomy is the endorsement of one's own actions.",
+                ...filler,
+              ]
+            : [`Chapter ${i + 1}. ${title}`, ...filler],
+        ),
+        { title, author: 'Fixture Author' },
+      );
+    const quote = "endorsement of one's own actions";
+    const longs = {};
+    for (const [action, title] of [
+      ['ask', 'Long Ask Book'],
+      ['highlight', 'Long Highlight Book'],
+      ['comment', 'Long Comment Book'],
+    ]) {
+      const file = path.join(folder, `${action} long book.pdf`);
+      fs.writeFileSync(file, longPdf(title));
+      const tab = await context.newPage();
+      await tab.goto(url(file));
+      const frame = await viewer(tab);
+      await drag(tab, frame, quote, '.page[data-page-number="2"] .textLayer');
+      const pressed = Date.now();
+      await press(tab, action);
+      if (action === 'comment') {
+        await wait(300);
+        await tab.keyboard.type('Saved with its passage.');
+        await tab.keyboard.press('Control+Enter');
+      }
+      const prefix = `paper-${title.toLowerCase().replaceAll(' ', '-')}-`;
+      const dir = await until(() => folders(books, prefix)[0], 5000);
+      assert(dir, `The first ${action} creates the document`);
+      assert(
+        await until(() => anchorsOf(books, dir).highlights.length === 1, 5000),
+        `The first ${action} is saved at once`,
+      );
+      assert(await paintedAre(frame, [quote]), `The first ${action} is painted`);
+      assert(Date.now() - pressed < 8000, `The first ${action} did not wait for the page text`);
+      if (action === 'comment')
+        assert.equal(anchorsOf(books, dir).highlights[0].note, 'Saved with its passage.');
+      const source = path.join(books, dir, 'source.json');
+      assert(await until(() => fs.existsSync(source), 5000), 'The original is copied at once');
+      assert.equal(JSON.parse(fs.readFileSync(source, 'utf8')).textPending, true);
+      assert(!(await layerHtml(tab)).includes('toast error'), 'No error is shown');
+      longs[action] = { tab, frame, file, dir, source };
+    }
+    // While the page text is read, another tab's highlight saves at once.
+    const elsewhere = await context.newPage();
+    await elsewhere.goto(url(files.md));
+    await drag(elsewhere, elsewhere.mainFrame(), 'Reading notes', 'pre');
+    const notesBefore = anchorsOf(articles, note1).highlights.length;
+    const elsewhereAt = Date.now();
+    await press(elsewhere, 'highlight');
+    assert(
+      await until(() => anchorsOf(articles, note1).highlights.length === notesBefore + 1, 5000),
+      'Another tab saves its highlight while the page text is read',
+    );
+    assert(Date.now() - elsewhereAt < 5000);
+    await elsewhere.close();
+    // Ask AI bound the side panel to the saved highlight; the answer is saved under it.
+    const asking = longs.ask;
+    const askTab = await tabIdOf(asking.tab);
+    assert.deepEqual((await until(() => selectionOf(askTab))).highlight, {
+      documentId: asking.dir,
+      highlightId: 'h001',
+      kind: 'pdf',
+    });
+    await asking.tab.bringToFront();
+    panel = await panelFor(url(asking.file));
+    assert(await send(panel, 'What is endorsement here?'));
+    assert(
+      await until(() => anchorsOf(books, asking.dir).turns.length === 1, 15000),
+      'The answer is saved while the page text is still read',
+    );
+    assert.equal(anchorsOf(books, asking.dir).turns[0].highlightId, 'h001');
+    panel.close();
+    // The page text is written in the background, without the notes changing.
+    assert(
+      await until(() => !JSON.parse(fs.readFileSync(asking.source, 'utf8')).textPending, 40000),
+      'The page text is written in the background',
+    );
+    const longRecord = JSON.parse(fs.readFileSync(asking.source, 'utf8'));
+    assert.equal(longRecord.pageCount, 300);
+    assert.match(docOf(asking.dir).fullText, /<!-- tabgent:page 2 -->/);
+    assert.equal(anchorsOf(books, asking.dir).highlights.length, 1);
+    assert.equal(anchorsOf(books, asking.dir).turns.length, 1);
+    fs.rmSync(slowText);
+    // After a reload the highlight is still painted.
+    await asking.tab.reload();
+    const reopenedLong = await viewer(asking.tab);
+    assert(await paintedAre(reopenedLong, [quote]), 'The highlight is restored after a reload');
+    for (const { tab } of Object.values(longs)) await tab.close();
+    console.log(
+      'PASS a long local PDF: first Ask AI, Highlight and Comment save at once; text follows',
+    );
 
     assert(!logs.some((line) => line.startsWith('pageerror')), logs.join('\n'));
     assert.equal(personalState(), personalBefore, 'The personal vault was not touched');
