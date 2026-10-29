@@ -421,6 +421,7 @@ export function createReading({ i18n, request, showError, selection, reload }) {
     refresh,
     render: () => state && render(),
     saved(value) {
+      if (value?.ok && value.fallback === 'document') showError(i18n('readingSavedOnDocument'));
       if (value && !value.ok)
         showError(
           i18n(

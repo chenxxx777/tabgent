@@ -853,6 +853,9 @@ def main():
         # Finish saves already received before Chrome stops the connector.
         FEED_POOL.shutdown(wait=True)
         VAULT_POOL.shutdown(wait=True)
+        # A PDF's text read in the background is written too; one cut short is written
+        # the next time its viewer opens it.
+        vault.TEXT_POOL.shutdown(wait=True)
         TRANSLATOR.close()
         for session in list(SESSIONS.values()):
             session.close()

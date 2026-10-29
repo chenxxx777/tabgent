@@ -11,6 +11,7 @@ import { isSection } from './document-id.js';
 import {
   appendParams,
   clip,
+  documentTurnParams,
   earlierNotes,
   highlightBinding,
   readingContext,
@@ -304,17 +305,24 @@ export function createReadingCompanion({
     if (s.readingSave === false) return;
     const params = appendParams(record, threadId, turn);
     if (!params) return;
-    const result = await append(params);
+    const bound =
+      s.reading?.documentId === params.documentId && s.reading?.highlightId === params.highlightId;
+    const result = await append(
+      params,
+      documentTurnParams(params, record, bound ? s.reading.text : ''),
+    );
     const value = {
       ok: !result.error,
       queued: !!result.queued,
       highlightId: params.highlightId,
       message: result.error?.message || '',
+      // The highlight was gone: the turn was saved on the document instead.
+      ...(result.fallback ? { fallback: 'document' } : {}),
     };
     if (result.error?.code) value.code = result.error.code;
     if (typeof result.error?.folder === 'string' && result.error.folder)
       value.folder = result.error.folder;
-    if (result.document && !params.highlightId && !s.reading?.highlightId) {
+    if (result.document && (result.fallback || (!params.highlightId && !s.reading?.highlightId))) {
       // A page discussion keeps saving to the document it created.
       s.reading = {
         documentId: result.document.id,
@@ -332,16 +340,21 @@ export function createReadingCompanion({
       );
   }
 
-  async function append(params) {
+  // A turn whose highlight or document is no longer in the vault (deleted meanwhile) is
+  // not lost: it is saved on the document instead (fallback, from documentTurnParams).
+  async function append(params, fallback = null) {
     try {
       const result = await vault.request('vault/discussion/append', params);
       void flush();
       return { document: result.document };
     } catch (error) {
+      if (error.code === 'not_found' && fallback)
+        return { ...(await append(fallback)), fallback: true };
       if (permanent.has(error.code)) return { error };
+      const entry = fallback ? { ...params, fallback } : params;
       const { [outboxKey]: queued = [] } = await chrome.storage.local.get(outboxKey);
       const key = (p) => p.threadId + '\n' + p.turnId;
-      const next = [...queued.filter((p) => key(p) !== key(params)), params].slice(-outboxLimit);
+      const next = [...queued.filter((p) => key(p) !== key(entry)), entry].slice(-outboxLimit);
       await chrome.storage.local.set({ [outboxKey]: next });
       return { error, queued: true };
     }
@@ -353,12 +366,21 @@ export function createReadingCompanion({
       try {
         const { [outboxKey]: queued = [] } = await chrome.storage.local.get(outboxKey);
         const done = new Set();
-        for (const params of queued) {
+        for (const entry of queued) {
+          const { fallback, ...params } = entry;
           try {
             await vault.request('vault/discussion/append', params);
-            done.add(params);
+            done.add(entry);
           } catch (error) {
-            if (permanent.has(error.code)) done.add(params);
+            if (error.code === 'not_found' && fallback)
+              try {
+                await vault.request('vault/discussion/append', fallback);
+                done.add(entry);
+                continue;
+              } catch (retry) {
+                error = retry;
+              }
+            if (permanent.has(error.code)) done.add(entry);
             else break;
           }
         }

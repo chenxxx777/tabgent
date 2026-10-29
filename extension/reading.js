@@ -158,19 +158,23 @@ export function readingTurn(items, quoteLabel = '') {
       if (text.trim()) texts.push(text.trim());
     }
   }
-  const quoted = reading?.highlight?.attached ? [] : quotes.filter(Boolean);
-  const user = [
-    ...quoted.map((quote) =>
-      clip(quote, limits.quote)
-        .split('\n')
-        .map((line) => '> ' + line)
-        .join('\n'),
-    ),
-    ...texts,
-    ...(files.filter(Boolean).length ? ['Attached: ' + files.filter(Boolean).join(', ')] : []),
-  ].join('\n\n');
-  return { reading, page, user, assistant };
+  const words = (quoted) =>
+    [
+      ...quoted.map(quoteLines),
+      ...texts,
+      ...(files.filter(Boolean).length ? ['Attached: ' + files.filter(Boolean).join(', ')] : []),
+    ].join('\n\n');
+  // A highlight's discussion shows its passage once, above the turns, so a turn attached to
+  // one leaves its quote out. quotedUser keeps the quotes, for saving it on the document.
+  const quoted = quotes.filter(Boolean);
+  const user = words(reading?.highlight?.attached ? [] : quoted);
+  return { reading, page, user, quotedUser: quoted.length ? words(quoted) : '', assistant };
 }
+const quoteLines = (quote) =>
+  clip(quote, limits.quote)
+    .split('\n')
+    .map((line) => '> ' + line)
+    .join('\n');
 
 // vault/discussion/append parameters for a saved turn, or null when it is not saved.
 export function appendParams(record, threadId, turn) {
@@ -201,6 +205,20 @@ export function appendParams(record, threadId, turn) {
     assistant: record.assistant,
     at: Number.isFinite(turn.completedAt) ? turn.completedAt * 1000 : Date.now(),
   };
+}
+
+// A highlight's turn saved as a discussion of its whole document instead, quoting the
+// passage (passage: the bound highlight's text when the turn's own context has none): for
+// a highlight (or document) no longer in the vault. Without documentId the vault finds the
+// document by its URL, or creates it.
+export function documentTurnParams(params, record, passage = '') {
+  if (!params?.highlightId) return null;
+  const { documentId, highlightId, ...rest } = params;
+  const text = string(record?.reading?.highlight?.text) || string(passage);
+  const user =
+    string(record?.quotedUser) ||
+    (text.trim() ? [quoteLines(text), params.user].filter(Boolean).join('\n\n') : params.user);
+  return { ...rest, highlightId: null, user };
 }
 
 // The binding recorded in a reading context part, used when a thread is resumed or

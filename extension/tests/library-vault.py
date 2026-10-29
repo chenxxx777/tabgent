@@ -15,6 +15,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -152,6 +154,11 @@ with tempfile.TemporaryDirectory(prefix="tabgent-library-vault-") as directory:
         assert save(settings, 0, b"")["received"] == half  # Resume point.
         done = save(settings, half, PDF[half:])
         assert done["complete"] is True and done["received"] == len(PDF)
+        # The page text is read in the background; the import does not wait for it.
+        assert done["source"]["textPending"] is True
+        vault.wait_for_text(60)
+        done = save(settings, 0, b"")
+        assert done["complete"] is True and done["source"]["textPending"] is False
         document = done["document"]
         assert re.fullmatch(
             r"paper-reading-companion-paper-[0-9a-f]{8}", document["id"]
@@ -208,7 +215,8 @@ with tempfile.TemporaryDirectory(prefix="tabgent-library-vault-") as directory:
         if PDFKIT:
             # A deleted full text is written again when the file is imported again.
             full.unlink()
-            assert save(settings, 0, b"")["complete"] is True
+            assert save(settings, 0, b"")["source"]["textPending"] is True
+            vault.wait_for_text(60)
             assert full.read_text() == text
         # Another file under this identity is refused; the original never changes.
         assert (
@@ -539,7 +547,13 @@ with tempfile.TemporaryDirectory(prefix="tabgent-library-pages-") as directory:
             "data": b64(data),
             "name": title + ".pdf",
         }
-        return call(settings, "vault/source/save", params), params
+        call(settings, "vault/source/save", params)
+        # The page text is read in the background; the next check reports it.
+        vault.wait_for_text(60)
+        return check(params), params
+
+    def check(params):
+        return call(settings, "vault/source/save", {**params, "data": ""})
 
     with patch.object(vault, "default_path", lambda: root):
         # Text that cannot be read (here: an encrypted PDF) is recorded and not retried.
@@ -579,7 +593,9 @@ with tempfile.TemporaryDirectory(prefix="tabgent-library-pages-") as directory:
                     text_pdf.build([["First page."], ["Second page."]]), "Written"
                 )
             assert "pageWriteError" in written["source"], written["source"]
-            restored = call(settings, "vault/source/save", {**params, "data": ""})
+            assert check(params)["source"]["textPending"] is True
+            vault.wait_for_text(60)
+            restored = check(params)
             assert "pageWriteError" not in restored["source"]
             assert [p["page"] for p in restored["source"]["pages"]] == [1, 2]
             assert Path(restored["source"]["fullTextPath"]).is_file()
@@ -601,6 +617,165 @@ with tempfile.TemporaryDirectory(prefix="tabgent-library-pages-") as directory:
         )
         assert not {"pages", "pageCount", "pageError"} & set(epub["source"])
 print("PASS unreadable, scanned and unwritable page text leaves the PDF readable")
+
+
+# A PDF's page text is read in the background: storing the original returns at once,
+# and highlights (on this PDF and on other documents) never wait for the reading.
+with tempfile.TemporaryDirectory(prefix="tabgent-library-background-") as directory:
+    base = Path(directory)
+    settings = base / "codex/projects/tabgent/vault.json"
+    root = base / "Tabgent"
+    data = text_pdf.build([["Slow first page."], ["Slow second page."]])
+    digest = hashlib.sha256(data).hexdigest()
+    params = {
+        "url": "urn:sha256:" + digest,
+        "title": "Slow",
+        "kind": "pdf",
+        "sha256": digest,
+        "size": len(data),
+        "offset": 0,
+        "data": b64(data),
+        "name": "slow.pdf",
+    }
+    check = {**params, "data": ""}
+    folder = lambda ident: root / ".tabgent/documents" / ident
+    reading, release = threading.Event(), threading.Event()
+    pages = {
+        "count": 2,
+        "pages": [{"page": 1, "text": "Slow first page."}],
+        "truncated": False,
+    }
+
+    def slow(path):
+        reading.set()
+        assert release.wait(30)
+        return pages
+
+    with patch.object(vault, "default_path", lambda: root), patch.object(
+        pdf_text, "extract", slow
+    ):
+        # The first highlight creates the document; its original is stored next.
+        first = call(
+            settings,
+            "vault/highlight/create",
+            {
+                **{k: params[k] for k in ("url", "title", "kind")},
+                "text": "Slow first page.",
+                "anchor": pdf_anchor("Slow first page."),
+            },
+        )
+        ident = first["document"]["id"]
+        started = time.monotonic()
+        stored = call(settings, "vault/source/save", params)
+        assert stored["complete"] is True and stored["source"]["textPending"] is True
+        assert reading.wait(10), "The page text is read in the background"
+        # While PDFKit reads, the vault lock is free: highlights save at once.
+        second = call(
+            settings,
+            "vault/highlight/create",
+            {
+                **{k: params[k] for k in ("url", "title", "kind")},
+                "text": "Slow second page.",
+                "anchor": pdf_anchor("Slow second page.", 2),
+            },
+        )
+        other = call(
+            settings,
+            "vault/highlight/create",
+            {
+                "url": "https://example.com/other",
+                "title": "Other",
+                "kind": "web",
+                "text": "Other text",
+                "anchor": {
+                    "kind": "web",
+                    "quote": {"exact": "Other text"},
+                    "position": {"start": 0, "end": 10},
+                },
+            },
+        )
+        assert time.monotonic() - started < 5, "Nothing waited for the page text"
+        assert (
+            second["highlight"]["id"] == "h002" and other["highlight"]["id"] == "h001"
+        )
+        # A check while it reads reports textPending and starts no second reading.
+        assert (
+            call(settings, "vault/source/save", check)["source"]["textPending"] is True
+        )
+        release.set()
+        vault.wait_for_text(30)
+        done = call(settings, "vault/source/save", check)
+        assert done["source"]["textPending"] is False
+        assert [p["page"] for p in done["source"]["pages"]] == [1]
+        # Writing the text keeps the highlights saved while it was read.
+        record = json.loads((folder(ident) / "anchors.json").read_text())
+        assert [h["id"] for h in record["highlights"]] == ["h001", "h002"]
+        assert "textPending" not in json.loads(
+            (folder(ident) / "source.json").read_text()
+        )
+
+    # A reading that took too long is tried again at the next check of the original.
+    data = text_pdf.build([["Retry page."]])
+    digest = hashlib.sha256(data).hexdigest()
+    params = {
+        **params,
+        "url": "urn:sha256:" + digest,
+        "title": "Retry",
+        "sha256": digest,
+        "size": len(data),
+        "data": b64(data),
+        "name": "retry.pdf",
+    }
+    check = {**params, "data": ""}
+    attempts = []
+
+    def flaky(path):
+        attempts.append(path)
+        if len(attempts) == 1:
+            raise pdf_text.PdfError(
+                "Reading the PDF text took too long", transient=True
+            )
+        return {
+            "count": 1,
+            "pages": [{"page": 1, "text": "Retry page."}],
+            "truncated": False,
+        }
+
+    with patch.object(vault, "default_path", lambda: root), patch.object(
+        pdf_text, "extract", flaky
+    ):
+        call(settings, "vault/source/save", params)
+        vault.wait_for_text(30)
+        failed = call(settings, "vault/source/save", check)
+        assert failed["source"]["pageError"] == "Reading the PDF text took too long"
+        # Not at once: the viewer that waits for the text is told it failed.
+        assert failed["source"]["textPending"] is False
+        assert failed["source"]["textRetry"] is True
+        assert len(attempts) == 1
+        # Later (here: its retry time moved to the past), the next check tries again.
+        retry = folder(failed["document"]["id"]) / "source.json"
+        retry.write_text(json.dumps({**json.loads(retry.read_text()), "pageRetry": 0}))
+        assert (
+            call(settings, "vault/source/save", check)["source"]["textPending"] is True
+        )
+        vault.wait_for_text(30)
+        retried = call(settings, "vault/source/save", check)
+        assert len(attempts) == 2 and "pageError" not in retried["source"]
+        assert [p["page"] for p in retried["source"]["pages"]] == [1]
+
+        # A connector that stopped before writing the text leaves textPending in
+        # source.json; the next check writes it.
+        ident = retried["document"]["id"]
+        source = folder(ident) / "source.json"
+        record = json.loads(source.read_text())
+        source.write_text(json.dumps({**record, "textPending": True}))
+        assert (
+            call(settings, "vault/source/save", check)["source"]["textPending"] is True
+        )
+        vault.wait_for_text(30)
+        assert len(attempts) == 3
+        assert "textPending" not in json.loads(source.read_text())
+print("PASS a PDF's page text is read in the background without holding the vault")
 
 
 # pdf_text bounds and reports what PDFKit returns, without running it here.

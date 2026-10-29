@@ -18,6 +18,7 @@ they edited before replacing it.
 """
 
 import base64
+import concurrent.futures
 import contextlib
 import ctypes
 import datetime
@@ -662,7 +663,9 @@ def save_source(settings, params):
     `received`. A chunk whose offset is not `received` is ignored, and an empty chunk
     only reports progress. The last chunk is verified, then the file is moved into the
     document's record (created as for a first highlight), with a visible copy in
-    Attachments/ for other apps. Its text is written to its full text file then."""
+    Attachments/ for other apps. Its text is written to its full text file then; a PDF's
+    in the background (see BACKGROUND_TEXT), and the result says textPending until then.
+    """
     url, title, kind, meta = _source(params)
     if kind not in SOURCE_FILES:
         raise VaultError("invalid_params", "kind must be epub or pdf")
@@ -693,6 +696,8 @@ def save_source(settings, params):
                     "invalid_params", "This document already has a different original"
                 )
             record = _ensure_full(root, existing, record)
+            if record.get("textPending"):
+                _schedule_text(root, existing["document"]["id"], digest)
             return _source_result(root, existing, record)
         try:
             received = upload.stat().st_size
@@ -752,10 +757,15 @@ def save_source(settings, params):
                 context.files["original"] = visible
             except (OSError, VaultError):
                 context.files.pop("original", None)
-        record = _write_source_text(root, document, context, record)
+        if kind in BACKGROUND_TEXT:
+            record["textPending"] = True
+        else:
+            record = _write_source_text(root, document, context, record)
         _write(folder / "source.json", _json(record))
         context.source = record
         _commit(root, document, context)
+    if record.get("textPending"):
+        _schedule_text(root, document["document"]["id"], digest)
     return _source_result(root, document, record)
 
 
@@ -2128,7 +2138,12 @@ def _catalog_update(root, data):
     changed = rebuilt or catalog["documents"].get(ident) != entry
     catalog["documents"][ident] = entry
     owner = catalog["urls"].get(url)
-    if owner != ident and (owner is None or owner not in catalog["documents"]):
+    # The URL moves to this document when its recorded one is gone (its folder deleted).
+    if owner != ident and (
+        owner is None
+        or owner not in catalog["documents"]
+        or not (root / RECORDS / owner).is_dir()
+    ):
         catalog["urls"][url] = ident
         changed = True
     if changed:
@@ -2763,6 +2778,10 @@ def _public_source(root, data, record):
         "visiblePath": str(root / files["original"]) if files.get("original") else None,
         # Chapters of an EPUB (their reader titles and hrefs) or pages of a PDF with text.
         "chapters": record["chapters"],
+        # The text is still being read in the background (BACKGROUND_TEXT), or reading it
+        # failed in a way a later check tries again.
+        "textPending": bool(record.get("textPending")),
+        "textRetry": "pageRetry" in record,
         **{
             k: record[k]
             for k in ("chapterError", "chapterWriteError", "skippedChapters")
@@ -2801,10 +2820,21 @@ def _source_result(root, data, record):
 def _ensure_full(root, data, record):
     """Writes the full text again when its files were deleted or could not be written,
     from the stored original. One whose text cannot be extracted (chapterError,
-    pageError) is left alone, and a part the user edited is never replaced."""
+    pageError) is left alone unless reading it again may work (pageRetry, a time after
+    which it is tried again: not at once, while a viewer still waits for it), and a part
+    the user edited is never replaced. A PDF's text is marked textPending instead, for
+    the caller to write in the background (_schedule_text)."""
     kind = data["document"]["kind"]
     _restore_original(root, data, record)
-    if ("pageError" if kind == "pdf" else "chapterError") in record:
+    if record.get("textPending"):
+        return record
+    error = "pageError" if kind == "pdf" else "chapterError"
+    retry = record.get("pageRetry")
+    if error in record and not (
+        isinstance(retry, (int, float))
+        and not isinstance(retry, bool)
+        and time.time() >= retry
+    ):
         return record
     context = _context(root, data)
     full = context.files.get("full") or []
@@ -2819,10 +2849,14 @@ def _ensure_full(root, data, record):
         )
     )
     failed = ("pageWriteError" if kind == "pdf" else "chapterWriteError") in record
-    if present and not failed and "sections" in record:
+    if error not in record and present and not failed and "sections" in record:
         if full != data["document"]["files"].get("full"):
             data["document"]["files"] = context.files
             _save(root, data)
+        return record
+    if kind in BACKGROUND_TEXT:
+        record = {**record, "textPending": True}
+        _write(_record_folder(root, ident) / "source.json", _json(record))
         return record
     record = _write_source_text(root, data, context, record)
     _write(_record_folder(root, ident) / "source.json", _json(record))
@@ -2831,22 +2865,92 @@ def _ensure_full(root, data, record):
     return record
 
 
+# A PDF's page text is read with PDFKit in its own process, which can take a minute for
+# a long or scanned PDF. Storing the original does not wait for it: the text is read on
+# its own thread without the vault lock, which is taken only to write the text files, so
+# highlights and other vault requests never queue behind the reading. textPending in
+# source.json marks text still to write; when a connector stops first, the next check
+# of the original (its viewer opening it again) writes it.
+BACKGROUND_TEXT = {"pdf"}
+# Seconds before page text that took too long to read is tried again.
+TEXT_RETRY_AFTER = 300
+TEXT_POOL = concurrent.futures.ThreadPoolExecutor(
+    max_workers=1, thread_name_prefix="vault-text"
+)
+_TEXT_JOBS = {}
+_TEXT_JOBS_LOCK = threading.Lock()
+
+
+def _schedule_text(root, ident, digest):
+    """Writes the document's text in the background, once at a time per document."""
+    key = (str(root), ident)
+    with _TEXT_JOBS_LOCK:
+        if key in _TEXT_JOBS:
+            return
+        try:
+            _TEXT_JOBS[key] = TEXT_POOL.submit(_text_job, root, ident, digest)
+        except RuntimeError:
+            pass  # The connector is stopping; the next check writes the text.
+
+
+def _text_job(root, ident, digest):
+    def pending(data):
+        record = data and _source_record(root, data)
+        if record and record["sha256"] == digest and record.get("textPending"):
+            return record
+        return None
+
+    try:
+        data = _load(root, ident)
+        record = pending(data)
+        if record is None:
+            return
+        # Tabgent's own copy never changes, so it is read without the lock.
+        text = _read_source_text(
+            data["document"]["kind"], _original_path(root, data, record)
+        )
+        with _locked(root):
+            data = _load(root, ident)
+            record = pending(data)
+            if record is None:
+                return
+            context = _context(root, data)
+            record = _write_source_text(root, data, context, record, text)
+            _write(_record_folder(root, ident) / "source.json", _json(record))
+            context.source = record
+            _commit(root, data, context)
+    except Exception as error:
+        # textPending stays, so the next check of the original tries again.
+        print(f"The text of {ident} was not written: {error!r}", file=sys.stderr)
+    finally:
+        with _TEXT_JOBS_LOCK:
+            _TEXT_JOBS.pop((str(root), ident), None)
+
+
+def wait_for_text(timeout=None):
+    """Waits for the background text writes started so far (a stopping connector, tests)."""
+    with _TEXT_JOBS_LOCK:
+        jobs = list(_TEXT_JOBS.values())
+    concurrent.futures.wait(jobs, timeout=timeout)
+
+
 _SOURCE_ERRORS = {
-    "epub": ("chapterError", "chapterWriteError", "skippedChapters"),
-    "pdf": ("pageError", "pageWriteError", "pagesTruncated", "pageCount"),
+    "epub": ("chapterError", "chapterWriteError", "skippedChapters", "textPending"),
+    "pdf": (
+        "pageError",
+        "pageRetry",
+        "pageWriteError",
+        "pagesTruncated",
+        "pageCount",
+        "textPending",
+    ),
 }
 
 
-def _write_source_text(root, data, context, record):
-    """Writes the full text of an imported EPUB or PDF, from its original: one Markdown
-    file with a section per chapter (or per page with text), split into parts above
-    FULL_PART_LIMIT, and returns the new record. A failure to read the text leaves the
-    original readable without it; a part the user edited is kept."""
-    document = data["document"]
-    kind = document["kind"]
-    record = {k: v for k, v in record.items() if k not in _SOURCE_ERRORS[kind]}
-    original = _original_path(root, data, record)
-    extra = {}
+def _read_source_text(kind, original):
+    """The text of an original: (record fields, sections or None when it cannot be read,
+    fields kept only when the text is written). It reads only the original, so it needs
+    no lock. A failure to read the text leaves the original readable without it."""
     if kind == "epub":
         try:
             book = epub_text.extract(original)
@@ -2856,7 +2960,7 @@ def _write_source_text(root, data, context, record):
             reason = (
                 str(error) if isinstance(error, epub_text.EpubError) else repr(error)
             )
-            return {**record, "chapters": [], "chapterError": reason[:500]}
+            return {"chapters": [], "chapterError": reason[:500]}, None, {}
         chapters = book["chapters"]
         sections = [
             {
@@ -2868,32 +2972,63 @@ def _write_source_text(root, data, context, record):
             }
             for number, chapter in enumerate(chapters, 1)
         ]
-        extra["metadata"] = book["metadata"]
+        extra = {"metadata": book["metadata"]}
         if book["skipped"]:
             extra["skippedChapters"] = book["skipped"][:100]
-        listed, failed = "chapters", "chapterWriteError"
-    else:
-        try:
-            text = pdf_text.extract(original)
-        except Exception as error:
-            # The original is already stored and opens in the viewer without its text.
-            reason = str(error) if isinstance(error, pdf_text.PdfError) else repr(error)
-            return {**record, "pages": [], "pageError": reason[:500]}
-        record = {**record, "pageCount": text["count"]}
-        if text["truncated"]:
-            record["pagesTruncated"] = True
-        pages = [page for page in text["pages"] if page["text"]]
-        if not pages:
-            return {**record, "pages": [], "pageError": "The PDF has no text layer"}
-        sections = [
-            {
-                "number": page["page"],
-                "title": LABELS["page"].format(n=page["page"]),
-                "text": page["text"],
-            }
-            for page in pages
-        ]
-        listed, failed = "pages", "pageWriteError"
+        return {}, sections, extra
+    try:
+        text = pdf_text.extract(original)
+    except Exception as error:
+        # The original is already stored and opens in the viewer without its text.
+        known = isinstance(error, pdf_text.PdfError)
+        fields = {
+            "pages": [],
+            "pageError": (str(error) if known else repr(error))[:500],
+        }
+        # Reading that took too long or broke unexpectedly is tried again later.
+        if not known or error.transient:
+            fields["pageRetry"] = int(time.time()) + TEXT_RETRY_AFTER
+        return fields, None, {}
+    fields = {"pageCount": text["count"]}
+    if text["truncated"]:
+        fields["pagesTruncated"] = True
+    pages = [page for page in text["pages"] if page["text"]]
+    if not pages:
+        return (
+            {**fields, "pages": [], "pageError": "The PDF has no text layer"},
+            None,
+            {},
+        )
+    sections = [
+        {
+            "number": page["page"],
+            "title": LABELS["page"].format(n=page["page"]),
+            "text": page["text"],
+        }
+        for page in pages
+    ]
+    return fields, sections, {}
+
+
+def _write_source_text(root, data, context, record, text=None):
+    """Writes the full text of an imported EPUB or PDF, from its original (or the text
+    _read_source_text read from it): one Markdown file with a section per chapter (or
+    per page with text), split into parts above FULL_PART_LIMIT, and returns the new
+    record. A part the user edited is kept."""
+    document = data["document"]
+    kind = document["kind"]
+    record = {k: v for k, v in record.items() if k not in _SOURCE_ERRORS[kind]}
+    if text is None:
+        text = _read_source_text(kind, _original_path(root, data, record))
+    fields, sections, extra = text
+    record = {**record, **fields}
+    if sections is None:
+        return record
+    listed, failed = (
+        ("chapters", "chapterWriteError")
+        if kind == "epub"
+        else ("pages", "pageWriteError")
+    )
     failure, parts, paths = _write_full(root, data, context, record, sections)
     if failure:
         # Earlier full text files stay; the next import check retries the write.

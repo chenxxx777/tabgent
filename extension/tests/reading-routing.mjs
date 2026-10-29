@@ -839,6 +839,102 @@ try {
   assert.equal(left.document, undefined);
   assert.equal(left.saving, 'off');
   console.log('PASS an Agent tab keeps saving a highlight discussion after its page closes');
+
+  // A highlight deleted while its question is answered: the turn is not lost but saved on
+  // the document, quoting the passage, and the panel says so. Later turns save there too.
+  tabs.set(7, { id: 7, windowId: 1, url: 'https://example.test/gone', title: 'Gone' });
+  const goneView = await attach(7);
+  const goneQuote = 'A passage deleted meanwhile';
+  const gone = await call(
+    {
+      type: 'highlightCreate',
+      ask: true,
+      text: goneQuote,
+      anchor: anchor(goneQuote, 5),
+      title: 'Gone',
+      context: { before: '', after: '' },
+    },
+    page(7),
+  );
+  await goneView.port.onMessage.listeners[0]({ type: 'bind', threadId: 'thread-gone' });
+  const goneInput = await sendMessage(
+    goneView,
+    'thread-gone',
+    'What does it mean?',
+    goneView.events('codex-selection').at(-1),
+  );
+  assert.equal(readingPart(goneInput).saving, 'highlight');
+  await direct('vault/highlight/delete', {
+    documentId: gone.document.id,
+    highlightId: gone.highlight.id,
+  });
+  const goneFrom = appends().length;
+  await completeTurn(goneView.session, 'thread-gone', goneInput, 'It means this.');
+  await until(() => goneView.events('codex-reading-saved').length === 1);
+  assert.deepEqual(goneView.events('codex-reading-saved')[0], {
+    ok: true,
+    queued: false,
+    highlightId: gone.highlight.id,
+    message: '',
+    fallback: 'document',
+  });
+  assert.deepEqual(
+    appends()
+      .slice(goneFrom)
+      .map((m) => m.params.highlightId),
+    [gone.highlight.id, null],
+  );
+  discussion = await direct('vault/discussion/get', {
+    documentId: gone.document.id,
+    highlightId: null,
+  });
+  assert.deepEqual(
+    discussion.turns.map((t) => [t.user, t.assistant]),
+    [[`> ${goneQuote}\n\nWhat does it mean?`, 'It means this.']],
+  );
+  const goneNext = await sendMessage(goneView, 'thread-gone', 'And then?');
+  assert.equal(readingPart(goneNext).saving, 'document');
+  await completeTurn(goneView.session, 'thread-gone', goneNext, 'Then that.');
+  await until(() => goneView.events('codex-reading-saved').length === 2);
+  assert.equal(appends().at(-1).params.highlightId, null);
+  // A document whose record is gone is created again for the turn.
+  const lost = await call(
+    {
+      type: 'highlightCreate',
+      ask: true,
+      text: 'Another passage',
+      anchor: anchor('Another passage', 40),
+      title: 'Gone',
+      context: { before: '', after: '' },
+    },
+    page(7),
+  );
+  const lostView = await attach(7);
+  await lostView.port.onMessage.listeners[0]({ type: 'bind', threadId: 'thread-lost' });
+  const lostInput = await sendMessage(
+    lostView,
+    'thread-lost',
+    'Still there?',
+    lostView.events('codex-selection').at(-1),
+  );
+  fs.rmSync(path.join(vaultPath, '.tabgent/documents', lost.document.id), { recursive: true });
+  await completeTurn(lostView.session, 'thread-lost', lostInput, 'Saved anyway.');
+  await until(() => lostView.events('codex-reading-saved').length === 1);
+  assert.equal(lostView.events('codex-reading-saved')[0].fallback, 'document');
+  const recreated = await direct('vault/document/resolve', {
+    url: 'https://example.test/gone',
+    title: '',
+    kind: 'web',
+  });
+  discussion = await direct('vault/discussion/get', {
+    documentId: recreated.document.id,
+    highlightId: null,
+  });
+  assert.deepEqual(
+    discussion.turns.map((t) => t.user),
+    ['> Another passage\n\nStill there?'],
+  );
+  console.log('PASS a turn whose highlight or document is gone is saved on the document');
 } finally {
   python.stdin.end();
   fs.rmSync(temp, { recursive: true, force: true });

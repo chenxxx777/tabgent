@@ -140,9 +140,12 @@ const localFile = local ? loadLocal() : file ? loadFile() : null;
 localFile?.catch(() => {}); // Reported when the PDF.js frame asks for the document.
 // A PDF from the computer is copied into the vault once it has notes (its first highlight or
 // saved conversation), so the library can reopen it and Codex can read its pages after the
-// file moves. Opening it alone writes nothing.
+// file moves. Opening it alone writes nothing. The highlight is saved first and never waits
+// for the copy; the connector reads the page text in the background after it. A failure
+// keeps the notes, is shown in the document (problem), and is tried again next time.
 let copying = null;
-function copyToVault() {
+const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+function copyToVault(problem) {
   if (!file || copying) return;
   copying = (async () => {
     const { data, name, copy } = await localFile;
@@ -159,9 +162,22 @@ function copyToVault() {
       });
       if (!reply.complete && reply.received <= offset) throw Error('The vault stopped the copy');
     }
+    // Page text that cannot be read while this viewer is open is reported once.
+    const reading = !!reply.source?.textPending;
+    for (let wait = 2000, end = Date.now() + 5 * 60000; reply.source?.textPending;) {
+      if (Date.now() > end) return;
+      await pause(wait);
+      wait = Math.min(wait * 1.5, 15000);
+      reply = await viewerRequest({ ...base, offset: 0, data: '' });
+    }
+    if (reading && reply.source?.pageError)
+      problem?.(reply.source.textRetry ? 'pdfTextRetry' : 'pdfTextFailed', {
+        message: reply.source.pageError,
+      });
   })().catch((error) => {
     copying = null;
     console.warn('The PDF was not copied into the reading vault', error);
+    problem?.('pdfCopyFailed', error);
   });
 }
 function connect() {

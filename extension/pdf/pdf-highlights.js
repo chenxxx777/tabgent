@@ -28,7 +28,8 @@ const styles = `
   .swatch { width: 10px; height: 10px; border-radius: 3px; background: rgb(255 214 102); }
   .toast { position: fixed; right: 16px; bottom: 16px; max-width: min(360px, calc(100vw - 32px));
     padding: 10px 12px; border-radius: 10px; background: #202124; color: #fff;
-    font: 13px/1.4 system-ui, -apple-system, sans-serif; box-shadow: 0 6px 20px rgb(0 0 0 / 0.25); }`;
+    font: 13px/1.4 system-ui, -apple-system, sans-serif; box-shadow: 0 6px 20px rgb(0 0 0 / 0.25); }
+  .toast.error { box-shadow: inset 4px 0 0 #f28b82, 0 6px 20px rgb(0 0 0 / 0.25); cursor: pointer; }`;
 
 async function send(message) {
   // Called synchronously from clicks: sendMessage carries the gesture for sidePanel.open.
@@ -42,7 +43,8 @@ async function send(message) {
   return response;
 }
 
-// onDocument runs whenever the PDF has a saved vault document (notes or a saved turn).
+// onDocument runs whenever the PDF has a saved vault document (notes or a saved turn). It
+// gets problem(key, error), which shows a failure of its own work in the document.
 export async function startHighlights({ app, frame, source, name, onDocument }) {
   const win = frame.contentWindow,
     doc = frame.contentDocument;
@@ -228,6 +230,7 @@ export async function startHighlights({ app, frame, source, name, onDocument }) 
     toast.className = 'toast';
     toast.setAttribute('role', 'status');
     toast.hidden = true;
+    toast.addEventListener('click', () => hideToast());
     root.append(toolbar, popover, noteEditor.element, toast);
     doc.documentElement.append(host);
   }
@@ -278,17 +281,51 @@ export async function startHighlights({ app, frame, source, name, onDocument }) 
     element.style.top = `${clamp(top, 8, win.innerHeight - height - 8)}px`;
     element.style.left = `${clamp(rect.left + rect.width / 2 - width / 2, 8, win.innerWidth - width - 8)}px`;
   }
-  function notify(message) {
+  // An error is announced and stays until clicked or 20 seconds; a message that something
+  // is still in progress (wait) stays until another replaces it.
+  function notify(message, { error = false, wait = false } = {}) {
     ensureUi();
     toast.textContent = message;
     toast.hidden = false;
+    toast.setAttribute('role', error ? 'alert' : 'status');
+    toast.classList.toggle('error', error);
     syncHost();
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => {
-      toast.hidden = true;
-      syncHost();
-    }, 6000);
+    if (!wait) toastTimer = setTimeout(hideToast, error ? 20000 : 6000);
   }
+  // Hides the toast, or only the given message when it is still the one shown.
+  function hideToast(message) {
+    if (!toast || (message && toast.textContent !== message)) return;
+    clearTimeout(toastTimer);
+    toast.hidden = true;
+    syncHost();
+  }
+  // A write that takes a while says it is still saving; that is not a failure.
+  function saving() {
+    const text = t('highlightSaving');
+    const timer = setTimeout(() => notify(text, { wait: true }), 1500);
+    return () => {
+      clearTimeout(timer);
+      hideToast(text);
+    };
+  }
+  // A connector that has not answered in time may still save the highlight: the saved
+  // highlights are read again shortly, so one saved late still shows.
+  let rechecks = [];
+  function recheck() {
+    for (const timer of rechecks) clearTimeout(timer);
+    rechecks = [10000, 40000].map((delay) => setTimeout(() => void load(), delay));
+  }
+  // What a failed write tells the user: a timeout is "not answered yet", not "not saved".
+  function saveFailed(error, key) {
+    if (error?.code === 'timeout') {
+      recheck();
+      return notify(t('highlightSavePending'), { error: true });
+    }
+    notify(t(key, shown(error)), { error: true });
+  }
+  const problem = (key, error) => notify(t(key, shown(error)), { error: true });
+  const documentSaved = () => onDocument?.(problem);
   const inUi = () => !!root?.activeElement;
   // A new selection or highlight starts at the first action, not the last one focused.
   function resetTabs(element) {
@@ -544,22 +581,35 @@ export async function startHighlights({ app, frame, source, name, onDocument }) 
       notify(t('highlightCommentEmpty'));
       return;
     }
-    const response = await send({
-      type: 'highlightCreate',
-      text: pending.text,
-      anchor: pending.anchor,
-      title,
-      meta,
-      location: pending.location,
-      note,
-    });
+    const done = saving();
+    let response;
+    try {
+      response = await send({
+        type: 'highlightCreate',
+        text: pending.text,
+        anchor: pending.anchor,
+        title,
+        meta,
+        location: pending.location,
+        note,
+      });
+    } catch (error) {
+      // The editor shows the failure and keeps the comment; a timeout may still save.
+      if (error.code === 'timeout') {
+        recheck();
+        throw Object.assign(Error(error.message), { code: 'save_pending' });
+      }
+      throw error;
+    } finally {
+      done();
+    }
     if (!response.highlight)
       throw Object.assign(new Error(response.vaultError || 'The highlight could not be saved'), {
         code: response.code,
         ...(response.folder ? { folder: response.folder } : {}),
       });
     if (response.document?.id) documentId = response.document.id;
-    if (response.document?.createdAt) onDocument?.();
+    if (response.document?.createdAt) documentSaved();
     const id = response.highlight.id;
     const current = records.get(id);
     if (current?.highlight) current.highlight = response.highlight;
@@ -634,17 +684,20 @@ export async function startHighlights({ app, frame, source, name, onDocument }) 
       location,
       ...(ask ? { context: contextOf(segments) } : {}),
     });
+    // The passage is painted at once and stays painted while it saves.
     const pending = { id: `pending-${crypto.randomUUID()}`, segments, ranges: [] };
     records.set(pending.id, pending);
     doc.getSelection()?.removeAllRanges();
     repaint();
+    const done = saving();
     try {
       const response = await request;
+      done();
       records.delete(pending.id);
       if (response.highlight) {
         // A write returns the saved document; its ID replaces any provisional one.
         if (response.document?.id) documentId = response.document.id;
-        if (response.document?.createdAt) onDocument?.();
+        if (response.document?.createdAt) documentSaved();
         records.set(response.highlight.id, {
           highlight: response.highlight,
           segments,
@@ -652,17 +705,19 @@ export async function startHighlights({ app, frame, source, name, onDocument }) 
           resolved: true,
         });
       }
-      if (response.vaultError)
-        notify(
-          t(
-            'highlightSaveFailed',
-            shown({ code: response.code, message: response.vaultError, folder: response.folder }),
-          ),
-        );
+      // Ask AI sends its quote even when the highlight was not saved: the discussion is
+      // then saved on the document.
+      const failure = response.vaultError && {
+        code: response.code,
+        message: response.vaultError,
+        folder: response.folder,
+      };
+      if (failure) saveFailed(failure, ask ? 'highlightAskUnsaved' : 'highlightSaveFailed');
       else if (ask && response.panelOpened === false) notify(t('highlightOpenPanel'));
     } catch (error) {
+      done();
       records.delete(pending.id);
-      notify(t(ask ? 'highlightAskFailed' : 'highlightSaveFailed', shown(error)));
+      saveFailed(error, ask ? 'highlightAskFailed' : 'highlightSaveFailed');
     }
     repaint();
     report();
@@ -783,7 +838,7 @@ export async function startHighlights({ app, frame, source, name, onDocument }) 
     attempts = 0;
     // An unsaved document has a provisional ID (createdAt null) that may still change.
     documentId = response.document?.createdAt ? response.document.id : null;
-    if (documentId) onDocument?.();
+    if (documentId) documentSaved();
     // A refresh keeps restored highlights (and an open popover) whose anchor is unchanged.
     const previous = records;
     records = new Map();

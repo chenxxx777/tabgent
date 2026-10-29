@@ -19,6 +19,7 @@
     invalid_highlight: 'errorInvalidHighlight',
     io_error: 'errorIo',
     timeout: 'errorTimeout',
+    save_pending: 'errorSavePending',
     disconnected: 'errorDisconnected',
     host_missing: 'errorHostMissing',
     internal_error: 'errorInternal',

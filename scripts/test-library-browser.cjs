@@ -486,11 +486,11 @@ for method, params in json.loads(sys.argv[3]):
     assert.equal(await page.textContent('#title'), 'local-paper.pdf');
     assert(await page.isHidden('#native'), 'No Chrome viewer fallback for a vault copy');
     assert.deepEqual(fs.readdirSync(path.join(vault, '.tabgent/uploads')), []);
-    // Page text for Codex, read by the connector with PDFKit at import: a section per page.
-    const localText = fs.readFileSync(
-      path.join(vault, 'Full Document Contents/PDFs/Local Reading Fixture.md'),
-      'utf8',
-    );
+    // Page text for Codex, read by the connector with PDFKit after the import, in the
+    // background: a section per page.
+    const localPath = path.join(vault, 'Full Document Contents/PDFs/Local Reading Fixture.md');
+    assert(await until(() => fs.existsSync(localPath)), 'The page text is written');
+    const localText = fs.readFileSync(localPath, 'utf8');
     assert.deepEqual(
       [...localText.matchAll(/<!-- tabgent:page (\d+) -->/g)].map((m) => m[1]),
       ['1', '2', '3'],

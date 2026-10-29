@@ -66,6 +66,11 @@ const vault = createVaultClient(connect);
 const translations = createTranslateRelay(connect);
 // Vault methods follow the shared contract; they never claim or wait for a Codex session.
 const vaultRequest = (method, params) => vault.request(method, params);
+// A highlight is saved before anything else waits on it (Ask AI sends its quote after). A
+// connector busy with other work gets longer than the default, while the reader shows that
+// it is still saving; a timeout then means "not answered yet", not "not saved".
+const createHighlight = (params) =>
+  vault.request('vault/highlight/create', params, { timeout: 60000 });
 // Subscriptions are checked on a schedule; the listener is registered at startup, as MV3 needs.
 const feeds = createFeeds({
   request: (method, params, options) => vault.request(method, params, options),
@@ -950,7 +955,7 @@ async function highlightMessage(msg, sender) {
     try {
       // A feed item not saved yet becomes a vault document first, with the reader's text.
       if (clipped) await feeds.commit(tabId, url);
-      created = await vaultRequest('vault/highlight/create', {
+      created = await createHighlight({
         url,
         title,
         kind,
@@ -1174,7 +1179,7 @@ async function epubMessage(msg, sender) {
     let created = {},
       failure = null;
     try {
-      created = await vaultRequest('vault/highlight/create', {
+      created = await createHighlight({
         ...book,
         text,
         anchor,

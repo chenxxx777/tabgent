@@ -77,8 +77,15 @@ import { cleanPdfAnchor } from './vault-client.js';
 startPdfRouting();
 const calls = [];
 let saved = { document: null, highlights: [], next: 1 };
+// How the next highlightCreate answers: after a delay, or failing with a code; a connector
+// that answers too late may still have saved it (savedLate).
+let plan = null;
 chrome.runtime.onMessage.addListener((m, sender, reply) => {
   if (m.type === 'calls') return void reply(calls);
+  if (m.type === 'nextCreate') {
+    plan = m.value;
+    return void reply({});
+  }
   if (m.type === 'toViewer') {
     // As reading-companion.js does: worker → the tab's top frame.
     chrome.tabs.sendMessage(m.tabId, m.message, { frameId: 0 }).then(reply, (e) => reply({ error: e.message }));
@@ -98,12 +105,18 @@ chrome.runtime.onMessage.addListener((m, sender, reply) => {
     calls.push(m);
     if (m.type === 'highlightResolve') return { document: saved.document, highlights: saved.highlights };
     if (m.type === 'highlightCreate') {
+      const answer = plan;
+      plan = null;
+      if (answer?.delay) await new Promise((resolve) => setTimeout(resolve, answer.delay));
       const anchor = cleanPdfAnchor(m.anchor);
       if (!anchor) throw Error('Invalid highlight');
+      const failure = answer?.code && Object.assign(Error(answer.message), { code: answer.code });
+      if (failure && !answer.savedLate) throw failure;
       saved.document ||= { id: 'paper-reading-companion-fixture-1a2b3c4d', createdAt: 'now' };
       const highlight = { id: 'h' + String(saved.next++).padStart(3, '0'), text: m.text, anchor,
         location: m.location, note: typeof m.note === 'string' ? m.note : '', turnCount: 0 };
       saved.highlights.push(highlight);
+      if (failure) throw failure;
       return { document: saved.document, highlight, ...(m.ask ? { panelOpened: true } : {}) };
     }
     if (m.type === 'highlightDelete') {
@@ -118,7 +131,7 @@ chrome.runtime.onMessage.addListener((m, sender, reply) => {
       return { highlight };
     }
     return {};
-  })().then(reply, (e) => reply({ error: e.message }));
+  })().then(reply, (e) => reply({ error: e.message, ...(e.code ? { code: e.code } : {}) }));
   return true;
 });`,
   );
@@ -617,6 +630,58 @@ chrome.runtime.onMessage.addListener((m, sender, reply) => {
     assert((await readerHtml()).includes('Persists.'), 'The comment shows after reload');
     await page.keyboard.press('Escape');
     console.log('PASS PDF comment saves the highlight and comment together; cancel stores nothing');
+
+    // A slow save says it is still saving; a failed one says why, in an alert that stays,
+    // and is not left painted; a timeout says it may still be saving, and a highlight the
+    // connector saved late shows on the next check.
+    const text = (key, ...args) =>
+      ctl.evaluate(([key, args]) => chrome.i18n.getMessage(key, args), [key, args]);
+    const nextCreate = (value) =>
+      ctl.evaluate((value) => chrome.runtime.sendMessage({ type: 'nextCreate', value }), value);
+    const toast = async () => {
+      const found = /<div class="toast( error)?" role="(\w+)"( hidden="")?>([^<]*)<\/div>/.exec(
+        await readerHtml(),
+      );
+      return found && { error: !!found[1], role: found[2], shown: !found[3], text: found[4] };
+    };
+    await showPage(1);
+    await nextCreate({ delay: 3000 });
+    await drag(1, 'Careful readers');
+    await press('highlight');
+    const savingText = await text('highlightSaving');
+    assert(
+      await until(async () => (await toast())?.shown && (await toast()).text === savingText, 3000),
+      'A slow save says it is still saving',
+    );
+    assert((await painted()).includes('Careful readers'), 'It is painted while it saves');
+    assert(await until(async () => !(await toast()).shown, 6000), 'The notice goes once saved');
+    assert((await painted()).includes('Careful readers'));
+    await nextCreate({ code: 'io_error', message: 'Disk error' });
+    await drag(1, 'write notes');
+    await press('highlight');
+    const failed = await until(async () => {
+      const shown = await toast();
+      return shown?.shown && shown.error && shown;
+    });
+    assert(failed, 'A failed save shows an error');
+    assert.equal(failed.role, 'alert');
+    assert.equal(failed.text, await text('highlightSaveFailed', await text('errorIo')));
+    assert(!(await painted()).includes('write notes'), 'A failed highlight is not left painted');
+    await wait(7000);
+    assert((await toast()).shown, 'The error stays longer than a notice');
+    await nextCreate({ code: 'timeout', message: 'Vault request timed out', savedLate: true });
+    await drag(1, 'margins of each page');
+    await press('highlight');
+    const pendingText = await text('highlightSavePending');
+    assert(
+      await until(async () => (await toast())?.text === pendingText),
+      'A timeout says the highlight may still be saving',
+    );
+    assert(
+      await until(async () => (await painted()).includes('margins of each page'), 15000),
+      'A highlight the connector saved late shows on the next check',
+    );
+    console.log('PASS saving, failed and timed-out PDF highlights each say so in the document');
   } finally {
     await browser?.close();
     server.close();
