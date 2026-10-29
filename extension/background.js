@@ -645,6 +645,8 @@ chrome.runtime.onConnect.addListener((port) => {
             selection: s.selection?.tabId === port.companionTabId ? s.selection : null,
             annotations: s.annotations || [],
             highlightStatus: highlightStatus.get(port.companionTabId) || null,
+            // A highlight's discussion that was just opened: the panel scrolls to it.
+            focusTurn: s.focusTurn || null,
             attachments: s.attachments || [],
             questions: s.questions || [],
           },
@@ -1795,6 +1797,8 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
         ports: new Set(),
       };
       reading.keepPage(session, source, msg.companionTabId ?? source.tabId);
+      // The page's document continues in this conversation from its next Ask AI.
+      if (!msg.fork?.threadId) await reading.started(session, tabId).catch(() => {});
       await recordHistory(source);
       sessions.set(id, session);
       if (msg.fork?.threadId) await recordHistory(session);

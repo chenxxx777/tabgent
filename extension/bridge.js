@@ -36,6 +36,8 @@ export async function startBridge() {
       state = message.state;
       bridge.threadId = state.threadId || null;
       bridge.settings = state.settings || {};
+      // A highlight discussion just opened from the page: the turn to scroll to.
+      bridge.focusTurn = state.focusTurn || null;
       const selection = { name: 'codex-selection', value: state.selection || null };
       const listener = listeners.get(selection.name);
       if (listener) listener(selection.value);

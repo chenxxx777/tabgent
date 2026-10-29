@@ -630,8 +630,9 @@ try {
       .find((p) => p.text?.startsWith(readingContextPrefix))
       .text.slice(readingContextPrefix.length),
   );
-  assert.equal(closedReading.saving, 'highlight');
-  assert.equal(closedReading.highlight.id, 'h001');
+  // A follow-up without a quote is saved in the PDF's discussion.
+  assert.equal(closedReading.saving, 'document');
+  assert.equal(closedReading.highlight, undefined);
   assert.deepEqual(
     (({ url, kind, id, fullText }) => ({ url, kind, id, fullText }))(closedReading.document),
     { url: urn, kind: 'pdf', id: documentId, fullText: undefined },
@@ -656,7 +657,7 @@ try {
   });
   assert.deepEqual(
     [saved.highlightId, saved.threadId, saved.user],
-    ['h001', 'thread-local', 'Read page 2 from the vault.'],
+    [null, 'thread-local', 'Read page 2 from the vault.'],
   );
   const closedState = await call(
     { type: 'readingState', conversationKey: view.state.conversationKey, companionTabId: 1 },
@@ -668,7 +669,7 @@ try {
     kind: 'pdf',
     closed: true,
   });
-  assert.equal(closedState.save.target, 'highlight');
+  assert.equal(closedState.save.target, 'document');
   console.log('PASS an imported PDF discussion continues in its Agent tab after the viewer closes');
 } finally {
   python.stdin.end();

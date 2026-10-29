@@ -165,14 +165,24 @@ export function createReadingCompanion({
           .catch(() => null)
       : null;
 
-  // What a conversation saves on its page: its highlight, the page discussion, or nothing.
-  function savingTarget(s, document, bound, exists) {
+  // Where a turn is saved: under the highlight its message quotes, else in the discussion of
+  // the whole document (once the conversation is about it or it has notes), else nowhere.
+  // A conversation follows one document and may discuss several of its highlights.
+  function savingTarget(s, document, highlight, bound, exists) {
     if (!document || s.readingSave === false) return 'off';
-    if (bound?.highlightId) return 'highlight';
+    if (highlight?.highlightId) return 'highlight';
     return s.readingSave === true || bound || exists ? 'document' : 'off';
   }
+  // s.reading: the document the conversation saves on (and the highlight it last asked
+  // about). s.documentUrl: the document whose Ask AI the conversation takes, and
+  // s.readingAt when it last did: a document's most recently used conversation continues.
   const boundTo = (s, document) =>
     s.reading && document && s.reading.url === document.url ? s.reading : null;
+  const documentOf = (s) => s.documentUrl || s.reading?.url || null;
+  function usedFor(s, url) {
+    s.documentUrl = url;
+    s.readingAt = Date.now();
+  }
 
   function messageSelection(params) {
     const parse = (text) => {
@@ -209,13 +219,11 @@ export function createReadingCompanion({
     // A question about a feed item saves the item first, so Codex can read its full text.
     if (current?.view === 'clip' && !current.closed)
       await commitItem(page.tabId, current.url).catch(() => null);
-    // A quote saved as a highlight binds the conversation, whichever reader it came from.
+    // A quote saved as a highlight makes this message (and its turn) about that highlight,
+    // whichever reader it came from. A message without one is about the whole document.
     const binding = highlightBinding(messageSelection(params), current || {});
-    if (binding) {
-      if (s.reading?.highlightId !== binding.highlightId) delete s.readingNotes;
-      s.reading = binding;
-    }
-    // Follow-ups keep the binding while the companion page shows the same document.
+    if (binding) s.reading = binding;
+    // The conversation stays on its document while the companion page shows it.
     const bound = binding || boundTo(s, current);
     const document = bound
       ? { url: bound.url, title: bound.title || current?.title || '', kind: bound.kind }
@@ -223,29 +231,44 @@ export function createReadingCompanion({
     const vaultValue = await vaultStatus();
     const resolved = vaultValue ? await resolveDocument(document) : null;
     const existing = resolved?.document?.createdAt ? resolved.document : null;
-    const saving = savingTarget(s, document, bound, !!existing);
-    // The user's own note on the bound highlight, read fresh for every message.
-    const userNote = bound?.highlightId
-      ? (resolved?.highlights || []).find((h) => h.id === bound.highlightId)?.note
+    const saving = savingTarget(s, document, binding, bound, !!existing);
+    // A conversation that saves on a document is that document's conversation, which its
+    // next Ask AI continues (focusHighlight).
+    if (saving !== 'off') {
+      if (!bound && existing)
+        s.reading = {
+          documentId: existing.id,
+          highlightId: null,
+          url: document.url,
+          title: document.title,
+          kind: document.kind,
+        };
+      usedFor(s, document.url);
+    }
+    // The user's own note on the message's highlight, read fresh for every message.
+    const userNote = binding
+      ? (resolved?.highlights || []).find((h) => h.id === binding.highlightId)?.note
       : '';
+    // Earlier discussion of the highlight in other conversations, once per conversation.
     let notes = [];
-    const key = bound?.highlightId ? `${bound.documentId}/${bound.highlightId}` : null;
-    if (key && vaultValue && s.readingNotes !== key) {
+    const noted = Array.isArray(s.readingNotes) ? s.readingNotes : [];
+    const key = binding ? `${binding.documentId}/${binding.highlightId}` : null;
+    if (key && vaultValue && !noted.includes(key)) {
       try {
         const discussion = await vault.request(
           'vault/discussion/get',
-          { documentId: bound.documentId, highlightId: bound.highlightId },
+          { documentId: binding.documentId, highlightId: binding.highlightId },
           fast,
         );
         notes = earlierNotes(discussion.turns, s.threadId);
-        s.readingNotes = key;
+        s.readingNotes = [...noted, key].slice(-200);
       } catch {}
     }
     await persist();
     const part = readingContext({
       document: document && {
         ...document,
-        id: bound?.highlightId ? bound.documentId : existing?.id,
+        id: binding ? binding.documentId : existing?.id,
         notes: clip(existing?.notesPath, 4096),
         // The user's own comment on the whole document and their tags for it.
         userComment: existing ? resolved?.comment : '',
@@ -257,11 +280,11 @@ export function createReadingCompanion({
             ? clip(existing?.fullTextPath, 4096)
             : '',
       },
-      highlight: bound?.highlightId && {
-        highlightId: bound.highlightId,
-        location: bound.location,
-        text: bound.text,
-        attached: !!binding,
+      highlight: binding && {
+        highlightId: binding.highlightId,
+        location: binding.location,
+        text: binding.text,
+        attached: true,
         userNote,
       },
       notes,
@@ -322,12 +345,17 @@ export function createReadingCompanion({
     if (result.error?.code) value.code = result.error.code;
     if (typeof result.error?.folder === 'string' && result.error.folder)
       value.folder = result.error.folder;
-    if (result.document && (result.fallback || (!params.highlightId && !s.reading?.highlightId))) {
-      // A page discussion keeps saving to the document it created.
+    const savedUrl = result.document && documentUrl(result.document.url);
+    if (
+      result.document &&
+      (result.fallback || !params.highlightId) &&
+      (!s.reading || (s.reading.url === savedUrl && s.reading.documentId !== result.document.id))
+    ) {
+      // A page discussion keeps saving to the document it created (or created again).
       s.reading = {
         documentId: result.document.id,
         highlightId: null,
-        url: documentUrl(result.document.url),
+        url: savedUrl,
         title: result.document.title,
         kind: result.document.kind,
       };
@@ -416,8 +444,14 @@ export function createReadingCompanion({
     return session;
   };
 
-  // "Ask AI" and "Open discussion" on a highlight. A highlight with saved turns reopens
-  // its latest thread; a new one gets its own thread unless the current one is empty.
+  // "Ask AI" and "Open discussion" on a highlight continue its document's conversation:
+  // - a highlight already discussed opens the conversation that holds its latest turns,
+  //   which the side panel shows (focusTurn);
+  // - otherwise the view's conversation when it is about this document or still empty;
+  // - otherwise the document's most recently used conversation, or the one its latest
+  //   saved turn is in, or a new one.
+  // "New conversation" in the side panel starts an empty one on the page's document
+  // (started), which its next Ask AI uses.
   async function focusHighlight(selection, view) {
     await loaded;
     const ref = selectionHighlight(selection);
@@ -426,10 +460,11 @@ export function createReadingCompanion({
       error.code = 'invalid_highlight';
       throw error;
     }
+    const binding = highlightBinding(selection);
     let latest = null;
     try {
       const discussion = await vault.request('vault/discussion/get', ref, fast);
-      latest = discussion.turns?.at(-1)?.threadId || null;
+      latest = discussion.turns?.at(-1) || null;
     } catch {}
     const current = view.agentTabId
       ? sessions.get(agentViews.get(view.agentTabId))
@@ -440,19 +475,29 @@ export function createReadingCompanion({
       view.agentTabId && !(await chrome.tabs.get(view.tabId).catch(() => null))
         ? view.agentTabId
         : view.tabId;
-    const same =
-      current.reading?.documentId === ref.documentId &&
-      current.reading?.highlightId === ref.highlightId;
+    const open = (threadId) =>
+      current.threadId === threadId
+        ? current
+        : [...sessions.values()].find((s) => s.threadId === threadId && !s.closedTab) ||
+          newSession(current, view, owner, threadId);
     let target = current;
-    if (latest && current.threadId !== latest)
-      target =
-        [...sessions.values()].find((s) => s.threadId === latest && !s.closedTab) ||
-        newSession(current, view, owner, latest);
-    else if (!latest && !same && (current.hasUserInput || current.turnPending))
-      target = newSession(current, view, owner);
-    if (target.reading?.highlightId !== ref.highlightId) delete target.readingNotes;
-    target.reading = highlightBinding(selection);
+    if (latest?.threadId) target = open(latest.threadId);
+    else if (documentOf(current) !== binding.url) {
+      const recent = [...sessions.values()]
+        .filter((s) => s !== current && !s.closedTab && documentOf(s) === binding.url)
+        .sort((a, b) => (b.readingAt || 0) - (a.readingAt || 0))[0];
+      const saved = recent ? null : await lastThread(binding);
+      const empty = !current.hasUserInput && !current.turnPending;
+      target = recent || (saved ? open(saved) : empty ? current : newSession(current, view, owner));
+    }
+    target.reading = binding;
+    usedFor(target, binding.url);
     target.selection = selection;
+    // The side panel scrolls to the highlight's latest turn in that conversation.
+    target.focusTurn =
+      latest?.threadId && target.threadId === latest.threadId
+        ? { turnId: latest.turnId, at: Date.now() }
+        : null;
     if (target !== current) {
       keepPage(target, current, view.tabId);
       if (view.agentTabId) agentViews.set(view.agentTabId, target.key);
@@ -463,8 +508,30 @@ export function createReadingCompanion({
       for (const port of current.ports)
         if (!port.sender?.tab && port.companionTabId === view.tabId)
           event(port, 'codex-view-changed');
-    for (const port of target.ports) event(port, 'codex-selection', target.selection);
+    for (const port of target.ports) {
+      event(port, 'codex-selection', target.selection);
+      if (target.focusTurn) event(port, 'codex-focus-turn', target.focusTurn);
+    }
     return { switched: target !== current, threadId: target.threadId || null };
+  }
+  // A conversation started with "New conversation" next to a document is that document's
+  // most recently used one: its next Ask AI goes there.
+  async function started(s, tabId) {
+    const document = Number.isInteger(tabId) ? await pageDocument(tabId, {}, s) : null;
+    if (document?.url) usedFor(s, document.url);
+  }
+  // The thread of the document's latest saved turn, to continue it after a restart.
+  async function lastThread(binding) {
+    try {
+      const resolved = await vault.request(
+        'vault/document/resolve',
+        { url: binding.url, title: binding.title, kind: binding.kind },
+        fast,
+      );
+      return resolved.lastThreadId || null;
+    } catch {
+      return null;
+    }
   }
 
   // Side panel requests, scoped to the conversation and companion tab of the sender view.
@@ -662,9 +729,11 @@ export function createReadingCompanion({
         highlightId: bound.highlightId,
         text: clip(bound.text, 300),
       },
+      // A message without a quote is saved on the document; the panel shows a quote's
+      // highlight itself while one is attached.
       save: {
         explicit: source.readingSave ?? null,
-        target: savingTarget(source, document, bound, !!existing),
+        target: savingTarget(source, document, null, bound, !!existing),
       },
       error: resolved?.error?.message || null,
       ...(resolved?.error?.code ? { errorCode: resolved.error.code } : {}),
@@ -684,5 +753,15 @@ export function createReadingCompanion({
     for (const port of s.ports) event(port, 'codex-reading-changed');
   }
 
-  return { input, notification, resumed, focusHighlight, message, flush, navigated, keepPage };
+  return {
+    input,
+    notification,
+    resumed,
+    focusHighlight,
+    started,
+    message,
+    flush,
+    navigated,
+    keepPage,
+  };
 }

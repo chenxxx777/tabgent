@@ -419,6 +419,7 @@ def resolve(settings, params):
         return {
             "document": _public_document(root, document, None),
             "highlights": [],
+            "lastThreadId": None,
             "clip": None,
             "comment": "",
             "tags": [],
@@ -429,9 +430,22 @@ def resolve(settings, params):
             root, data["document"], data["document"]["createdAt"]
         ),
         "highlights": [_public_highlight(data, item) for item in data["highlights"]],
+        # The conversation the document was last discussed in, to continue it.
+        "lastThreadId": _last_thread(data),
         "clip": _clip_summary(root, data),
         **document_annotations(root, data, data["document"]["files"]),
     }
+
+
+def _last_thread(data):
+    """The thread of the document's latest saved turn (on any highlight or the whole
+    document), or None."""
+    latest = max(
+        enumerate(data["turns"]),
+        key=lambda pair: (pair[1]["at"], pair[0]),
+        default=None,
+    )
+    return latest[1]["threadId"] if latest else None
 
 
 def _optional_note(params):

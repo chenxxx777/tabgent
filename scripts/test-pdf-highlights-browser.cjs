@@ -433,6 +433,13 @@ const fixture = textPdf(
       return text?.includes(question) && text.includes('Fixture answer 1.') && text;
     });
     assert(history, 'The reopened thread shows its earlier turn');
+    // The panel finds the highlight's latest turn in it, to scroll there.
+    assert(
+      await until(() =>
+        panel(`!!document.querySelector('.message.user[data-turn="${turn.turnId}"]')`),
+      ),
+      'The highlight turn is marked in the conversation',
+    );
     const resumed = await until(() => conversation(turn.threadId));
     assert.equal(resumed.selection.highlight.highlightId, 'h002');
     assert.equal(resumed.selection.highlight.kind, 'pdf');
@@ -630,6 +637,24 @@ const fixture = textPdf(
       'The spread highlight is restored',
     );
     console.log('PASS PDF spread mode is remembered and highlights still work');
+
+    // Ask AI on another passage continues the PDF's most recently used conversation (the
+    // one started with New conversation for the page question), not a new one.
+    const beforeAsk = saved();
+    await drag('Motivation');
+    await press('ask');
+    assert(await until(() => saved() === beforeAsk + 1));
+    panel = await sidePanel();
+    assert(await send('Why return to them?'));
+    const lastly = await turns(4);
+    const lastTurn = lastly.anchors.turns.at(-1);
+    assert.equal(lastTurn.threadId, pageTurn.threadId, 'The last used conversation continues');
+    assert.equal(
+      lastTurn.highlightId,
+      lastly.anchors.highlights.find((h) => h.text === 'Motivation').id,
+    );
+    panel.close();
+    console.log('PASS Ask AI on another passage continues the PDF conversation used last');
     passed = true;
   } finally {
     await context?.close().catch(() => {});

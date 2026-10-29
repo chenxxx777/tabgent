@@ -915,12 +915,13 @@ Short daily sessions build a durable habit.
       await agent.textContent('#contextText'),
     );
     const mdThread = anchorsOf(articles, note1).turns[0].threadId;
+    // A follow-up without a quote is saved in the file's discussion, in the same thread.
     let turn = await askAgent(agent, 'And after closing the file?', note1, articles);
-    assert.deepEqual([turn.highlightId, turn.threadId], ['h002', mdThread]);
+    assert.deepEqual([turn.highlightId, turn.threadId], [null, mdThread]);
     let contexts = lastContexts(mdThread);
     assert.deepEqual([contexts.page.closed, contexts.page.url], [true, url(files.md)]);
     assert.equal(contexts.reading.document.url, url(files.md));
-    assert.equal(contexts.reading.saving, 'highlight');
+    assert.equal(contexts.reading.saving, 'document');
     await agent.close();
 
     const reread = await context.newPage();
@@ -948,7 +949,7 @@ Short daily sessions build a durable habit.
       await agent.textContent('#contextText'),
     );
     turn = await askAgent(agent, 'Read its pages from my notes.', paper, books);
-    assert.deepEqual([turn.highlightId, turn.threadId], ['h003', pdfThread]);
+    assert.deepEqual([turn.highlightId, turn.threadId], [null, pdfThread]);
     contexts = lastContexts(pdfThread);
     assert.deepEqual([contexts.page.closed, contexts.page.url], [true, url(files.pdf)]);
     assert.equal(contexts.reading.document.url, urn);

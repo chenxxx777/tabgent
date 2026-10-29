@@ -270,6 +270,22 @@ function setBusy(value, outcome = 'completed') {
   $('effort').disabled = value;
   updateMessageActions();
 }
+// A user message knows its turn, so a highlight's discussion opened from the page (Ask AI
+// or Open discussion on a highlight already discussed) scrolls to its latest turn.
+function markTurn(item, id) {
+  const record = item?.type === 'userMessage' && id && items.get(item.id);
+  if (record?.el) record.el.dataset.turn = id;
+}
+function showTurn(focus) {
+  if (!focus?.turnId || Date.now() - focus.at > 60000) return;
+  const el = [...$('messages').querySelectorAll('[data-turn]')].find(
+    (e) => e.dataset.turn === focus.turnId,
+  );
+  if (!el) return;
+  el.scrollIntoView({ block: 'start' });
+  el.classList.add('focused');
+  setTimeout(() => el.classList.remove('focused'), 2000);
+}
 function scrollEnd() {
   const e = $('scroll');
   e.scrollTop = e.scrollHeight;
@@ -1145,6 +1161,7 @@ async function completeSetup() {
           ['completed', 'failed', 'declined'].includes(item.status);
         if (!items.has(item.id))
           renderItem(item, completed, turn.startedAt ? turn.startedAt * 1000 : Date.now());
+        markTurn(item, turn.id);
       }
       if (turn.status !== 'inProgress' && turn.items?.length) {
         const outcome =
@@ -1173,6 +1190,7 @@ async function completeSetup() {
       followups.pause(thread.turns?.at(-1)?.status === 'interrupted');
     }
     scrollEnd();
+    showTurn(bridge.focusTurn);
     console.debug(
       `[Tabgent setup] history render: ${Math.round(performance.now() - renderStarted)} ms`,
     );
@@ -1616,6 +1634,7 @@ addWebUiListener('codex-message', (message) => {
       break;
     case 'item/started':
       renderItem(p.item, false);
+      markTurn(p.item, p.turnId);
       break;
     case 'item/completed':
       renderItem(p.item, true);
@@ -1780,6 +1799,7 @@ function renderSelection() {
   $('selectionText').title = selectedPageText?.truncated ? i18n('selectionLimit') : '';
   reading.render();
 }
+addWebUiListener('codex-focus-turn', (value) => showTurn(value));
 addWebUiListener('codex-selection', (value) => {
   selectedPageText = value;
   renderSelection();
