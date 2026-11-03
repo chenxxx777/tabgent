@@ -240,16 +240,50 @@ def translate(request):
     params = request["params"]
     ident = params["threadId"]
     record("turn/start", params)
+    text = " ".join(part.get("text") or "" for part in params["input"])
+    fast = params.get("serviceTierForTurn") == "priority"
+    if fast and "[translate-fast-rpc-denied]" in text:
+        send(
+            {
+                "id": request["id"],
+                "error": {
+                    "code": -32602,
+                    "message": "The priority service tier is not allowed for this plan",
+                },
+            }
+        )
+        return
     turn_id = "turn-" + uuid.uuid4().hex[:12]
     running = {"id": turn_id, "status": "inProgress", "items": []}
     send({"id": request["id"], "result": {"turn": running}})
     send({"method": "turn/started", "params": {"threadId": ident, "turn": running}})
-    text = " ".join(part.get("text") or "" for part in params["input"])
     if "[translate-hold]" in text:
         held_translation = {"id": turn_id, "threadId": ident}
         return
-    if "[translate-fail]" in text:
+    error = None
+    if fast and any(
+        tag in text for tag in ("[translate-fast-denied]", "[translate-fast-partial]")
+    ):
+        if "[translate-fast-partial]" in text:
+            send(
+                {
+                    "method": "item/agentMessage/delta",
+                    "params": {
+                        "threadId": ident,
+                        "turnId": turn_id,
+                        "delta": "Partial output",
+                    },
+                }
+            )
+        error = {
+            "message": "The requested processing tier is forbidden",
+            "codexErrorInfo": {
+                "responseStreamConnectionFailed": {"httpStatusCode": 403}
+            },
+        }
+    elif "[translate-fail]" in text:
         error = {"message": "Fixture translation failed"}
+    if error:
         send(
             {
                 "method": "error",

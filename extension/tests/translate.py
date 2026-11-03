@@ -15,6 +15,16 @@ import translate
 
 fixture = root / "tests/fixtures/app-server-replay.py"
 
+for message in (
+    "The requested service tier is not allowed for this project",
+    "Fast mode is only available for an eligible plan",
+    "Unknown service_tier priority",
+    "Priority processing requires a paid subscription",
+):
+    assert translate.fast_unavailable(translate.TranslateError("failed", message))
+for message in ("Fixture translation failed", "Codex stopped", "Invalid input text"):
+    assert not translate.fast_unavailable(translate.TranslateError("failed", message))
+
 
 class Inbox:
     def __init__(self):
@@ -86,6 +96,7 @@ with tempfile.TemporaryDirectory() as home:
         params = started[0]["params"]
         assert params["ephemeral"] is True
         assert params["model"] == "gpt-6-luna"
+        assert params["serviceTier"] == "priority"
         assert params["dynamicTools"] == [] and params["environments"] == []
         assert "Simplified Chinese" in params["baseInstructions"]
         assert params["cwd"] == str(Path(home) / "projects/tabgent/translate")
@@ -116,6 +127,7 @@ with tempfile.TemporaryDirectory() as home:
         assert len(deltas) == 3 and "".join(deltas) == answer["text"], deltas
         turn = [e for e in log(home) if e["method"] == "turn/start"][-1]["params"]
         assert turn["model"] == "gpt-6-luna" and turn["effort"] == "low", turn
+        assert turn["serviceTierForTurn"] == "priority", turn
         assert turn["input"] == [
             {"type": "text", "text": "Reading is a loop, not a line."}
         ]
@@ -331,3 +343,151 @@ with tempfile.TemporaryDirectory() as home:
     finally:
         release.set()
         starting.close()
+
+    # Fast may be rejected by turn/start itself or by a later turn error. Neither
+    # failure reaches the page before the one standard-speed retry completes.
+    for tag in ("[translate-fast-rpc-denied]", "[translate-fast-denied]"):
+        inbox = Inbox()
+        fallback = translate.Translator(home, lambda: launcher(home), inbox)
+        before = len(log(home))
+        text = f"{tag} This account can still translate at standard speed."
+        try:
+            fallback.translate("fallback", text)
+            assert inbox.final("fallback")["text"] == "译文：" + text
+            assert not [m for m in inbox.of("fallback") if m.get("error")]
+            attempts = [e for e in log(home)[before:] if e["method"] == "turn/start"]
+            assert [e["params"]["serviceTierForTurn"] for e in attempts] == [
+                "priority",
+                "default",
+            ], attempts
+            assert all(e["params"]["model"] == "gpt-6-luna" for e in attempts)
+            assert all(e["params"]["effort"] == "low" for e in attempts)
+            fallback.translate("sticky", "Next selection.")
+            assert inbox.final("sticky")["text"] == "译文：Next selection."
+            assert log(home)[-1]["params"]["serviceTierForTurn"] == "default"
+            fallback._rotate()
+            started = [e for e in log(home)[before:] if e["method"] == "thread/start"]
+            assert started[-1]["params"]["serviceTier"] == "default"
+            print(
+                "PASS Fast rejection retries once at standard speed and retains fallback"
+            )
+        finally:
+            fallback.close()
+
+    # A rejected thread preference must also recover before a translation turn exists.
+    inbox = Inbox()
+    rejected = translate.Translator(home, lambda: launcher(home), inbox)
+    original_rpc = rejected._rpc
+    thread_tiers = []
+
+    def reject_fast_thread(method, params=None):
+        if method == "thread/start":
+            thread_tiers.append(params["serviceTier"])
+            if params["serviceTier"] == "priority":
+                raise translate.TranslateError(
+                    "failed", "Fast service_tier is not supported for this subscription"
+                )
+        return original_rpc(method, params)
+
+    rejected._rpc = reject_fast_thread
+    try:
+        rejected.translate("thread-fallback", "Still translate this selection.")
+        assert (
+            inbox.final("thread-fallback")["text"]
+            == "译文：Still translate this selection."
+        )
+        assert thread_tiers == ["priority", "default"]
+        assert log(home)[-1]["params"]["serviceTierForTurn"] == "default"
+        print(
+            "PASS a rejected Fast thread preference retries with explicit standard tier"
+        )
+    finally:
+        rejected.close()
+
+    # Late events from the failed Fast attempt must not settle or corrupt its retry,
+    # including before the standard attempt's turn/start response supplies a new id.
+    inbox = Inbox()
+    late = translate.Translator(home, lambda: launcher(home), inbox)
+    original_rpc = late._rpc
+    rejected_turn = None
+
+    def late_fast_events(method, params=None):
+        global rejected_turn
+        if method == "turn/start" and params["serviceTierForTurn"] == "default":
+            previous = {"threadId": params["threadId"], "turnId": rejected_turn}
+            late._event("item/agentMessage/delta", {**previous, "delta": "stale"})
+            late._event(
+                "error", {**previous, "error": {"message": "stale"}, "willRetry": False}
+            )
+            late._event(
+                "turn/completed",
+                {**previous, "turn": {"id": rejected_turn, "status": "failed"}},
+            )
+        result = original_rpc(method, params)
+        if method == "turn/start" and params["serviceTierForTurn"] == "priority":
+            rejected_turn = result["turn"]["id"]
+        return result
+
+    late._rpc = late_fast_events
+    try:
+        text = "[translate-fast-denied] Ignore late Fast events."
+        late.translate("late", text)
+        assert inbox.final("late")["text"] == "译文：" + text
+        assert "stale" not in "".join(m.get("delta", "") for m in inbox.of("late"))
+        print("PASS late events from rejected Fast attempts cannot corrupt the retry")
+    finally:
+        late.close()
+
+    # A standard failure terminates the retry; unrelated errors and partial output
+    # must not be retried or concatenated with a new attempt.
+    for text, expected_tiers, has_delta in (
+        (
+            "[translate-fast-denied] [translate-fail] Broken.",
+            ["priority", "default"],
+            False,
+        ),
+        ("[translate-fail] Broken.", ["priority"], False),
+        ("[translate-fast-partial] Do not mix outputs.", ["priority"], True),
+    ):
+        inbox = Inbox()
+        failed = translate.Translator(home, lambda: launcher(home), inbox)
+        before = len(log(home))
+        try:
+            failed.translate("no-loop", text)
+            assert inbox.final("no-loop")["error"]["code"] == "failed"
+            attempts = [e for e in log(home)[before:] if e["method"] == "turn/start"]
+            assert [
+                e["params"]["serviceTierForTurn"] for e in attempts
+            ] == expected_tiers
+            assert bool([m for m in inbox.of("no-loop") if m.get("delta")]) == has_delta
+        finally:
+            failed.close()
+    print(
+        "PASS fallback is bounded and never retries unrelated errors or partial output"
+    )
+
+    # Cancellation during rejection remains attached to the active job and suppresses retry.
+    inbox = Inbox()
+    cancelled = translate.Translator(home, lambda: launcher(home), inbox)
+    original_rpc = cancelled._rpc
+    attempted = threading.Event()
+
+    def cancel_rejected_turn(method, params=None):
+        if method == "turn/start":
+            cancelled.cancel("cancel-retry")
+            attempted.set()
+            raise translate.TranslateError("failed", "Fast tier unavailable")
+        return original_rpc(method, params)
+
+    cancelled._rpc = cancel_rejected_turn
+    try:
+        cancelled.translate("cancel-retry", "Cancel before the fallback.")
+        assert attempted.wait(5)
+        until = time.monotonic() + 5
+        while cancelled.active and time.monotonic() < until:
+            time.sleep(0.01)
+        assert not inbox.of("cancel-retry")
+        assert cancelled.service_tier == "priority"
+        print("PASS cancellation before fallback produces no retry or terminal reply")
+    finally:
+        cancelled.close()

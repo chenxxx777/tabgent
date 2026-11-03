@@ -23,6 +23,10 @@ import time
 
 MODEL = "gpt-6-luna"
 EFFORT = "low"
+# Codex's Fast UI tier is "priority" on the wire. Use the canonical id:
+# 0.164.0 does not normalize the "fast" alias in serviceTierForTurn.
+FAST_TIER = "priority"
+STANDARD_TIER = "default"
 # The extension sends at most 2,000 characters; anything longer is refused here.
 LIMIT = 4000
 ROTATE_TURNS = 20
@@ -81,9 +85,60 @@ OVERRIDES = [
 
 
 class TranslateError(Exception):
-    def __init__(self, code, message=""):
+    def __init__(self, code, message="", info=None):
         super().__init__(message or code)
         self.code = code
+        self.info = info if isinstance(info, dict) else {}
+
+
+def fast_unavailable(error):
+    """A tier/access/capacity rejection can succeed at standard speed instead."""
+    info = error.info.get("codexErrorInfo")
+    if info in ("usageLimitExceeded", "rateLimitExceeded", "serverOverloaded"):
+        return True
+    if isinstance(info, dict):
+        for detail in info.values():
+            if isinstance(detail, dict) and detail.get("httpStatusCode") in (
+                402,
+                403,
+                429,
+                503,
+            ):
+                return True
+    message = f"{error} {error.info.get('additionalDetails') or ''}".lower()
+    tier = any(
+        word in message
+        for word in ("service_tier", "service tier", "servicetier", "priority", "fast")
+    )
+    rejected = any(
+        word in message
+        for word in (
+            "not allowed",
+            "not permitted",
+            "not supported",
+            "unsupported",
+            "unavailable",
+            "not available",
+            "not eligible",
+            "not enabled",
+            "not entitled",
+            "denied",
+            "restricted",
+            "forbidden",
+            "invalid",
+            "unknown",
+            "unrecognized",
+            "rejected",
+            "only available",
+            "requires",
+            "plan",
+            "subscription",
+            "quota",
+            "limit",
+            "capacity",
+        )
+    )
+    return tier and rejected
 
 
 class Job:
@@ -99,6 +154,8 @@ class Job:
         self.output = ""
         self.final = None
         self.error = None
+        self.error_info = None
+        self.rejected_turn_ids = set()
         self.status = None
         self.done = threading.Event()
 
@@ -122,6 +179,7 @@ class Translator:
         self.queued = {}
         self.closed = False
         self.warmed_at = -60.0
+        self.service_tier = FAST_TIER
 
     # Requests from the extension. None of them block the connector's read loop.
     def warm(self):
@@ -259,6 +317,8 @@ class Translator:
         workspace = self.home / "projects/tabgent/translate"
         workspace.mkdir(parents=True, exist_ok=True)
         self.thread_id = None
+        # Recheck Fast availability on a new process, not on every selection or rotation.
+        self.service_tier = FAST_TIER
         try:
             self.process = subprocess.Popen(
                 [
@@ -292,20 +352,28 @@ class Translator:
         self._write({"method": "initialized"})
 
     def _new_thread(self):
-        result = self._rpc(
-            "thread/start",
-            {
-                "ephemeral": True,
-                "model": MODEL,
-                "cwd": str(self.home / "projects/tabgent/translate"),
-                "baseInstructions": INSTRUCTIONS,
-                "developerInstructions": "",
-                "dynamicTools": [],
-                "environments": [],
-                "sandbox": "read-only",
-                "approvalPolicy": "never",
-            },
-        )
+        params = {
+            "ephemeral": True,
+            "model": MODEL,
+            "cwd": str(self.home / "projects/tabgent/translate"),
+            "baseInstructions": INSTRUCTIONS,
+            "developerInstructions": "",
+            "dynamicTools": [],
+            "environments": [],
+            "sandbox": "read-only",
+            "approvalPolicy": "never",
+        }
+        try:
+            result = self._rpc(
+                "thread/start", {**params, "serviceTier": self.service_tier}
+            )
+        except TranslateError as error:
+            if self.service_tier != FAST_TIER or not fast_unavailable(error):
+                raise
+            self.service_tier = STANDARD_TIER
+            result = self._rpc(
+                "thread/start", {**params, "serviceTier": self.service_tier}
+            )
         self.thread_id = result["thread"]["id"]
         self.turns = 0
         self.tokens = 0
@@ -358,36 +426,63 @@ class Translator:
                 self.queued.pop(job.id, None)
             self.active = job
         try:
-            result = self._rpc(
-                "turn/start",
-                {
-                    "threadId": self.thread_id,
-                    "input": [{"type": "text", "text": job.text}],
-                    "model": MODEL,
-                    "effort": EFFORT,
-                    "summary": "none",
-                },
-            )
-            job.turn_id = (result.get("turn") or {}).get("id")
-            if job.cancelled:
-                self._interrupt(job)
-            if not job.done.wait(TURN_SECONDS):
-                job.timed_out = True
-                self._interrupt(job)
-                job.done.wait(5)
-                raise TranslateError("timeout", "The translation timed out")
+            while not job.cancelled:
+                try:
+                    result = self._rpc(
+                        "turn/start",
+                        {
+                            "threadId": self.thread_id,
+                            "input": [{"type": "text", "text": job.text}],
+                            "model": MODEL,
+                            "effort": EFFORT,
+                            "summary": "none",
+                            # Explicit "default" also overrides a globally configured Fast tier.
+                            "serviceTierForTurn": self.service_tier,
+                        },
+                    )
+                    job.turn_id = (result.get("turn") or {}).get("id")
+                    if job.cancelled:
+                        self._interrupt(job)
+                    if not job.done.wait(TURN_SECONDS):
+                        job.timed_out = True
+                        self._interrupt(job)
+                        job.done.wait(5)
+                        raise TranslateError("timeout", "The translation timed out")
+                    self.turns += 1
+                    if job.status == "disconnected":
+                        raise TranslateError("disconnected", "Codex stopped")
+                    if job.status == "failed" or job.error:
+                        raise TranslateError(
+                            "failed",
+                            job.error or "Codex could not translate this text",
+                            info=job.error_info,
+                        )
+                    if job.status == "interrupted" and not job.cancelled:
+                        raise TranslateError("failed", "The translation stopped")
+                    return
+                except TranslateError as error:
+                    if (
+                        self.service_tier != FAST_TIER
+                        or job.cancelled
+                        or job.timed_out
+                        or job.output
+                        or job.final
+                        or not fast_unavailable(error)
+                    ):
+                        raise
+                    # Retry only before output: the page must never see mixed attempts.
+                    # Keep active set across the retry so cancel/preemption can still find it.
+                    self.service_tier = STANDARD_TIER
+                    if job.turn_id:
+                        job.rejected_turn_ids.add(job.turn_id)
+                    job.turn_id = None
+                    job.error = None
+                    job.error_info = None
+                    job.status = None
+                    job.done.clear()
         finally:
             with self.lock:
                 self.active = None
-        self.turns += 1
-        if job.status == "disconnected":
-            raise TranslateError("disconnected", "Codex stopped")
-        if job.status == "failed" or job.error:
-            raise TranslateError(
-                "failed", job.error or "Codex could not translate this text"
-            )
-        if job.status == "interrupted" and not job.cancelled:
-            raise TranslateError("failed", "The translation stopped")
 
     def _interrupt(self, job):
         try:
@@ -441,7 +536,9 @@ class Translator:
                             error = message["error"]
                             future.set_exception(
                                 TranslateError(
-                                    "failed", str(error.get("message", "Codex error"))
+                                    "failed",
+                                    str(error.get("message", "Codex error")),
+                                    info=error.get("data"),
                                 )
                             )
                         else:
@@ -480,6 +577,11 @@ class Translator:
         job = self.active
         if job is None or params.get("threadId") != job.thread_id:
             return
+        if (
+            params.get("turnId") in job.rejected_turn_ids
+            or (params.get("turn") or {}).get("id") in job.rejected_turn_ids
+        ):
+            return
         if job.turn_id and params.get("turnId") not in (None, job.turn_id):
             return
         if method == "item/agentMessage/delta":
@@ -494,6 +596,7 @@ class Translator:
                 job.final = item["text"]
         elif method == "error":
             if not params.get("willRetry"):
+                job.error_info = params.get("error") or {}
                 job.error = str(
                     (params.get("error") or {}).get("message") or "Codex error"
                 )
@@ -508,6 +611,7 @@ class Translator:
                 return
             job.status = turn.get("status")
             if job.status == "failed" and not job.error:
+                job.error_info = turn.get("error") or {}
                 job.error = str(
                     (turn.get("error") or {}).get("message") or "Codex error"
                 )

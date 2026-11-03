@@ -51,7 +51,7 @@ flowchart LR
 | `extension/native/epub_text.py`   | EPUB chapter text for the vault, using the standard library only.           |
 | `extension/native/feeds.py`       | Feed and OPML parsing, and the subscription index `.tabgent/feeds.db`.      |
 | `extension/native/pdf_text.py`    | Imported PDF page text for the vault, read with macOS PDFKit.               |
-| `extension/native/translate.py`   | Hover translation: a lean app-server and an ephemeral gpt-6-luna thread.    |
+| `extension/native/translate.py`   | Hover translation: lean app-server, gpt-6-luna Fast ephemeral thread.       |
 
 Each webpage tab owns a session. Agent tabs share that session through runtime
 ports and retain its original page context. The sidebar beside an Agent tab has
@@ -1207,7 +1207,19 @@ so other Codex versions start too), in an empty working folder
 (Codex keeps the thread in memory, never in a rollout file or its thread index), model
 `gpt-6-luna`, short translation-only `baseInstructions`, no dynamic tools, no environments,
 read-only sandbox, and starts each turn with `effort: "low"` and no reasoning summary. The
-service tier follows the user's Codex configuration.
+service tier is explicitly Fast, independent of the user's global configuration:
+`thread/start` sends `serviceTier: "priority"`, and every `turn/start` sends
+`serviceTierForTurn: "priority"`. This is gpt-6-luna's Fast tier, not a different model id.
+Codex 0.164.0 normalizes the global `fast` alias to `priority`, but its per-turn override
+requires the canonical id to select Fast. Fast may use more Codex credits than standard speed.
+
+If Fast access or capacity is rejected before any output, the translator retries once with
+`serviceTierForTurn: "default"`, which overrides even a globally configured Fast tier.
+A rejected Fast thread preference is likewise retried with `serviceTier: "default"`.
+The process then retains standard speed across selections and thread rotations, checking
+Fast availability again on the next app-server start. Cancellation, timeouts, unrelated
+errors and failures after partial output do not start a fallback attempt; a failed standard
+attempt is reported normally. This bounds retries and prevents concatenating two translations.
 
 The first turn on a thread is several times slower than later ones (no prompt cache, a new
 model connection), so translations reuse the thread: a warm-up turn ("Hello.") runs when the
@@ -1220,8 +1232,10 @@ never starts, including during app-server initialization, and a running one is i
 next selection; a signed-out app-server is stopped at once, so signing in takes effect.
 Requests from the app-server (approvals, tool calls) are refused.
 
-Measured on a Mac with Codex 0.164 (gpt-6-luna, low): selection-to-send medians fell from
-about 1.02 s to 0.17 s. Model/network first-token time still varies substantially, including
+Earlier measurements on a Mac with Codex 0.164 (gpt-6-luna, low) used a temporary
+`CODEX_HOME` with only the login copied, without the user's `service_tier` configuration;
+they did not explicitly request Fast. Selection-to-send medians fell from about 1.02 s to
+0.17 s. Model/network first-token time still varies substantially, including
 slow responses and 60 s timeouts; prefetch removes the fixed display wait from dispatch,
 but does not guarantee a particular model response time.
 
