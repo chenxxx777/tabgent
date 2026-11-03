@@ -1165,15 +1165,24 @@ owns the rest:
 - **English only.** A local rule on the first 2,000 characters: at least two ASCII letters,
   at least 90% of letters Latin and 90% of those unaccented, under 5% Chinese, Japanese or
   Korean characters. No language detector or service is used.
+- **Prefetch.** An English selection that stays unchanged for 150 ms starts translating,
+  independently of the pointer or whether the card ever opens. A held drag postpones
+  prefetch until release. Buffered deltas and the request's status belong to the selection;
+  opening the card paints what has already arrived and continues streaming. Repeated
+  notifications or hovering the same selection reuse its request or cached result;
+  reopening after an error starts a new request. Selection changes and clearing cancel
+  pending work immediately, without waiting for the reading layer's toolbar debounce.
 - **Dwell.** Pointer moves in the selection's document (an EPUB chapter frame is followed
   from its load) are mapped into the card's viewport. A point on the selection's client
-  rects starts the wait (default 1 s, from `chrome.storage.local` `hoverTranslate:
+  rects starts the display wait (default 500 ms, from `chrome.storage.local` `hoverTranslate:
 { enabled, delay }`); a move of more than 4 px restarts it, a held button stops it. The
   card has its own closed shadow root on a manual popover host. It opens above the
   selection, or below it (and below the toolbar there), never over the toolbar. Leaving the
   selection and the card (after a 300 ms grace), a selection change, scrolling, resizing,
-  a click elsewhere or Escape closes it and cancels the request; after Escape the same
-  selection does not open it again.
+  a click elsewhere or Escape closes it. Hiding the card leaves the current request running
+  so it can finish and be cached; after Escape the same selection does not open it again.
+  Changing or clearing the selection, disabling translation, pagehide or destroying the
+  controller cancels pending work.
 - **Text.** Spaces are collapsed and blank lines limited; PDF lines are joined (with
   line-end hyphenation removed). More than 2,000 characters are cut at a sentence or word
   near the limit, and the card says so. Finished translations are cached per document
@@ -1186,8 +1195,8 @@ only from Tabgent's own scripts (`translate-routing.js`) and relays `{ op: "tran
 text }`, `translateCancel` and `translateWarm` on the connector port; answers come back as
 `delta`, then `done` with the whole text, or `error` with a code (`codex_missing`,
 `signed_out`, `host_missing`, `disconnected`, `timeout`, `failed`). A closed port cancels
-its requests. A selection that qualifies sends `warm` so the translator starts before the
-hover.
+its requests. A qualifying selection without a cached result sends `warm` so the translator
+can start before the prefetch request.
 
 `translate.py` runs its own `codex app-server`, separate from conversation sessions, with
 `-c` overrides that drop MCP servers, `notify`, hooks, plugins, apps, memories, goals,
@@ -1202,17 +1211,19 @@ service tier follows the user's Codex configuration.
 
 The first turn on a thread is several times slower than later ones (no prompt cache, a new
 model connection), so translations reuse the thread: a warm-up turn ("Hello.") runs when the
-translator starts, unless a translation is already waiting, and the thread is replaced
-after 20 turns or 24,000 tokens of context, then warmed again while idle. Turns run one at a
-time; a queued request that is cancelled never starts, and a running one is interrupted
+translator starts, unless a translation is already waiting. A real translation that arrives
+while warm-up is running interrupts it, including when its turn/start response has not yet
+provided a turn id. The thread is replaced after 20 turns or 24,000 tokens of context,
+then warmed again while idle. Turns run one at a time; a queued request that is cancelled
+never starts, including during app-server initialization, and a running one is interrupted
 (`turn/interrupt`). The app-server stops after 30 idle minutes and is started again on the
 next selection; a signed-out app-server is stopped at once, so signing in takes effect.
 Requests from the app-server (approvals, tool calls) are refused.
 
-Measured on a Mac with Codex 0.164 (gpt-6-luna, low, the user's fast tier) in three runs of
-three to five sentences after the warm-up: usually the first characters in 1.0–1.4 s and a
-sentence complete in 1.3–2.0 s, with slower moments up to 2.5–5 s; a cold start (process,
-login check, thread and warm-up turn) takes 6–12 s.
+Measured on a Mac with Codex 0.164 (gpt-6-luna, low): selection-to-send medians fell from
+about 1.02 s to 0.17 s. Model/network first-token time still varies substantially, including
+slow responses and 60 s timeouts; prefetch removes the fixed display wait from dispatch,
+but does not guarantee a particular model response time.
 
 ## Reading conversations
 

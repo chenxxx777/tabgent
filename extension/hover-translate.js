@@ -549,7 +549,7 @@
       shown = { key: current.key, output: '' };
       card.hidden = false;
       if (!host.matches(':popover-open')) host.showPopover();
-      if (!result) request();
+      if (!result || result.status === 'error') request();
       paint();
       place(true);
     }

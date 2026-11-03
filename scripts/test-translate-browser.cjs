@@ -495,13 +495,23 @@ const pdfBytes = textPdf(
     assert.equal((await shown(buffered)).text, '缓冲的译文');
     await buffered.mouse.move(20, 700);
     assert(await until(async () => !(await shown(buffered))));
+    await buffered.evaluate(() => streamHandlers.onError({ code: 'disconnected' }));
+    assert.equal(await shown(buffered), null, 'A hidden failure does not open the card');
+    await buffered.mouse.move(point.x, point.y);
+    const retried = await until(() => shown(buffered));
+    assert.equal(await buffered.evaluate(() => streamRequests), 2, 'Reopening retries a failure');
+    assert.equal(retried.status, 'loading', 'The old error is replaced by the new request');
+    await buffered.evaluate(() => streamHandlers.onDelta('缓冲的译文'));
+    assert.equal((await shown(buffered)).text, '缓冲的译文');
+    await buffered.mouse.move(20, 700);
+    assert(await until(async () => !(await shown(buffered))));
     await buffered.evaluate(() => streamHandlers.onDone('缓冲的译文'));
     await buffered.mouse.move(point.x, point.y);
     assert.equal((await until(() => shown(buffered))).status, 'done');
-    assert.equal(await buffered.evaluate(() => streamRequests), 1);
+    assert.equal(await buffered.evaluate(() => streamRequests), 2);
     assert.equal(await buffered.evaluate(() => streamCancelled), 0);
     await buffered.evaluate(() => bufferedHover.destroy());
-    console.log('PASS pre-hover deltas are buffered, streamed on open and cached while hidden');
+    console.log('PASS hidden streams buffer and cache results; reopening retries a hidden failure');
     passed = true;
   } finally {
     await context?.close().catch(() => {});

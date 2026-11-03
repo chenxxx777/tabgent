@@ -51,10 +51,12 @@ transcript was saved. Audio is never transcribed or uploaded.
 Clipping does not send anything to Codex. A message about the page names the clipped text
 (its full text file's path) in the reading context, and Codex reads it only on request.
 
-**Hover translation.** When you select English text and rest the pointer on it, the selected
+**Hover translation.** Shortly after an English selection settles (about 150 ms), the selected
 text (at most its first 2,000 characters) is sent to your configured Codex service for a
-Simplified Chinese translation. Nothing else goes with it: no page address, title, nearby
-text, notes, attachments or tools. Detecting English happens on your computer, from the
+Simplified Chinese translation, even if you never hover over it and the card never opens.
+The selected passage is not sent while you hold a button to drag the selection; it waits
+until you release it and the selection settles. Nothing else goes with it: no page address,
+title, nearby text, notes, attachments or tools. Detecting English happens on your computer, from the
 letters in the selection; no language service is used. The connector runs a separate Codex
 app-server for translation, with your Codex login but without MCP servers, plugins, hooks,
 memories, notify programs, web search or project instructions, and asks Codex for an
@@ -63,7 +65,9 @@ listed with your Codex conversations, and never saved to the reading vault. For 
 translations share that in-memory conversation (each one is translated on its own); it is
 replaced after 20 translations, when it grows, and when the translator stops after 30 idle
 minutes. The page keeps finished translations in memory until it closes, so hovering again
-sends nothing. A short warm-up request ("Hello.") is sent when the translator starts.
+sends nothing. A short warm-up request ("Hello.") may be sent when the translator starts
+or replaces its in-memory conversation; it is skipped or interrupted when a translation
+needs to run.
 Turn the feature off in the side panel's **Reading notes** menu.
 
 Browser content and selection metadata are marked as untrusted context. Do not
