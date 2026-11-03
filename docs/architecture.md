@@ -31,7 +31,8 @@ flowchart LR
 | `extension/local-pdf.js`          | Hands a local PDF in Chrome's own viewer to the PDF.js viewer.              |
 | `extension/file-access.html`      | Explains Chrome's "Allow access to file URLs" setting, opened once.         |
 | `extension/epub/`                 | Library and EPUB reader page: vault documents, imports, books, highlights.  |
-| `extension/epub-routing.js`       | EPUB reader port registry and sender checks.                                |
+| `extension/epub/file.html`        | Entry page for EPUB books opened from the computer: import, then reader.    |
+| `extension/epub-routing.js`       | EPUB reader port registry, sender checks, and the `file://` EPUB redirect.  |
 | `extension/clipper.js`            | Clipping a page: injection, the replace prompt, bounds and the vault save.  |
 | `extension/clip-images.js`        | A clip's images: download, type and size checks, uploads, Markdown links.   |
 | `extension/youtube-player.js`     | A YouTube video's id and its player data, read in the page's own world.     |
@@ -553,7 +554,8 @@ The reader is not a browser tool target: the instructions tell Codex to read cha
 files through `reading_vault` instead.
 Fixed-layout books use foliate's fixed-layout renderer, which has no overlay layer, so
 their highlights are saved but not drawn (their notes are kept and listed). Book search
-and EPUB files opened from websites or `file://` URLs are not supported.
+and EPUB files opened from websites are not supported; a book opened from the computer
+goes through `epub/file.html` (see [Files from the computer](#files-from-the-computer)).
 
 ## Library and local PDFs
 
@@ -1114,6 +1116,31 @@ reopens it and Codex can read its pages after the file moves or the tab closes. 
 the first note, rather than on open, means opening PDFs to read them writes nothing, while
 any PDF with notes keeps its source. A PDF larger than the 100 MiB vault limit keeps its
 notes without a copy.
+
+**EPUB books.** Chrome has no EPUB viewer and downloads a `file://` EPUB. A third dynamic
+redirect rule (`900003`) matches main-frame `file://` URLs whose path ends in `.epub`
+(case-insensitive) and sends them to `epub/file.html?url=<file URL>` before the download
+starts; like `pdf/file.html`, the page is web accessible only to `file://` pages and refuses
+to work in a frame. It reads the file with `fetch()` (stopping past the vault's 100 MiB
+limit), checks that it is a ZIP archive foliate opens as a book, takes the title and author
+as the reader does (`bookDetails`), and uploads it with the library's `importBook` in 2 MiB
+`epubSourceSave` chunks. The worker accepts `epubSourceSave` for an EPUB, and no other
+reader message, from the top frame of a tab whose current URL is that `file.html` page
+(`isEpubFileSender`). The vault finds an existing book by its `urn:sha256:` URL, so the same
+book, renamed or moved, returns its document at the first chunk without uploading again.
+The page then replaces itself with `reader.html?book=<document ID>`, which opens the vault
+copy as the library does: history keeps neither the `file://` URL nor the entry page, and
+the highlights, reading position (keyed by the hash) and conversations of the document come
+back. A file that cannot be read, is too large or is not a book leaves the page with a
+message and imports nothing; when the fetch fails without file access it names the setting.
+
+A `file://` EPUB the rule did not catch becomes a download, seen by
+`chrome.downloads.onCreated` (downloads by an extension and incognito ones are ignored).
+Without file access, Chrome applies no rules, so every such book is downloaded as before:
+the worker opens `file-access.html?for=epub`, which explains the setting for a book, or
+focuses it when it is already open. With access, the book was opened before the rules
+applied (Chrome starting): the worker cancels and erases the download and opens the entry
+page in a new tab. A download that already finished stays in Downloads.
 
 **Agent.** Local tabs are in the browser tool's scope like HTTP(S) tabs, listed by their
 `file://` URL (a local PDF by its file, not the viewer). They are read-only: `read`,

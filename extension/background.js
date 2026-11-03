@@ -14,6 +14,8 @@ import {
   registerEpubPort,
   isEpubReaderUrl,
   isCurrentEpubSender,
+  isEpubFileSender,
+  startEpubFiles,
   openEpubReader,
   epubDocument,
   epubCommand,
@@ -44,6 +46,7 @@ import { createFeeds, feedMessages, feedReaderMessages } from './feeds.js';
 import { createTranslateRelay } from './translate-routing.js';
 import { reinjectContentScripts } from './content-reinjection.js';
 startPdfRouting();
+startEpubFiles();
 // Image Referer rules of a worker that stopped mid-request.
 clearRefererRules().catch(() => {});
 // The page a tab shows: a PDF viewer's PDF, a clipped-page reader's page, or its own URL.
@@ -1075,7 +1078,10 @@ const epubMessages = new Set([
 ]);
 // The EPUB reader names a book by its file hash; highlights are checked against that book.
 async function epubMessage(msg, sender) {
-  if (!isCurrentEpubSender(sender)) throw Error('Invalid EPUB reader sender');
+  // The entry page of an EPUB opened from the computer only copies its book into the vault.
+  const entry =
+    msg.type === 'epubSourceSave' && msg.kind !== 'pdf' && (await isEpubFileSender(sender));
+  if (!entry && !isCurrentEpubSender(sender)) throw Error('Invalid EPUB reader sender');
   const tabId = sender.tab.id;
   if (msg.type === 'epubBooks') return vaultRequest('vault/books/list', { kind: 'epub' });
   // The library lists every vault document: webpages, PDFs and books.

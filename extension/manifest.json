@@ -94,7 +94,7 @@
       "matches": ["http://*/*", "https://*/*"]
     },
     {
-      "resources": ["pdf/file.html"],
+      "resources": ["pdf/file.html", "epub/file.html"],
       "matches": ["file:///*"]
     }
   ],

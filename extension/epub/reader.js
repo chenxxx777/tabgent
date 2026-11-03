@@ -3,7 +3,7 @@ import { Overlayer } from '../vendor/foliate-js/overlayer.js';
 import { localize, t, loadTimeData } from '../i18n.js';
 import '../user-error.js';
 import '../hover-translate.js';
-import { openBook, label } from './book.js';
+import { openBook, bookDetails } from './book.js';
 import * as epubAnchor from './anchor.js';
 import * as library from './library.js';
 import { initFeeds } from './feeds-ui.js';
@@ -600,9 +600,7 @@ async function showBook(file, sha256, token) {
     }
     state.book = book;
     state.sha256 = sha256;
-    state.title = label(book.metadata?.title) || file.name.replace(/\.epub$/i, '');
-    const author = label(book.metadata?.author);
-    state.meta = author ? { author } : {};
+    ({ title: state.title, meta: state.meta } = bookDetails(book, file.name));
     library.announce({ sha256, title: state.title });
     document.title = state.title;
     $('#bookTitle').textContent = state.title;

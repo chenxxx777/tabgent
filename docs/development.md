@@ -149,7 +149,11 @@ copy and a library import of the same file, highlights and Ask AI on Markdown an
 files, the library entry of a text file, links from a local page and refused links from a
 website, Agent tabs that keep asking and saving after a local file or reloaded PDF closes, and
 the explanation page, side panel reminder and pick-up of open files when file
-access is turned off and on. Codex is `fixtures/app-server-tools.py`, which wraps the
+access is turned off and on. EPUB books opened by `file://` URL go to the reader through
+`epub/file.html`: the import into the vault, no download, reopening a renamed copy with its
+highlight and reading place, the download fallback while the redirect rule is missing, the
+messages for unreadable, oversized and invalid files, and the explanation page for a book
+Chrome downloads without file access. Codex is `fixtures/app-server-tools.py`, which wraps the
 fixture app-server: a message line `TOOL {json}` makes it call the browser tool with those
 arguments and record the result, which checks that Agent reads local tabs, cannot click or
 type there and cannot open `file://` URLs. The file access part uses a copy of the
