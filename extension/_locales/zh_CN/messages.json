@@ -1896,5 +1896,26 @@
   },
   "translateSettingHint": {
     "message": "选中英文后把鼠标停在上面，就能看到 Codex（gpt-6-luna）的中文翻译。选中的原文会发送到你配置的 Codex 服务。"
+  },
+  "epubFileInvalid": {
+    "message": "这个页面用于打开你电脑上的 EPUB 电子书。请在访达中用 Google Chrome 打开一本书。"
+  },
+  "epubFileUnreadable": {
+    "message": "Tabgent 无法读取你电脑上的这本书。它可能已被移动、重命名或删除。"
+  },
+  "epubFileNoAccess": {
+    "message": "Tabgent 还不能读取你电脑上的文件。请为 Tabgent 打开“允许访问文件网址”，然后重新打开这本书。"
+  },
+  "epubFileNotEpub": {
+    "message": "这个文件不是有效的 EPUB 电子书，无法打开。"
+  },
+  "epubFileSaveFailed": {
+    "message": "无法把这本书复制到阅读库，因此无法打开：$1"
+  },
+  "fileAccessEpubIntro": {
+    "message": "你在 Chrome 中打开了这台电脑上的 EPUB 电子书。Chrome 无法显示 EPUB，所以把它下载了。在 Chrome 中为 Tabgent 授权一次后，Tabgent 的阅读器就能打开它。"
+  },
+  "fileAccessEpubStepThree": {
+    "message": "在访达中再次打开这本书。它会在 Tabgent 的 EPUB 阅读器中打开，并复制到你的阅读库。"
   }
 }

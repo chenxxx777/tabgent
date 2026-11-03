@@ -93,7 +93,8 @@ const stored = { fileAccess: false },
   scripts = [],
   styles = [],
   dynamicRules = [],
-  sessionRules = [];
+  sessionRules = [],
+  downloads = [];
 const frames = new Map([
   [5, [{ frameId: 0, parentFrameId: -1, documentId: 'notes-doc', url: markdown + '#intro' }]],
   [8, [{ frameId: 0, parentFrameId: -1, documentId: 'web-doc', url: tabs.get(8).url }]],
@@ -180,6 +181,11 @@ globalThis.chrome = {
     sendMessage: async () => null,
     onRemoved: event(),
   },
+  downloads: {
+    onCreated: event(),
+    cancel: async (id) => downloads.push(['cancel', id]),
+    erase: async (query) => downloads.push(['erase', query]),
+  },
   webNavigation: {
     onCommitted: event(),
     getFrame: async ({ tabId, frameId }) =>
@@ -191,6 +197,7 @@ globalThis.chrome = {
 await direct('vault/configure', { path: vaultPath });
 const helpers = await import('../local-files.js');
 const routing = await import('../pdf-routing.js');
+const epubRouting = await import('../epub-routing.js');
 const { browserTool, context } = await import('../browser-tools.js');
 await import('../background.js');
 await until(() => stored.fileAccess === true);
@@ -271,6 +278,113 @@ try {
   for (const no of ['file:///a/b.pdf/', 'file:///a/b.pdfx', 'https://x.test/b.pdf', 'file:///a/b'])
     assert(!pattern.test(no), no);
   console.log('PASS file.html shows only file:// PDFs; the redirect rule matches .pdf files');
+
+  // An EPUB from the computer: its entry page names a file:// .epub only, and its redirect
+  // rule catches .epub navigations before Chrome downloads the book.
+  const { epubFileSource, epubFileUrl } = epubRouting;
+  const book = 'file:///Users/reader/Books/A%20Small%20Book.epub';
+  const entryUrl = base + 'epub/file.html?url=' + book;
+  assert.equal(epubFileUrl(book), entryUrl);
+  assert.equal(epubFileSource(entryUrl), book);
+  assert.equal(epubFileSource(entryUrl + '#x'), book + '#x');
+  assert.equal(epubFileSource(base + 'epub/file.html?url=file:///a/B.EPUB'), 'file:///a/B.EPUB');
+  for (const bad of [
+    'https://example.test/a.epub',
+    'file:///Users/reader/Books/',
+    'file://server/a.epub',
+    paper,
+    'urn:sha256:' + sha256,
+  ])
+    assert.equal(epubFileSource(base + 'epub/file.html?url=' + bad), null, bad);
+  assert.equal(epubFileSource(base + 'epub/reader.html?url=' + book), null);
+  const epubRule = dynamicRules.find((r) => r.id === 900003);
+  assert.equal(epubRule.action.redirect.regexSubstitution, base + 'epub/file.html?url=\\0');
+  assert.deepEqual(epubRule.condition.resourceTypes, ['main_frame']);
+  const epubPattern = new RegExp(epubRule.condition.regexFilter, 'i');
+  for (const yes of [book, book + '#x', 'file:///a/B.EPUB', 'file:///a/b.epub?x=1'])
+    assert(epubPattern.test(yes), yes);
+  for (const no of [
+    'file:///a/b.epub/',
+    'file:///a/b.epubx',
+    'https://x.test/b.epub',
+    'file:///a/b.pdf',
+  ])
+    assert(!epubPattern.test(no), no);
+  // The entry page may copy its book into the vault, and do nothing else.
+  tabs.set(14, { id: 14, windowId: 1, index: 11, url: entryUrl, title: 'A Small Book.epub' });
+  const entry = { id: 'test', tab: { id: 14 }, frameId: 0, documentId: 'entry-14', url: entryUrl };
+  const check = {
+    type: 'epubSourceSave',
+    sha256,
+    title: 'A Small Book',
+    meta: {},
+    name: 'A Small Book.epub',
+    size: 4096,
+    offset: 0,
+    data: '',
+  };
+  assert.deepEqual(await call(check, entry), {
+    document: null,
+    complete: false,
+    received: 0,
+    source: null,
+  });
+  for (const [message, sender] of [
+    [{ ...check, kind: 'pdf' }, entry],
+    [{ type: 'librarySearch', query: '' }, entry],
+    [{ type: 'epubSourceRead', documentId: 'book-a', offset: 0, length: 10 }, entry],
+    [check, { ...entry, frameId: 2 }],
+    [check, { ...entry, documentId: undefined }],
+    [check, { ...entry, tab: { id: 14, incognito: true } }],
+    [check, { ...entry, url: entryUrl + '#other' }],
+    [check, { ...entry, tab: { id: 8 }, url: base + 'epub/file.html?url=' + paper }],
+  ])
+    assert.equal(
+      (await call(message, sender)).error,
+      'Invalid EPUB reader sender',
+      JSON.stringify([message.type, sender]),
+    );
+  tabs.delete(14);
+  assert.equal((await call(check, entry)).error, 'Invalid EPUB reader sender', 'A closed tab');
+  // Chrome downloads an .epub the redirect missed. With file access, the book was opened while
+  // Chrome was starting: the download stops and the book opens in Tabgent.
+  const download = (item) => {
+    for (const listen of chrome.downloads.onCreated.listeners) listen(item);
+  };
+  const createdBefore = created.length;
+  download({ id: 1, url: book, state: 'in_progress' });
+  await until(() => created.length > createdBefore);
+  assert.deepEqual(created.slice(createdBefore), [{ url: entryUrl }]);
+  assert.deepEqual(downloads, [
+    ['cancel', 1],
+    ['erase', { id: 1 }],
+  ]);
+  // Without file access, Chrome downloads every one: the explanation page says what to do,
+  // once while it stays open.
+  access = false;
+  const explanation = base + 'file-access.html?for=epub';
+  download({ id: 2, url: book, state: 'in_progress' });
+  await until(() => created.length > createdBefore + 1);
+  assert.deepEqual(created.at(-1), { url: explanation });
+  tabs.set(15, { id: 15, windowId: 1, index: 12, url: explanation, title: 'File access' });
+  const updatesBefore = updates.length;
+  download({ id: 3, url: book, state: 'in_progress' });
+  await until(() => updates.length > updatesBefore);
+  assert.deepEqual(updates.at(-1), [15, { active: true }]);
+  tabs.delete(15);
+  // Other downloads are left alone: websites, other files, Tabgent's own and incognito ones.
+  for (const item of [
+    { id: 4, url: 'https://example.test/a.epub' },
+    { id: 5, url: paper },
+    { id: 6, url: book, byExtensionId: 'test' },
+    { id: 7, url: book, incognito: true },
+  ])
+    download({ state: 'in_progress', ...item });
+  await wait(50);
+  assert.equal(created.length, createdBefore + 2);
+  assert.equal(downloads.length, 2, 'Only the missed book was cancelled');
+  access = true;
+  console.log('PASS EPUB entry page: file:// .epub only, vault import only; missed downloads');
 
   // A Markdown file is a document named by its file:// URL, from its top frame only.
   const page = {

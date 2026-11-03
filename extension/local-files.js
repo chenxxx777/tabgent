@@ -14,6 +14,8 @@ export function isLocalFileUrl(url) {
 export const isReadableFileUrl = (url) =>
   isLocalFileUrl(url) &&
   /\.(?:pdf|md|markdown|mdown|txt|text|html?|xhtml)$/i.test(new URL(url).pathname);
+// An EPUB book from the computer. Chrome cannot show one, so without Tabgent it downloads it.
+export const isEpubFileUrl = (url) => isLocalFileUrl(url) && /\.epub$/i.test(new URL(url).pathname);
 export async function fileAccessAllowed() {
   try {
     return !!(await globalThis.chrome?.extension?.isAllowedFileSchemeAccess?.());
@@ -27,6 +29,8 @@ export const fileAccessSettingsUrl = () => `chrome://extensions/?id=${chrome.run
 // The page that explains the setting, opened once: the first time the user opens a document
 // from the computer while Tabgent cannot read it. The side panel keeps a reminder after that.
 const prompt = () => chrome.runtime.getURL('file-access.html');
+// The same page for an EPUB book Chrome downloaded because Tabgent could not read it.
+export const epubFileAccessUrl = () => prompt() + '?for=epub';
 // Content scripts declared in the manifest, for files that were open before Tabgent could
 // read them. local-pdf.js hands a PDF in Chrome's viewer to Tabgent's viewer.
 const readingLayer = [

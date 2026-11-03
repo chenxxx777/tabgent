@@ -3,6 +3,15 @@
 import { localize } from './i18n.js';
 import { fileAccessAllowed, fileAccessSettingsUrl } from './local-files.js';
 localize();
+// Opened for an EPUB book that Chrome downloaded because Tabgent could not read it.
+const epub = new URLSearchParams(location.search).get('for') === 'epub';
+for (const [general, specific] of [
+  ['#intro', '#epubIntro'],
+  ['#stepThree', '#epubStepThree'],
+]) {
+  document.querySelector(general).hidden = epub;
+  document.querySelector(specific).hidden = !epub;
+}
 const button = document.querySelector('#open');
 button.onclick = async () => {
   const tab = await chrome.tabs.getCurrent();

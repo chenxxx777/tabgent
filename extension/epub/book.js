@@ -96,6 +96,14 @@ export function label(value) {
   if (value.name) return label(value.name);
   return label(Object.values(value)[0]);
 }
+// The title and author a book is saved under: its metadata, or the file name without .epub.
+export function bookDetails(book, name) {
+  const author = label(book.metadata?.author);
+  return {
+    title: label(book.metadata?.title) || name.replace(/\.epub$/i, ''),
+    meta: author ? { author } : {},
+  };
+}
 
 // srcdoc is HTML. Serialize an HTML-owned tree so empty XHTML elements such as
 // <script/> and <div/> receive end tags instead of swallowing the following text.

@@ -54,6 +54,11 @@ export async function send(message, retry = true) {
     connect();
     return send(message, false);
   }
+  return replied(reply);
+}
+// The entry page of a book opened from the computer has no reader port: it asks directly.
+export const ask = async (message) => replied(await chrome.runtime.sendMessage(message));
+function replied(reply) {
   if (reply?.error)
     throw Object.assign(Error(reply.error), {
       code: reply.code,
@@ -69,7 +74,16 @@ export async function sha256Hex(bytes) {
 
 // Uploads the original in order; an interrupted import resumes where the vault stopped.
 // The library imports PDFs the same way (kind 'pdf'); EPUB is the default.
-export async function importBook({ bytes, sha256, title, meta, name, kind, onProgress }) {
+export async function importBook({
+  bytes,
+  sha256,
+  title,
+  meta,
+  name,
+  kind,
+  onProgress,
+  request = send,
+}) {
   const base = {
     type: 'epubSourceSave',
     sha256,
@@ -79,11 +93,11 @@ export async function importBook({ bytes, sha256, title, meta, name, kind, onPro
     size: bytes.byteLength,
     ...(kind ? { kind } : {}),
   };
-  let reply = await send({ ...base, offset: 0, data: '' });
+  let reply = await request({ ...base, offset: 0, data: '' });
   while (!reply.complete) {
     const offset = reply.received;
     onProgress?.(offset / bytes.byteLength);
-    reply = await send({
+    reply = await request({
       ...base,
       offset,
       data: bytes.subarray(offset, offset + CHUNK).toBase64(),

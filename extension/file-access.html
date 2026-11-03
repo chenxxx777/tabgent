@@ -54,11 +54,13 @@
   </head>
   <body style="visibility: hidden">
     <h1>$i18n{fileAccessTitle}</h1>
-    <p>$i18n{fileAccessIntro}</p>
+    <p id="intro">$i18n{fileAccessIntro}</p>
+    <p id="epubIntro" hidden>$i18n{fileAccessEpubIntro}</p>
     <ol>
       <li>$i18n{fileAccessStepOne}</li>
       <li>$i18n{fileAccessStepTwo}</li>
-      <li>$i18n{fileAccessStepThree}</li>
+      <li id="stepThree">$i18n{fileAccessStepThree}</li>
+      <li id="epubStepThree" hidden>$i18n{fileAccessEpubStepThree}</li>
     </ol>
     <p><button id="open" type="button">$i18n{fileAccessOpen}</button></p>
     <p id="status" role="status" hidden>$i18n{fileAccessOn}</p>

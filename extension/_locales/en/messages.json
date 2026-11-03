@@ -1896,5 +1896,26 @@
   },
   "translateSettingHint": {
     "message": "Select English text and rest the pointer on it to see a Chinese translation by Codex (gpt-6-luna). The selected text is sent to your Codex service."
+  },
+  "epubFileInvalid": {
+    "message": "This page opens EPUB books from your computer. Open a book from Finder with Google Chrome."
+  },
+  "epubFileUnreadable": {
+    "message": "Tabgent could not read this book from your computer. It may have been moved, renamed or deleted."
+  },
+  "epubFileNoAccess": {
+    "message": "Tabgent cannot read files from your computer yet. Turn on Allow access to file URLs for Tabgent, then open the book again."
+  },
+  "epubFileNotEpub": {
+    "message": "This file is not a valid EPUB book, so it cannot be opened."
+  },
+  "epubFileSaveFailed": {
+    "message": "The book could not be copied into your reading vault, so it cannot be opened: $1"
+  },
+  "fileAccessEpubIntro": {
+    "message": "You opened an EPUB book from your computer in Chrome. Chrome cannot show EPUB books, so it downloaded it instead. Tabgent's reader opens it once Chrome gives Tabgent your permission."
+  },
+  "fileAccessEpubStepThree": {
+    "message": "Open the book from Finder again. It opens in Tabgent's EPUB reader and is copied into your reading vault."
   }
 }

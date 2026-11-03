@@ -25,8 +25,8 @@ repository yet.
 ### Files from your Mac
 
 To highlight and ask about PDFs, Markdown, text and HTML files that you open in Chrome
-(for example by double-clicking them in Finder when Chrome is your default app), allow
-Tabgent to read files once:
+(for example by double-clicking them in Finder when Chrome is your default app), and to
+read EPUB books you open with Chrome in Tabgent's reader, allow Tabgent to read files once:
 
 1. Open `chrome://extensions` and click **Details** under Tabgent.
 2. Turn on **Allow access to file URLs**.
@@ -36,6 +36,12 @@ first time you open such a file without this setting, Tabgent opens a page with 
 and a button to its settings, and the sidebar shows a reminder on the file. Chrome may
 already have this setting on for an extension you loaded unpacked. To stop Tabgent reading
 local files, turn the setting off.
+
+To open EPUB books with Chrome from Finder, Control-click a book and choose **Open With** ›
+**Google Chrome**; if Chrome is not listed, choose **Other…**, change **Enable** to **All
+Applications** and choose Google Chrome. For a double-click, select a book, choose **File** ›
+**Get Info**, choose Google Chrome under **Open with** and click **Change All…**. Without file
+access, Chrome downloads the book instead, and Tabgent opens a page explaining the setting.
 
 The installer registers the native host in the standard macOS profile locations
 for Chrome, Chrome for Testing, Chromium, Edge, and Brave. Only Chrome is the

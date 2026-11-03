@@ -88,6 +88,25 @@ Short daily sessions build a durable habit.
     files.html,
     '<!doctype html><title>Local index</title><p><a id="paper" href="reading%20paper.pdf#page=2">The paper</a></p>',
   );
+  // EPUB books: a generated book, a renamed copy of it, and files that cannot be opened.
+  const epubs = {
+    book: path.join(folder, 'A Small Book.epub'),
+    moved: path.join(folder, 'Moved Copy.EPUB'),
+    off: path.join(folder, 'later book.epub'),
+    broken: path.join(folder, 'broken.epub'),
+    huge: path.join(folder, 'huge.epub'),
+    gone: path.join(folder, 'gone.epub'),
+  };
+  execSync(
+    `'${process.env.PYTHON || 'python3'}' '${path.join(extension, 'tests/fixtures/epub_fixture.py')}' '${epubs.book}'`,
+  );
+  fs.copyFileSync(epubs.book, epubs.moved);
+  fs.copyFileSync(epubs.book, epubs.off);
+  fs.writeFileSync(epubs.broken, 'PK This is not an EPUB book.');
+  // Over the vault's 100 MB limit: a sparse file, so nothing large is written to disk.
+  fs.writeFileSync(epubs.huge, 'PK');
+  fs.truncateSync(epubs.huge, 100 * 1024 * 1024 + 1);
+  const bookDigest = crypto.createHash('sha256').update(fs.readFileSync(epubs.book)).digest('hex');
   const url = (file) => pathToFileURL(file).href;
   const digest = crypto.createHash('sha256').update(paperPdf).digest('hex');
   const urn = 'urn:sha256:' + digest;
@@ -431,6 +450,28 @@ Short daily sessions build a durable habit.
     panel.close();
     console.log('PASS without file access: one explanation, a side panel reminder, settings link');
 
+    // Without file access Chrome downloads an EPUB: Tabgent explains how to open it instead.
+    const explainEpub = `chrome-extension://${id}/file-access.html?for=epub`;
+    const downloaded = await context.newPage();
+    await downloaded.goto(url(epubs.off)).catch(() => {}); // Playwright: "Download is starting"
+    const epubPrompt = await until(() => context.pages().find((p) => p.url() === explainEpub));
+    assert(epubPrompt, 'A downloaded EPUB opens the explanation');
+    await epubPrompt.waitForSelector('body:not([style*="hidden"])');
+    assert.equal(await epubPrompt.textContent('#epubIntro'), await message('fileAccessEpubIntro'));
+    assert.equal(await epubPrompt.isVisible('#epubIntro'), true);
+    assert.equal(await epubPrompt.isVisible('#intro'), false);
+    assert.equal(await epubPrompt.isVisible('#epubStepThree'), true);
+    assert.equal(await epubPrompt.isVisible('#open'), true);
+    if (shots) await epubPrompt.screenshot({ path: path.join(shots, 'file-access-epub.png') });
+    // Another one while the page is open shows the same page again.
+    await downloaded.goto(url(epubs.off)).catch(() => {});
+    await wait(1000);
+    assert.equal(context.pages().filter((p) => p.url() === explainEpub).length, 1);
+    assert.deepEqual(folders(books, 'book-'), [], 'Nothing is imported without file access');
+    await epubPrompt.close();
+    await downloaded.close();
+    console.log('PASS without file access a downloaded EPUB explains the setting to turn on');
+
     await setFileAccess(true);
     assert(
       await until(() => later.evaluate(() => CSS.highlights.has('tabgent-highlight'))),
@@ -712,6 +753,186 @@ Short daily sessions build a durable habit.
     );
     await web.close();
     console.log('PASS a local link opens the file viewer; websites cannot open it for a file');
+
+    // 13. An EPUB opened from the computer goes straight to Tabgent's reader: copied into the
+    // vault as the library's import copies it, and opened from that copy. Opening the same
+    // book again, here a renamed copy, opens the same document with its highlight and place.
+    const readerOf = (book) => `chrome-extension://${id}/epub/reader.html?book=${book}`;
+    const bookFolders = () => folders(books, 'book-');
+    const chapterFrame = (target) =>
+      until(() => target.frames().find((frame) => frame.url() === 'about:srcdoc'));
+    const chapterIs = (target, title) =>
+      until(async () => {
+        for (const frame of target.frames())
+          if (
+            frame.url() === 'about:srcdoc' &&
+            (await frame.evaluate(() => document.title).catch(() => '')) === title
+          )
+            return true;
+        return false;
+      }, 15000);
+    // The worker restarted with the browser above: watch its main-frame commits again.
+    await worker.evaluate(() => {
+      globalThis.epubCommits = [];
+      if (globalThis.watchingEpub) return;
+      globalThis.watchingEpub = true;
+      chrome.webNavigation.onCommitted.addListener((detail) => {
+        if (detail.frameId === 0) globalThis.epubCommits.push(detail);
+      });
+    });
+    let reader = await context.newPage();
+    await reader.goto(url(epubs.book));
+    await reader.waitForURL('**/epub/reader.html?book=*', { timeout: 20000 });
+    const [bookId] = await until(() => bookFolders().length === 1 && bookFolders());
+    assert.match(bookId, /^book-a-small-book-of-reading-[0-9a-f]{8}$/);
+    assert.equal(reader.url(), readerOf(bookId));
+    const entryOf = (file) => `chrome-extension://${id}/epub/file.html?url=${url(file)}`;
+    assert.deepEqual(
+      (await worker.evaluate(() => globalThis.epubCommits))
+        .filter((c) => c.url !== 'about:blank')
+        .map((c) => [c.url, c.transitionQualifiers.includes('server_redirect')]),
+      [
+        [entryOf(epubs.book), true],
+        [readerOf(bookId), false],
+      ],
+      'Chrome never starts a download: the file:// navigation is redirected',
+    );
+    assert.equal(await reader.evaluate(() => history.length), 2, 'Only the reader is in history');
+    assert(await chapterIs(reader, 'Chapter One: Beginnings'), 'The book renders');
+    assert.equal(await reader.textContent('#bookTitle'), 'A Small Book of Reading');
+    const bookSource = path.join(books, bookId, 'source.json');
+    const imported = JSON.parse(fs.readFileSync(bookSource, 'utf8'));
+    assert.deepEqual(
+      [imported.kind, imported.sha256, imported.name],
+      ['epub', bookDigest, 'A Small Book.epub'],
+    );
+    assert.deepEqual(
+      fs.readFileSync(path.join(vault, 'Attachments/Books/A Small Book of Reading.epub')),
+      fs.readFileSync(epubs.book),
+    );
+    assert.equal(anchorsOf(books, bookId).document.url, 'urn:sha256:' + bookDigest);
+    assert.deepEqual(
+      (await worker.evaluate(() => chrome.downloads.search({}))).filter((d) =>
+        d.url.endsWith('.epub'),
+      ),
+      [],
+      'No download',
+    );
+    // A highlight, and a reading place in the second chapter.
+    {
+      const frame = await chapterFrame(reader);
+      await wait(800);
+      const box = await frame.evaluate((needle) => {
+        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+        while (walker.nextNode()) {
+          const node = walker.currentNode,
+            at = node.data.indexOf(needle);
+          if (at < 0) continue;
+          const range = document.createRange();
+          range.setStart(node, at);
+          range.setEnd(node, at + needle.length);
+          // The passage may wrap: from its first line to its last.
+          const rects = range.getClientRects(),
+            first = rects[0],
+            last = rects[rects.length - 1];
+          return {
+            x1: first.left + 1,
+            y1: first.top + first.height / 2,
+            x2: last.right - 1,
+            y2: last.top + last.height / 2,
+          };
+        }
+      }, 'independence from others');
+      const owner = await (await frame.frameElement()).boundingBox();
+      await reader.mouse.move(owner.x + box.x1, owner.y + box.y1);
+      await reader.mouse.down();
+      await reader.mouse.move(owner.x + box.x2, owner.y + box.y2, { steps: 8 });
+      await reader.mouse.up();
+      await reader.waitForSelector('#toolbar:popover-open');
+      await reader.click('#highlightAdd');
+      assert(await until(() => anchorsOf(books, bookId).highlights.length === 1));
+      assert.equal(anchorsOf(books, bookId).highlights[0].text, 'independence from others');
+    }
+    await reader.click('#contentsButton');
+    await reader.click('#toc button:text-is("Chapter Two: Repetition")');
+    assert(await chapterIs(reader, 'Chapter Two: Repetition'));
+    const placed = () =>
+      worker.evaluate(
+        async (sha) => (await chrome.storage.local.get('epubPositions')).epubPositions?.[sha],
+        bookDigest,
+      );
+    assert(await until(async () => /\/6\/6!/.test((await placed())?.cfi || '')), 'Place saved');
+    if (shots) await reader.screenshot({ path: path.join(shots, 'local-epub.png') });
+    await reader.close();
+    reader = await context.newPage();
+    await reader.goto(url(epubs.moved));
+    await reader.waitForURL('**/epub/reader.html?book=*', { timeout: 20000 });
+    assert.equal(reader.url(), readerOf(bookId), 'The same book opens the same document');
+    assert.deepEqual(bookFolders(), [bookId], 'Opening it again imports nothing');
+    assert.equal(JSON.parse(fs.readFileSync(bookSource, 'utf8')).importedAt, imported.importedAt);
+    assert(await chapterIs(reader, 'Chapter Two: Repetition'), 'It reopens at the last place');
+    await reader.click('#contentsButton');
+    await reader.click('#highlightsTab');
+    assert.equal(
+      await until(() => reader.textContent('#highlightList li.anchored .quote').catch(() => '')),
+      'independence from others',
+      'It keeps its highlight',
+    );
+    await reader.close();
+    console.log('PASS an EPUB from the computer opens in the reader; the same book reopens');
+
+    // A book opened while Chrome was starting, before its extension rules applied, is
+    // downloaded: Tabgent stops the download and opens the book. Without the rule here.
+    const dnr = (rules) =>
+      worker.evaluate((rules) => chrome.declarativeNetRequest.updateDynamicRules(rules), rules);
+    const epubRule = (
+      await worker.evaluate(() => chrome.declarativeNetRequest.getDynamicRules())
+    ).find((rule) => rule.id === 900003);
+    await dnr({ removeRuleIds: [900003] });
+    const pagesBefore = new Set(context.pages());
+    const starting = await context.newPage();
+    await starting.goto(url(epubs.book)).catch(() => {}); // Playwright: "Download is starting"
+    const missed = await until(() =>
+      context
+        .pages()
+        .find((p) => !pagesBefore.has(p) && p !== starting && p.url().startsWith(readerOf(''))),
+    );
+    await dnr({ addRules: [epubRule] });
+    assert(missed, 'The missed book opens in the reader');
+    assert.equal(missed.url(), readerOf(bookId));
+    assert(
+      await until(async () =>
+        (await worker.evaluate(() => chrome.downloads.search({}))).every(
+          (d) => !d.url.endsWith('.epub'),
+        ),
+      ),
+      'The download is cancelled and leaves no entry',
+    );
+    assert.deepEqual(bookFolders(), [bookId]);
+    await missed.close();
+    await starting.close();
+    console.log('PASS a missed EPUB download opens the book in Tabgent instead');
+
+    // Files that cannot be opened say why on the page, and import nothing.
+    for (const [file, key] of [
+      [epubs.broken, 'epubFileNotEpub'],
+      [epubs.huge, 'libraryTooLarge'],
+      [epubs.gone, 'epubFileUnreadable'],
+    ]) {
+      const failed = await context.newPage();
+      await failed.goto(url(file));
+      await failed.waitForSelector('#problem:not([hidden])', { timeout: 20000 });
+      assert.equal(failed.url(), entryOf(file));
+      assert.equal(await failed.textContent('#message'), await message(key), file);
+      assert.equal(await failed.isVisible('#status'), false);
+      assert.equal(await failed.isVisible('#settings'), false);
+      assert.equal(await failed.textContent('h1'), path.basename(file));
+      if (shots && key === 'epubFileNotEpub')
+        await failed.screenshot({ path: path.join(shots, 'local-epub-invalid.png') });
+      await failed.close();
+    }
+    assert.deepEqual(bookFolders(), [bookId]);
+    console.log('PASS an EPUB that cannot be read, is too large or is not a book says so');
 
     // 9. Agent tools: local tabs are readable in scope but read-only, and Agent cannot open
     // file:// URLs. The fixture app-server calls the browser tool like the model would, for
