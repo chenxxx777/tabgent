@@ -264,3 +264,70 @@ with tempfile.TemporaryDirectory() as home:
     print(
         "PASS missing Codex, a signed-out account and a crashed app-server answer with a reason"
     )
+
+    # Cold-start and rotation warm-ups must yield even when their turn/start
+    # response has not reached the worker yet.
+    for rotated in (False, True):
+        inbox = Inbox()
+        priority = translate.Translator(home, lambda: launcher(home), inbox)
+        started, release = threading.Event(), threading.Event()
+        rpc = priority._rpc
+
+        def delayed_rpc(method, params=None):
+            result = rpc(method, params)
+            if method == "turn/start" and params["input"][0]["text"].startswith(
+                "[translate-hold]"
+            ):
+                started.set()
+                assert release.wait(5)
+            return result
+
+        try:
+            priority._rpc = delayed_rpc
+            with patch.object(translate, "WARM_TEXT", "[translate-hold] Warm."):
+                if rotated:
+                    priority.translate("before", "Before rotation.")
+                    inbox.final("before")
+                    priority._rotate()
+                    priority.jobs.put(None)
+                else:
+                    priority.warm()
+                assert started.wait(5), "The speculative warm-up started"
+                priority.translate("priority", "A real selection.")
+                release.set()
+                assert inbox.final("priority")["text"] == "译文：A real selection."
+                assert not inbox.of("warm"), "Warm-up output is never published"
+            print("PASS real work preempts warm-up before its turn/start response")
+        finally:
+            release.set()
+            priority.close()
+
+    # Keep a starting job cancellable while account/read and thread/start run.
+    inbox = Inbox()
+    starting = translate.Translator(home, lambda: launcher(home), inbox)
+    entered, release = threading.Event(), threading.Event()
+    ensure = starting._ensure
+
+    def delayed_ensure():
+        entered.set()
+        assert release.wait(5)
+        ensure()
+
+    starting._ensure = delayed_ensure
+    try:
+        starting.translate("startup-cancel", "[translate-hold] Cancel at startup.")
+        assert entered.wait(5)
+        starting.cancel("startup-cancel")
+        release.set()
+        starting.translate("next", "After cancelling startup.")
+        assert inbox.final("next")["text"] == "译文：After cancelling startup."
+        assert not inbox.of("startup-cancel")
+        assert not any(
+            e["method"] == "turn/start"
+            and e["params"]["input"][0]["text"] == "[translate-hold] Cancel at startup."
+            for e in log(home)
+        )
+        print("PASS a selection cancelled during startup never reaches the model")
+    finally:
+        release.set()
+        starting.close()

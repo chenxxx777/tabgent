@@ -9,16 +9,19 @@
   const lifecycle = globalThis.tabgentContentLifecycle;
   const LIMIT = 2000;
   const KEY = 'hoverTranslate';
-  const DEFAULTS = Object.freeze({ enabled: true, delay: 1000 });
+  const DEFAULTS = Object.freeze({ enabled: true, delay: 500 });
   const DELAYS = [500, 1000, 1500, 2000, 3000];
   const PORT = 'tabgent-translate';
   const LEAVE_MS = 300;
   const STALL_MS = 75000;
+  const STABLE_MS = 150;
 
   const clamp = (value, low, high) => Math.max(low, Math.min(value, high));
   const settingsOf = (value) => ({
     enabled: value?.enabled !== false,
-    delay: Number.isFinite(value?.delay) ? clamp(Math.round(value.delay), 300, 5000) : 1000,
+    delay: Number.isFinite(value?.delay)
+      ? clamp(Math.round(value.delay), 300, 5000)
+      : DEFAULTS.delay,
   });
 
   // A local rule, no language service: mostly Latin letters, nearly all of them unaccented,
@@ -271,6 +274,9 @@
       current = null,
       shown = null,
       cancel = null,
+      result = null,
+      selectionTimer = null,
+      pointerDown = false,
       pointer = null,
       suppressed = null,
       leaveTimer = null,
@@ -441,8 +447,37 @@
         'pointerdown',
         (event) => {
           if (host && event.composedPath().includes(host)) return;
+          pointerDown = true;
+          win.clearTimeout(selectionTimer);
           dwell.stop();
           close();
+        },
+        options,
+      );
+      target.addEventListener(
+        'pointerup',
+        () => {
+          pointerDown = false;
+          prefetch();
+          track();
+        },
+        options,
+      );
+      target.addEventListener('pointercancel', () => (pointerDown = false), options);
+      target.defaultView?.addEventListener('blur', () => (pointerDown = false), { signal });
+      // Reading layers debounce their toolbar updates. Cancel stale work immediately,
+      // including while a new selection is still being dragged or has been cleared.
+      target.addEventListener(
+        'selectionchange',
+        () => {
+          if (!current || current.doc !== target) return;
+          const selection = target.getSelection();
+          if (
+            !selection ||
+            selection.isCollapsed ||
+            prepare(selection.toString(), { joinLines: current.joinLines }).text !== current.key
+          )
+            forget();
         },
         options,
       );
@@ -495,7 +530,7 @@
         } else leaveSoon();
         return;
       }
-      if (suppressed === current.key) return;
+      if (pointerDown || suppressed === current.key) return;
       dwell.update(onSelection(pointer) ? pointer : null);
     }
     // A short grace period lets the pointer cross the gap between the selection and the card.
@@ -514,22 +549,43 @@
       shown = { key: current.key, output: '' };
       card.hidden = false;
       if (!host.matches(':popover-open')) host.showPopover();
-      const cached = cache.get(current.key);
-      if (cached !== undefined) render('done', cached);
-      else request();
+      if (!result || result.status === 'error') request();
+      paint();
       place(true);
+    }
+    function prefetch() {
+      win.clearTimeout(selectionTimer);
+      if (!current || pointerDown || result) return;
+      selectionTimer = win.setTimeout(() => {
+        selectionTimer = null;
+        if (usable() && current && settings.enabled && !pointerDown && !result) request();
+      }, STABLE_MS);
+    }
+    function paint() {
+      if (!shown || shown.key !== result?.key) return;
+      render(result.status, result.output, result.error);
+      place();
     }
     // Translate again works at any time: it drops the running request and starts over.
     function request() {
       cancel?.();
       cancel = null;
       const key = current.key;
+      const state = (result = { key, status: 'loading', output: '', error: null });
+      const cached = cache.get(key);
+      if (cached !== undefined) {
+        state.status = 'done';
+        state.output = cached;
+        return void paint();
+      }
       let output = '',
         settled = false,
         stall = null;
-      shown.output = '';
-      render('loading');
-      place();
+      paint();
+      const update = (status, text = '', error = null) => {
+        Object.assign(state, { status, output: text, error });
+        if (result === state) paint();
+      };
       // The connector stops a turn after 60 s and says so. If nothing at all comes back
       // (a stuck connector), the card stops waiting too, so the request can be retried.
       const quiet = () => {
@@ -538,9 +594,7 @@
         stall = win.setTimeout(() => {
           end();
           if (cancel === end) cancel = null;
-          if (shown?.key !== key) return;
-          render('error', '', { code: 'timeout' });
-          place();
+          update('error', '', { code: 'timeout' });
         }, STALL_MS);
       };
       const settle = () => {
@@ -550,26 +604,23 @@
       };
       const stop = client.translate(current.text, {
         onDelta(delta) {
+          if (settled) return;
           quiet();
           output += delta;
-          if (shown?.key !== key) return;
-          render('streaming', output);
-          place();
+          update('streaming', output);
         },
         onDone(text) {
+          if (settled) return;
           settle();
           const value = (text || output).trim();
           if (value) cache.set(key, value);
-          if (shown?.key !== key) return;
-          if (value) render('done', value);
-          else render('error', '', { code: 'empty' });
-          place();
+          if (value) update('done', value);
+          else update('error', '', { code: 'empty' });
         },
         onError(error) {
+          if (settled) return;
           settle();
-          if (shown?.key !== key) return;
-          render('error', '', error);
-          place();
+          update('error', '', error);
         },
       });
       function end() {
@@ -585,8 +636,6 @@
     function close() {
       win.clearTimeout(leaveTimer);
       leaveTimer = null;
-      cancel?.();
-      cancel = null;
       if (!shown) return;
       shown = null;
       card.hidden = true;
@@ -594,6 +643,11 @@
     }
     function forget() {
       close();
+      win.clearTimeout(selectionTimer);
+      selectionTimer = null;
+      cancel?.();
+      cancel = null;
+      result = null;
       dwell.stop();
       current = null;
       suppressed = null;
@@ -717,9 +771,16 @@
         }
         forget();
         if (!prepared.text || !isEnglish(prepared.text)) return;
-        current = { ...prepared, key: prepared.text, range: selection.range, doc: target };
+        current = {
+          ...prepared,
+          key: prepared.text,
+          range: selection.range,
+          doc: target,
+          joinLines: !!selection.joinLines,
+        };
         watch(target);
-        client.warm();
+        if (cache.get(current.key) === undefined) client.warm();
+        prefetch();
         // The pointer often already rests on a selection made with it.
         if (pointer && !shown) track();
       },

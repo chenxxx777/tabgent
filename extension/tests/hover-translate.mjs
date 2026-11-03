@@ -138,14 +138,14 @@ dwell.stop();
 assert.equal(timers.pending, 0);
 console.log('PASS the hover timer waits for a resting pointer and stops when it leaves');
 
-assert.deepEqual(hover.settingsOf(undefined), { enabled: true, delay: 1000 });
+assert.deepEqual(hover.settingsOf(undefined), { enabled: true, delay: 500 });
 assert.deepEqual(hover.settingsOf({ enabled: false, delay: 1500 }), {
   enabled: false,
   delay: 1500,
 });
 assert.deepEqual(hover.settingsOf({ delay: 99999 }), { enabled: true, delay: 5000 });
-assert.deepEqual(hover.settingsOf({ delay: 'soon' }), { enabled: true, delay: 1000 });
-console.log('PASS settings default to on and one second');
+assert.deepEqual(hover.settingsOf({ delay: 'soon' }), { enabled: true, delay: 500 });
+console.log('PASS settings default to on and half a second');
 
 // The page side of the port: streaming, cancel and a lost connection.
 function fakePort() {
