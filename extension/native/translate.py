@@ -145,6 +145,15 @@ class Translator:
         job = Job(ident, text)
         with self.lock:
             self.queued[ident] = job
+            active = self.active
+            if active is not None and active.warm:
+                active.cancelled = True
+        # Warm-up is speculative: a real selection always takes priority, even if
+        # it arrives while the first warm turn on a newly rotated thread runs.
+        if active is not None and active.warm and active.turn_id:
+            threading.Thread(
+                target=self._interrupt, args=(active,), daemon=True
+            ).start()
         self._start_worker()
         self.jobs.put(job)
 
@@ -185,8 +194,6 @@ class Translator:
             if self.closed:
                 break
             if job is not None:
-                with self.lock:
-                    self.queued.pop(job.id, None)
                 if job.cancelled:
                     continue
             try:
@@ -206,6 +213,10 @@ class Translator:
             except Exception as error:
                 if job is not None and not job.cancelled:
                     self._reply(job.id, error=("failed", str(error)[:300]))
+            finally:
+                if job is not None:
+                    with self.lock:
+                        self.queued.pop(job.id, None)
             if job is not None and self.thread_id and self._should_rotate():
                 self._rotate()
                 self._warm_turn()
@@ -339,6 +350,12 @@ class Translator:
     def _turn(self, job):
         job.thread_id = self.thread_id
         with self.lock:
+            # Covers cancellation during app-server startup, and a request
+            # arriving between _warm_turn's queue check and this hand-off.
+            if job.cancelled or (job.warm and self.queued):
+                return
+            if not job.warm:
+                self.queued.pop(job.id, None)
             self.active = job
         try:
             result = self._rpc(

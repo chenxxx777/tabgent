@@ -1098,13 +1098,13 @@ function onSectionLoad({ detail: { doc, index } }) {
     queueMicrotask(() => applySettings());
   }
   let timer;
-  const schedule = () => {
+  const schedule = (delay = 150) => {
     clearTimeout(timer);
-    timer = setTimeout(() => captureSelection(doc, index), 150);
+    timer = setTimeout(() => captureSelection(doc, index), delay);
   };
   hover.watch(doc);
-  doc.addEventListener('selectionchange', schedule);
-  doc.addEventListener('pointerup', schedule);
+  doc.addEventListener('selectionchange', () => schedule());
+  doc.addEventListener('pointerup', () => schedule(10));
   doc.addEventListener('keydown', onKey);
   doc.addEventListener('pointerdown', () => {
     $('#highlightMenu').hidePopover();

@@ -112,6 +112,7 @@ const pdfBytes = textPdf(
         `--load-extension=${extension}`,
         '--remote-debugging-port=0',
         '--use-mock-keychain',
+        '--headless=new',
       ],
     });
     const worker = context.serviceWorkers()[0] || (await context.waitForEvent('serviceworker'));
@@ -181,7 +182,7 @@ const pdfBytes = textPdf(
     };
     const overlaps = (a, b) =>
       a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
-    async function drag(page, selector, frame = page, offset = { x: 0, y: 0 }) {
+    async function drag(page, selector, frame = page, offset = { x: 0, y: 0 }, held = 0) {
       const box = await frame.evaluate((selector) => {
         const element = document.querySelector(selector);
         const range = document.createRange();
@@ -192,6 +193,14 @@ const pdfBytes = textPdf(
       await page.mouse.move(offset.x + box.left + 1, offset.y + box.y);
       await page.mouse.down();
       await page.mouse.move(offset.x + box.right - 2, offset.y + box.y, { steps: 8 });
+      if (held) {
+        await wait(held);
+        assert.equal(
+          await sentCount(await frame.locator(selector).innerText()),
+          0,
+          'Dragging never prefetches',
+        );
+      }
       await page.mouse.up();
       return { x: offset.x + box.right - 2, y: offset.y + box.y };
     }
@@ -200,10 +209,54 @@ const pdfBytes = textPdf(
     await page.goto(base + '/article');
     await page.waitForLoadState('load');
     await wait(800);
+    const tabId = await worker.evaluate(
+      async (url) => (await chrome.tabs.query({ url }))[0].id,
+      page.url(),
+    );
+    await worker.evaluate(async (tabId) => {
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => {
+          globalThis.translateRequests = [];
+          const connect = chrome.runtime.connect;
+          chrome.runtime.connect = function (...args) {
+            const port = connect.apply(this, args);
+            if (args[0]?.name === 'tabgent-translate') {
+              const post = port.postMessage.bind(port);
+              port.postMessage = (message) => {
+                if (message.type === 'translate') translateRequests.push(message.text);
+                post(message);
+              };
+            }
+            return port;
+          };
+        },
+      });
+    }, tabId);
+    const sentCount = (text) =>
+      worker.evaluate(
+        async ([tabId, text]) =>
+          (
+            await chrome.scripting.executeScript({
+              target: { tabId },
+              func: (text) => translateRequests.filter((value) => value === text).length,
+              args: [text],
+            })
+          )[0].result,
+        [tabId, text],
+      );
 
-    // Select English and keep the pointer there: the card shows the streamed translation.
+    // Translation starts while the pointer is away, before the card's dwell ends.
+    await worker.evaluate(() =>
+      chrome.storage.local.set({ hoverTranslate: { enabled: true, delay: 1500 } }),
+    );
     const english = 'Reading slowly gives the mind time to connect new ideas with old ones.';
-    const rest = await drag(page, '#en');
+    const rest = await drag(page, '#en', page, { x: 0, y: 0 }, 350);
+    await page.mouse.move(40, 700);
+    assert(await until(async () => (await sentCount(english)) === 1, 1000), 'Selection prefetches');
+    assert.equal(await shown(page), null, 'Prefetch does not open a card away from the selection');
+    await wait(500);
+    await page.mouse.move(rest.x - 30, rest.y);
     const loading = await until(() => shown(page), 4000);
     assert(loading, 'The card opens after the pointer rests on the selection');
     const done = await until(async () => {
@@ -249,9 +302,10 @@ const pdfBytes = textPdf(
     assert.equal(requests().length, before, 'and sends nothing');
     console.log('PASS a Chinese selection is not translated');
 
-    // A request still running can be retried, and is cancelled when the card closes.
+    // A request still running can be retried. Hiding retains it; selection changes cancel it.
     const holdText = '[translate-hold] This translation waits until it is cancelled.';
     const interrupts = () => requests().filter((r) => r.method === 'turn/interrupt').length;
+    const initialInterrupts = interrupts(); // A cold-start warm-up may already have yielded.
     const hold = await drag(page, '#hold');
     const waiting = await until(() => shown(page), 4000);
     assert.equal(waiting?.status, 'loading');
@@ -262,15 +316,27 @@ const pdfBytes = textPdf(
     await page.mouse.down();
     await page.mouse.up();
     assert(await until(() => asked(holdText) === 2, 4000), 'Translate again starts a new request');
-    assert.equal(interrupts(), 1, 'and interrupts the stuck one');
+    assert.equal(interrupts(), initialInterrupts + 1, 'and interrupts the stuck one');
     assert.equal((await shown(page))?.status, 'loading', 'The card stays open on its selection');
     await page.mouse.move(hold.x, hold.y + 300, { steps: 3 });
     assert(await until(async () => !(await shown(page)), 2000));
+    assert.equal(interrupts(), initialInterrupts + 1, 'Hiding preserves the in-flight translation');
+    await page.mouse.move(hold.x - 30, hold.y);
+    assert(await until(() => shown(page), 4000));
+    assert.equal(asked(holdText), 2, 'Reopening joins the same request');
+    await page.evaluate(() => getSelection().removeAllRanges());
     assert(
-      await until(() => interrupts() === 2, 4000),
-      'Closing the card interrupts the Codex turn',
+      await until(() => interrupts() === initialInterrupts + 2, 4000),
+      'Clearing the selection interrupts the Codex turn',
     );
-    console.log('PASS a stuck translation can be retried; closing the card cancels it');
+    // A new selection cancels a hidden request too, without waiting for hover.
+    await drag(page, '#hold');
+    await page.mouse.move(40, 700);
+    assert(await until(() => asked(holdText) === 3, 1000));
+    await drag(page, '#en');
+    assert(await until(() => interrupts() === initialInterrupts + 3, 1000));
+    assert.equal(asked(english), 1, 'Selecting a cached text sends no duplicate request');
+    console.log('PASS retry, hide/reopen and selection cancellation retain one request per text');
 
     // The switch in settings turns it off at once.
     await worker.evaluate(() =>
@@ -390,6 +456,52 @@ const pdfBytes = textPdf(
     await epub.mouse.move(owner.x + box.x2, owner.y + box.y2 + 260, { steps: 3 });
     assert(await until(async () => !(await shown(epub)), 2000), 'Leaving closes it in a book');
     console.log('PASS the EPUB reader shows the translation beside a chapter selection');
+
+    // A controlled stream makes buffering before hover deterministic, independent of
+    // the fixture process or model speed. It uses the same card in a real document.
+    const buffered = await context.newPage();
+    await buffered.setContent('<p style="margin:100px">A translation arriving before hover.</p>');
+    await buffered.addScriptTag({ path: path.join(extension, 'hover-translate.js') });
+    const point = await buffered.evaluate(() => {
+      globalThis.streamRequests = 0;
+      globalThis.streamCancelled = 0;
+      const range = document.createRange();
+      range.selectNodeContents(document.querySelector('p'));
+      getSelection().addRange(range);
+      globalThis.bufferedHover = tabgentHoverTranslate.attach({
+        t: (key) => key,
+        storage: null,
+        client: {
+          warm() {},
+          translate(text, handlers) {
+            streamRequests++;
+            globalThis.streamHandlers = handlers;
+            return () => streamCancelled++;
+          },
+        },
+      });
+      bufferedHover.select({ text: range.toString(), range });
+      const rect = range.getBoundingClientRect();
+      return { x: rect.left + 10, y: rect.top + rect.height / 2 };
+    });
+    await buffered.waitForFunction(() => streamRequests === 1);
+    await buffered.evaluate(() => streamHandlers.onDelta('缓冲'));
+    assert.equal(await shown(buffered), null, 'A hidden stream creates no card');
+    await buffered.mouse.move(point.x, point.y);
+    const partial = await until(() => shown(buffered));
+    assert.equal(partial?.status, 'streaming');
+    assert.equal(partial.text, '缓冲', 'Opening paints all earlier deltas');
+    await buffered.evaluate(() => streamHandlers.onDelta('的译文'));
+    assert.equal((await shown(buffered)).text, '缓冲的译文');
+    await buffered.mouse.move(20, 700);
+    assert(await until(async () => !(await shown(buffered))));
+    await buffered.evaluate(() => streamHandlers.onDone('缓冲的译文'));
+    await buffered.mouse.move(point.x, point.y);
+    assert.equal((await until(() => shown(buffered))).status, 'done');
+    assert.equal(await buffered.evaluate(() => streamRequests), 1);
+    assert.equal(await buffered.evaluate(() => streamCancelled), 0);
+    await buffered.evaluate(() => bufferedHover.destroy());
+    console.log('PASS pre-hover deltas are buffered, streamed on open and cached while hidden');
     passed = true;
   } finally {
     await context?.close().catch(() => {});
