@@ -54,6 +54,9 @@ Clipping does not send anything to Codex. A message about the page names the cli
 **Hover translation.** Shortly after an English selection settles (about 150 ms), the selected
 text (at most its first 2,000 characters) is sent to your configured Codex service for a
 Simplified Chinese translation, even if you never hover over it and the card never opens.
+Translations use gpt-6-luna with low reasoning and explicitly request the Fast tier. Fast
+may use more Codex credits than standard speed; if Fast is unavailable, translation
+automatically falls back to standard speed with the same model and prompt.
 The selected passage is not sent while you hold a button to drag the selection; it waits
 until you release it and the selection settles. Nothing else goes with it: no page address,
 title, nearby text, notes, attachments or tools. Detecting English happens on your computer, from the

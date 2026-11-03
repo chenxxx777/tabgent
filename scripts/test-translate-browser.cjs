@@ -273,6 +273,8 @@ const pdfBytes = textPdf(
       (r) => r.method === 'turn/start' && r.params.input[0].text === english,
     );
     assert.equal(turn.params.effort, 'low');
+    assert.equal(settings.serviceTier, 'priority');
+    assert.equal(turn.params.serviceTierForTurn, 'priority');
     // The usual toolbar is still there, and the card does not cover it.
     const bar = await toolbar(page);
     assert.equal(bar.hidden, false, 'The selection toolbar stays');
@@ -512,6 +514,32 @@ const pdfBytes = textPdf(
     assert.equal(await buffered.evaluate(() => streamCancelled), 0);
     await buffered.evaluate(() => bufferedHover.destroy());
     console.log('PASS hidden streams buffer and cache results; reopening retries a hidden failure');
+
+    // A Fast-only entitlement rejection falls back inside the source connector;
+    // the page receives a single streamed result for its original request.
+    const fallback = await context.newPage();
+    await fallback.goto(base + '/fallback');
+    const fallbackText = '[translate-fast-denied] Standard speed is still available.';
+    await fallback.locator('#en').evaluate((node, text) => (node.textContent = text), fallbackText);
+    await worker.evaluate(() =>
+      chrome.storage.local.set({ hoverTranslate: { enabled: true, delay: 500 } }),
+    );
+    await wait(800);
+    const fallbackPoint = await drag(fallback, '#en');
+    await fallback.mouse.move(fallbackPoint.x - 20, fallbackPoint.y);
+    const fallbackDone = await until(async () => {
+      const value = await shown(fallback);
+      return value?.status === 'done' && value;
+    });
+    assert.equal(fallbackDone?.text, '译文：' + fallbackText);
+    const attempts = requests().filter(
+      (r) => r.method === 'turn/start' && r.params.input[0].text === fallbackText,
+    );
+    assert.deepEqual(
+      attempts.map((r) => r.params.serviceTierForTurn),
+      ['priority', 'default'],
+    );
+    console.log('PASS Fast rejection automatically streams a standard-speed translation');
     passed = true;
   } finally {
     await context?.close().catch(() => {});

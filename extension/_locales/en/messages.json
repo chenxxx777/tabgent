@@ -1895,7 +1895,7 @@
     "message": "$1 s"
   },
   "translateSettingHint": {
-    "message": "Select English text and rest the pointer on it to see a Chinese translation by Codex (gpt-6-luna). The selected text is sent to your Codex service."
+    "message": "English selections are sent to your Codex service shortly after they settle. Hover to see the Chinese translation by gpt-6-luna (Fast tier). Fast may use more Codex credits than standard speed; translation falls back to standard speed if Fast is unavailable."
   },
   "epubFileInvalid": {
     "message": "This page opens EPUB books from your computer. Open a book from Finder with Google Chrome."

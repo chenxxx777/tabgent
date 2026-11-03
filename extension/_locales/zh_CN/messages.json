@@ -1895,7 +1895,7 @@
     "message": "$1 秒"
   },
   "translateSettingHint": {
-    "message": "选中英文后把鼠标停在上面，就能看到 Codex（gpt-6-luna）的中文翻译。选中的原文会发送到你配置的 Codex 服务。"
+    "message": "英文选区稳定后不久，原文就会发送到你配置的 Codex 服务。悬停可查看 gpt-6-luna（Fast 档位）的中文翻译。Fast 可能比普通档位多耗 Codex 额度；Fast 不可用时会自动退回普通档位。"
   },
   "epubFileInvalid": {
     "message": "这个页面用于打开你电脑上的 EPUB 电子书。请在访达中用 Google Chrome 打开一本书。"
